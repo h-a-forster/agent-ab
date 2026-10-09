@@ -240,6 +240,30 @@ def test_claude_timeout_and_start_error(tmp_path):
     assert "WinError 2" in u.infra_error
 
 
+def test_claude_parse_real_success(tmp_path):
+    # Captured from claude 2.1.287 (haiku, effort low); ids replaced.
+    u = claude_parse(tmp_path, fixture("claude_real_success.json"))
+    assert u.cost_usd == pytest.approx(0.0224563)
+    assert (u.input_tokens, u.output_tokens) == (9, 55)
+    assert (u.cache_read_tokens, u.cache_write_tokens) == (26523, 9760)
+    assert u.turns == 1 and u.final_message == "OK" and u.infra_error is None
+
+
+def test_claude_real_unknown_model_is_infra(tmp_path):
+    # Real output for an unknown --model: is_error with api_error_status 404, zero cost.
+    u = claude_parse(tmp_path, fixture("claude_real_unknown_model.json"), code=1)
+    assert u.infra_error is not None and u.infra_error.startswith("API error 404")
+    assert "selected model" in u.infra_error
+
+
+@pytest.mark.parametrize("status, infra", [(400, False), (401, True), (404, True),
+                                           (429, True), (529, True), (None, False)])
+def test_claude_api_error_status(status, infra):
+    obj = {"type": "result", "subtype": "success", "is_error": True,
+           "result": "something went wrong", "api_error_status": status}
+    assert (parse_result_text(json.dumps(obj), "", 1).infra_error is not None) is infra
+
+
 def test_claude_parse_wrong_types_ignored():
     obj = {"type": "result", "total_cost_usd": "1.0", "num_turns": True,
            "usage": {"input_tokens": "12", "output_tokens": -1}, "result": 5}
@@ -302,7 +326,7 @@ def test_codex_argv_combinations(tmp_path, bypass, sandbox, model, effort, ignor
 @pytest.mark.parametrize(
     "kw, fragment",
     [
-        ({"effort": "max"}, "effort"),
+        ({"effort": "bogus"}, "effort"),
         ({"options": {"sandbox": "full"}}, "sandbox"),
         ({"options": {"bypass_sandbox": True, "sandbox": "read-only"}}, "mutually exclusive"),
         ({"options": {"ignore_user_config": "true"}}, "ignore_user_config"),
@@ -359,6 +383,41 @@ def test_codex_turn_failed_other_is_agent_failure():
 def test_codex_recovered_error_is_not_infra():
     u = parse_events(fixture("codex_recovered.jsonl"), "", 0, PRICES)
     assert u.infra_error is None and u.final_message == "done" and u.turns == 1
+
+
+def test_codex_parse_real_success():
+    # Captured from codex-cli 0.162.0; adds cache_write_input_tokens and reasoning_output_tokens.
+    u = parse_events(fixture("codex_real_success.jsonl"), "", 0, PRICES)
+    assert u.turns == 1 and u.final_message == "OK" and u.infra_error is None
+    assert (u.input_tokens, u.cache_read_tokens, u.output_tokens) == (4766, 9984, 5)
+    assert u.cache_write_tokens == 0
+
+
+def test_codex_real_unsupported_model_is_infra():
+    # The leading "Model metadata ... not found" item is only a warning and is ignored.
+    u = parse_events(fixture("codex_real_unsupported_model.jsonl"), "", 1, {})
+    assert u.infra_error is not None and "not supported" in u.infra_error
+    assert u.turns == 0
+
+
+def test_codex_real_sandbox_failure_is_infra():
+    # Every command was rejected by the Windows sandbox; the turn itself "completed".
+    stderr = fixture("codex_real_sandbox_failed.stderr")
+    u = parse_events(fixture("codex_real_sandbox_failed.jsonl"), stderr, 0, {})
+    assert u.infra_error is not None and "setup refresh had errors" in u.infra_error
+    assert u.infra_error.startswith("codex sandbox could not run commands")
+    assert u.turns == 1 and u.output_tokens == 1183
+
+
+def test_codex_sandbox_noise_after_working_commands_is_not_infra():
+    events = fixture("codex_success.jsonl").replace('"exit_code":null', '"exit_code":0')
+    stderr = fixture("codex_real_sandbox_failed.stderr")
+    assert parse_events(events, stderr, 0, {}).infra_error is None
+
+
+@pytest.mark.parametrize("effort", ["low", "max", "ultra"])
+def test_codex_valid_efforts(effort):
+    assert CodexAdapter().validate(AgentSpec(adapter="codex", effort=effort)) == []
 
 
 def test_codex_no_events_nonzero_exit_is_infra(tmp_path):

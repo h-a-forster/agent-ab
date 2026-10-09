@@ -1,0 +1,20 @@
+{"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Blocked: shell commands fail before starting."}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":-1,"status":"failed"}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":-1,"status":"failed"}}
+{"type":"item.started","item":{"id":"item_3","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":-1,"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"Blocked: shell commands fail before starting."}}
+{"type":"item.started","item":{"id":"item_5","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_5","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":-1,"status":"failed"}}
+{"type":"item.started","item":{"id":"item_7","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_7","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":-1,"status":"failed"}}
+{"type":"item.started","item":{"id":"item_8","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_8","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":-1,"status":"failed"}}
+{"type":"item.started","item":{"id":"item_11","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_11","type":"command_execution","command":"powershell.exe -Command Get-Location","aggregated_output":"","exit_code":-1,"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_12","type":"agent_message","text":"Blocked: shell commands fail before starting."}}
+{"type":"turn.completed","usage":{"input_tokens":199358,"cached_input_tokens":158976,"cache_write_input_tokens":0,"output_tokens":1183,"reasoning_output_tokens":329}}

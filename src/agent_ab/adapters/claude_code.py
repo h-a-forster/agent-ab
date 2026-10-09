@@ -30,6 +30,10 @@ _INFRA = re.compile(
 # Agent-side failures: the agent ran out of turns or budget, which is a legitimate outcome.
 _AGENT_SUBTYPES = frozenset({"error_max_turns", "error_max_budget_usd"})
 
+# ``api_error_status`` values that blame the account or provider: auth, no access, unknown
+# model (404, which costs nothing and should not count against the arm), rate limits, outages.
+_INFRA_STATUSES = frozenset({401, 403, 404, 408, 429})
+
 _STDOUT_LIMIT = 16 * 1024 * 1024
 _TAIL = 500
 
@@ -85,6 +89,11 @@ def _pick_result(objects: list[dict[str, Any]]) -> dict[str, Any] | None:
     return objects[-1] if objects else None
 
 
+def _infra_status(v: Any) -> bool:
+    status = _int(v)
+    return status is not None and (status in _INFRA_STATUSES or status >= 500)
+
+
 def _int(v: Any) -> int | None:
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
 
@@ -127,7 +136,10 @@ def parse_result_text(stdout: str, stderr: str, exit_code: int | None) -> AgentU
     failed = obj.get("is_error") is True or exit_code not in (0, None)
     if failed and subtype not in _AGENT_SUBTYPES:
         message = usage.final_message or ""
-        if _looks_like_infra(message):
+        status = obj.get("api_error_status")
+        if _infra_status(status):
+            usage.infra_error = f"API error {status}: {_tail(message, _TAIL - 20)}"
+        elif _looks_like_infra(message):
             usage.infra_error = _tail(message)
         elif _looks_like_infra(stderr):
             usage.infra_error = _tail(stderr)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -12,11 +13,28 @@ from agent_ab.adapters.command import _check_bool, _is_number, _resolve
 from agent_ab.model import AgentInvocation, AgentSpec, AgentUsage, ProcResult, TrialContext
 
 SANDBOXES: frozenset[str] = frozenset({"read-only", "workspace-write", "danger-full-access"})
-EFFORTS: frozenset[str] = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
+# Which levels a model accepts varies; this is the union across current and older models.
+EFFORTS: frozenset[str] = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+)
 _PRICES = ("price_input_per_mtok", "price_cached_input_per_mtok", "price_output_per_mtok")
 _MESSAGE_ITEMS = frozenset({"agent_message", "assistant_message"})  # older releases used the latter
 
 _STDOUT_LIMIT = 16 * 1024 * 1024
+
+# The configured model cannot be used at all (e.g. not available to a ChatGPT-plan account):
+# a setup problem that should be reported, not scored as the arm failing the task.
+_MODEL_UNAVAILABLE = re.compile(
+    r"\bmodel\b[^\n]{0,120}?\b(?:is not supported|not found|does not exist)|model_not_found",
+    re.IGNORECASE,
+)
+# The sandbox could not start any process (seen with ``[windows] sandbox = "elevated"`` when
+# no one can approve the elevated setup helper): the agent could not act at all.
+_SANDBOX_BROKEN = re.compile(
+    r"windows sandbox failed|failed to create unified exec process|helper_unknown_error"
+    r"|setup refresh had errors|orchestrator_helper",
+    re.IGNORECASE,
+)
 
 
 def _error_text(event: Mapping[str, Any]) -> str:
@@ -50,8 +68,9 @@ def parse_events(
 ) -> AgentUsage:
     """Fold a Codex JSONL event stream into ``AgentUsage``, skipping unknown or malformed lines."""
     usage = AgentUsage()
-    turns = in_tok = cached = out_tok = 0
-    saw_usage = False
+    turns = in_tok = cached = cache_write = out_tok = 0
+    saw_usage = saw_cache_write = False
+    commands_ok = False  # any command the agent ran exited 0
     pending_error: str | None = None  # last error not followed by a completed turn
     events = 0
     for line in stdout.splitlines():
@@ -75,6 +94,10 @@ def parse_events(
                 in_tok += _int(u.get("input_tokens")) or 0
                 cached += _int(u.get("cached_input_tokens")) or 0
                 out_tok += _int(u.get("output_tokens")) or 0
+                written = _int(u.get("cache_write_input_tokens"))
+                if written is not None:
+                    saw_cache_write = True
+                    cache_write += written
         elif kind == "item.completed":
             item = event.get("item")
             if isinstance(item, Mapping):
@@ -82,6 +105,8 @@ def parse_events(
                 text = item.get("text")
                 if item_type in _MESSAGE_ITEMS and isinstance(text, str):
                     usage.final_message = text
+                elif item_type == "command_execution" and item.get("exit_code") == 0:
+                    commands_ok = True
         elif kind in ("turn.failed", "error"):
             pending_error = _error_text(event)
 
@@ -92,9 +117,13 @@ def parse_events(
         usage.cache_read_tokens = cached
         usage.output_tokens = out_tok
         usage.cost_usd = _cost(options, in_tok, cached, out_tok)
+        if saw_cache_write:
+            # Recorded as reported. Only zeros have been observed, so whether input_tokens
+            # already includes these (and how they are billed) is unverified.
+            usage.cache_write_tokens = cache_write
 
     if pending_error is not None:
-        if _looks_like_infra(pending_error):
+        if _looks_like_infra(pending_error) or _MODEL_UNAVAILABLE.search(pending_error):
             usage.infra_error = _tail(pending_error)
         elif usage.final_message is None:
             usage.final_message = pending_error
@@ -103,6 +132,11 @@ def parse_events(
         usage.infra_error = f"codex exited with code {exit_code} without JSON events: {detail}"
     elif exit_code not in (0, None) and turns == 0 and _looks_like_infra(stderr):
         usage.infra_error = _tail(stderr)
+    if usage.infra_error is None and not commands_ok:
+        broken = _SANDBOX_BROKEN.search(stderr)
+        if broken:
+            line = next(ln for ln in stderr.splitlines() if _SANDBOX_BROKEN.search(ln))
+            usage.infra_error = "codex sandbox could not run commands: " + _tail(line, 400)
     return usage
 
 
