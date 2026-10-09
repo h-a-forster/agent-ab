@@ -1,0 +1,52 @@
+# Template: does higher reasoning effort pay off for the Codex CLI?
+#
+# Same model, same prompt; only `model_reasoning_effort` differs between the arms. The report
+# shows the pass-rate difference with a confidence interval next to the cost and time ratio,
+# so you can see whether "high" is worth what it costs on these tasks.
+#
+#   agent-ab validate examples/codex/experiment.toml
+#   agent-ab run examples/codex/experiment.toml --dry-run
+#   agent-ab run examples/codex/experiment.toml
+#
+# The agent runs unattended in temporary copies of the task repos, inside Codex's
+# "workspace-write" sandbox. Even so, run real experiments in a container, a VM, or on a
+# machine you are comfortable giving an autonomous agent access to.
+
+name = "codex-effort"
+description = "Reasoning effort low vs. high on the example task suite."
+
+tasks = ["../tasks/*"]
+repeats = 3
+jobs = 2
+seed = 0
+budget_usd = 15.0        # only enforced when prices are set below (otherwise cost is unknown)
+timeout_s = 900
+check_timeout_s = 300
+max_retries = 2
+baseline = "low"
+
+[agent]
+adapter = "codex"        # requires the `codex` CLI on PATH, signed in
+# model = "<model-id>"   # optional; defaults to the CLI's configured model
+
+[agent.options]
+sandbox = "workspace-write"
+# ignore_user_config = true   # keep local Codex configuration out of the experiment
+#
+# Pricing, used to turn reported token counts into cost. Fill in the CURRENT prices for the
+# model you run, in USD per million tokens; without them cost is reported as unknown.
+# price_input_per_mtok = 0.0
+# price_cached_input_per_mtok = 0.0
+# price_output_per_mtok = 0.0
+
+[[arms]]
+name = "low"
+description = "model_reasoning_effort = low"
+[arms.agent]
+effort = "low"
+
+[[arms]]
+name = "high"
+description = "model_reasoning_effort = high"
+[arms.agent]
+effort = "high"

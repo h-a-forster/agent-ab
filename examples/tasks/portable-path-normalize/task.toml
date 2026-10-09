@@ -1,0 +1,31 @@
+prompt = """
+`archpath.normalize()` gives different answers depending on the OS it runs on, which breaks
+archives that are created on one platform and extracted on another:
+
+- On Windows, `normalize("docs/a.txt")` returns `docs\\a.txt`, so members no longer match the
+  manifest, which uses forward slashes.
+- On Linux and macOS, `normalize("docs\\..\\..\\secret")` is accepted unchanged, although an
+  archive written on Windows means "go two levels up" here, and `C:\\temp\\x` is accepted as a
+  relative name.
+- On every OS, a legitimate file named `..config` is rejected as escaping the root.
+
+Please make `normalize()`, `split_parts()` and `is_safe()` behave identically on every OS,
+without touching the filesystem. Rules:
+
+- Both `/` and `\\` are separators.
+- Empty components and `.` are dropped; `..` removes the previous component. A `..` that would
+  go above the root raises `UnsafePathError`, even if later components would come back down
+  (`a/../../a/b` is unsafe).
+- Absolute paths raise `UnsafePathError`: anything starting with a separator (including UNC
+  forms like `\\\\server\\share` and `//server/share`) and anything whose first component starts
+  with a drive letter and a colon (`C:`, `c:\\x`, `C:foo`, `d:/x`).
+- A NUL character anywhere raises `UnsafePathError`.
+- The result joins the remaining components with `/`: no leading or trailing separator, and
+  `""` for paths that resolve to the root (`""`, `.`, `a/..`, `./`). Component text, including
+  case, spaces and names such as `..config`, `a..b` or `...`, is kept exactly.
+- `split_parts()` returns the components of the normalised path (`[]` for the root);
+  `is_safe()` returns False exactly when `normalize()` would raise.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "medium"]

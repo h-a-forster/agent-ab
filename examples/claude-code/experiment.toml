@@ -1,0 +1,59 @@
+# Template: does telling Claude Code NOT to write its own tests change outcomes and cost?
+#
+# Writing tests is extra work: it costs tokens and time, but it may also catch mistakes
+# before the agent declares victory. This experiment measures both sides on the example
+# task suite. Every trial is graded by the task's hidden check, never by the agent's tests.
+#
+#   agent-ab validate examples/claude-code/experiment.toml           # config + CLI available?
+#   agent-ab run examples/claude-code/experiment.toml --dry-run      # show the trial plan
+#   agent-ab run examples/claude-code/experiment.toml                # real run (costs money)
+#
+# ============================================================================================
+#  SAFETY: the agent runs UNATTENDED with FULL PERMISSIONS (permission_mode below).
+#  It works inside temporary copies of the task repos, but nothing stops it from running any
+#  command your user account can run. Run this in a container, a VM, or on a machine you are
+#  comfortable giving an autonomous agent access to. Do not run it next to credentials or
+#  data you care about.
+# ============================================================================================
+#
+# Cost: 10 tasks x 2 arms x 3 repeats = 60 trials. budget_usd stops launching new trials once
+# the recorded spend reaches it; trials already running finish. Interrupted runs can be
+# continued with `agent-ab run ... --resume <run_dir>`.
+
+name = "claude-code-no-tests"
+description = "Control vs. an instruction not to write or run tests."
+
+tasks = ["../tasks/*"]
+repeats = 3
+jobs = 2                 # concurrent agents; raise carefully (rate limits, machine load)
+seed = 0
+budget_usd = 15.0
+timeout_s = 900          # agent wall clock per attempt; a timeout counts as a failure
+check_timeout_s = 300
+max_retries = 2          # extra attempts after infrastructure errors (auth, rate limit, ...)
+baseline = "control"
+
+[agent]
+adapter = "claude-code"  # requires the `claude` CLI on PATH, signed in
+model = "sonnet"
+# effort = "medium"      # optional: low, medium, high, xhigh, max
+
+[agent.options]
+# Needed for unattended runs: the agent must edit files and run commands without prompts.
+# See the SAFETY note at the top of this file.
+permission_mode = "bypassPermissions"
+# max_budget_usd = 1.0   # optional per-trial spending cap passed to the CLI
+# max_turns = 60         # optional per-trial turn cap
+# setting_sources = "project"  # optional: comma-separated settings sources the CLI loads
+#                              # (user, project, local); "project" keeps your personal
+#                              # configuration out of the experiment
+
+[[arms]]
+name = "control"
+description = "Task prompt only; the agent decides whether to write tests."
+
+[[arms]]
+name = "no-tests"
+description = "Same prompt plus an instruction not to write or run tests."
+prompt_suffix = """Do not write new tests and do not run the test suite. Implement the change \
+directly, then stop."""

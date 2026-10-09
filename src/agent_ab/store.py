@@ -33,7 +33,8 @@ class RunStore:
     """Read and write one run directory. ``append`` is safe to call from several threads."""
 
     def __init__(self, run_dir: Path):
-        self.run_dir = Path(run_dir)
+        # Absolute, because artifact paths are handed to agents whose cwd is elsewhere.
+        self.run_dir = Path(run_dir).resolve()
         self.meta: dict[str, Any] = {}
         self._lock = threading.Lock()
 

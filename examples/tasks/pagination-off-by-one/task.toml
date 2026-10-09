@@ -1,0 +1,22 @@
+prompt = """
+Pagination in `pagekit.paginate()` is broken in two ways:
+
+1. Every page comes back one item short. With 10 items and `per_page=3`, page 1 should contain
+   items 1-3, but it only contains items 1-2.
+2. The last, partially filled page is unreachable. With 10 items and `per_page=3` there should be
+   4 pages (the last one holding a single item), but `total_pages` is 3 and asking for page 4
+   raises `PageOutOfRange`.
+
+Expected behaviour (pages are 1-based):
+
+- `total_pages` is the number of pages needed to show every item, and is at least 1: an empty
+  sequence has exactly one (empty) page, so `paginate([], 1)` returns a page with no items.
+- `has_prev` / `has_next` tell whether a previous / next page exists.
+- Requesting a page below 1 or above `total_pages` raises `PageOutOfRange`.
+- `per_page` below 1 still raises `ValueError`.
+
+Please fix `paginate()` without changing its signature or the `Page` fields.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "easy"]

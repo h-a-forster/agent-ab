@@ -1,0 +1,80 @@
+# Quickstart: an offline A/B experiment you can run in seconds.
+#
+#   agent-ab validate examples/quickstart/experiment.toml --tasks   # check the task suite
+#   agent-ab run examples/quickstart/experiment.toml                 # run the experiment
+#
+# It uses the built-in `mock` adapter: a fake agent that needs no network, API key or money.
+# For each trial it "solves" the task with a fixed probability by copying the task's reference
+# `solution/` into the workspace, then the task's hidden check grades the result for real.
+# Costs, durations and token counts are simulated. The numbers it produces mean nothing about
+# real agents; the point is to see the whole pipeline (workspaces, checks, statistics, report)
+# before spending money on real runs. See ../claude-code/ and ../codex/ for real templates.
+
+# Experiment id: names the run directory. Letters, digits, ".", "_" and "-".
+name = "quickstart"
+description = "Offline demo: does an AGENTS.md guide or a terser prompt change the pass rate?"
+
+# Task directories, as globs relative to this file. Every matching directory that contains
+# a task.toml is one task (see ../README.md for the task format).
+tasks = ["../tasks/*"]
+
+# Each task runs `repeats` times per arm: 10 tasks x 3 arms x 3 repeats = 90 trials.
+# More repeats narrow the confidence intervals; real experiments usually need 3-5.
+repeats = 3
+
+# Trials that run at the same time. Each trial gets its own temporary workspace.
+jobs = 4
+
+# Seeds the trial order and the mock agent's coin flips, so reruns are reproducible.
+seed = 0
+
+# Wall-clock limits per agent attempt and per hidden check, in seconds.
+timeout_s = 60
+# Checks normally take about a second; the performance task's check takes a few seconds
+# when the code is still slow. A check that runs out of time counts as a failure.
+check_timeout_s = 120
+
+# The arm every other arm is compared with (defaults to the first arm).
+baseline = "control"
+
+# Defaults shared by every arm. Arms can override any of these under [arms.agent].
+[agent]
+adapter = "mock"
+
+[agent.options]
+# Probability that the mock agent solves a task. Each arm overrides it below.
+solve_rate = 0.55
+# Per-task solve rates override solve_rate, so some tasks are harder than others.
+# (Each arm overrides solve_rate but not this table, so the hard tasks stay hard everywhere.)
+task_rates = { "dst-daily-schedule" = 0.3, "lru-cache-thread-safety" = 0.25, "pagination-off-by-one" = 0.9 }
+# Simulated cost per trial in USD: a fixed number or a [low, high] range.
+cost_usd = [0.04, 0.12]
+# Simulated agent run time in seconds, kept tiny so the demo is fast.
+duration_s = [0.05, 0.3]
+# Simulated token count reported per trial.
+tokens = 12000
+
+# --- Arms: the configurations being compared -------------------------------------------
+
+[[arms]]
+name = "control"
+description = "Stock setup: the task prompt only."
+
+[[arms]]
+name = "with-guide"
+description = "Adds an AGENTS.md with general coding guidance to every workspace."
+# Files in this directory (relative to this file) are copied into each workspace before the
+# agent starts. They are part of the baseline snapshot, so they never count as agent changes.
+overlay = "arms/with-guide"
+[arms.agent.options]
+# Options merge over [agent.options] key by key, so cost, duration and task_rates still apply.
+solve_rate = 0.75
+
+[[arms]]
+name = "terse"
+description = "Asks for minimal changes and a short final answer."
+# Text appended to every task prompt (prompt_prefix works the same way, before it).
+prompt_suffix = "Make the smallest change that fixes the issue. Reply with one short sentence."
+[arms.agent.options]
+solve_rate = 0.5
+cost_usd = [0.03, 0.09]

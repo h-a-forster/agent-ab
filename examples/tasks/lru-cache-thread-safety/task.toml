@@ -1,0 +1,32 @@
+prompt = """
+`keepcache.LRUCache` misbehaves in production, where it is shared by many worker threads:
+
+- It is not least-recently-*used*: `get()` does not mark an entry as recently used, so hot
+  entries get evicted.
+- Re-`put()`-ting an existing key evicts an unrelated entry even though the cache did not grow,
+  and afterwards the cache occasionally crashes with `KeyError` during eviction.
+- Under concurrent use, statistics drift, `len()` can exceed the capacity, and
+  `get_or_compute()` runs the expensive `compute` function many times for the same key when
+  several threads miss on it at once.
+
+Please make `LRUCache` correct and thread-safe, keeping its public API. Required behaviour:
+
+1. `get()` and `get_or_compute()` hits mark the entry most recently used; `peek()` and
+   `in` / `len()` never change recency or statistics.
+2. `put()` of an existing key replaces the value, marks it most recently used and never evicts.
+   A new key evicts exactly the least recently used entry when the cache is full.
+3. `on_evict(key, value)` is called once per capacity eviction (not for replacements or
+   `clear()`), with the evicted pair, in eviction order. The callback may call methods of the
+   same cache without deadlocking.
+4. `stats()`: every `get()` counts as exactly one hit or one miss; `evictions` counts capacity
+   evictions. Counters stay exact under concurrency.
+5. `get_or_compute(key, compute)`: when many threads miss on the same key concurrently,
+   `compute(key)` runs only once and every caller gets its result. If `compute` raises, the
+   exception propagates, nothing is cached, and a later call tries again. Computing one key
+   must not block callers that are working with other, already cached keys.
+6. All methods are safe to call from any number of threads; the cache never holds more than
+   `capacity` entries.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 180
+tags = ["bugfix", "hard"]

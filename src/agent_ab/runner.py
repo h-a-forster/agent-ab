@@ -409,7 +409,9 @@ def run_experiment(
         if (run_dir / RUN_FILE).exists():
             raise RunStoreError(f"{run_dir} already contains a run; use --resume to continue it")
         prior_cost = 0.0
-    run_dir = Path(run_dir)
+    # Agents run with the workspace as their cwd, so every artifact path handed to them
+    # must be absolute or their files land inside the workspace.
+    run_dir = Path(run_dir).resolve()
 
     _check_adapters(exp)
 

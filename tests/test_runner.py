@@ -483,3 +483,13 @@ def test_end_to_end_with_mock_adapter(tmp_path):
     assert {r.status for r in final.values() if r.arm == "weak"} == {"fail"}
     assert summary.total_cost_usd == pytest.approx(0.02 * 2 + 0.01 * 2)
     assert ws_left(tmp_path) == []
+
+
+def test_relative_run_dir_keeps_artifacts_out_of_workspace(tmp_path, monkeypatch):
+    """A relative --out must not make agents write usage files into their workspace."""
+    from agent_ab.store import RunStore
+
+    monkeypatch.chdir(tmp_path)
+    store = RunStore(Path("rel-run"))
+    assert store.run_dir.is_absolute()
+    assert store.attempt_dir("t__a__r0", 0).is_absolute()

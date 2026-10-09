@@ -1,0 +1,20 @@
+prompt = """
+Feature request for the `levelcount` CLI: add a `--min-level LEVEL` option (short form `-m`)
+so noisy levels can be hidden, e.g. `python -m levelcount --min-level warning app.log`.
+
+Required behaviour:
+
+- Only levels at or above LEVEL are counted and shown, using the existing severity order
+  DEBUG < INFO < WARNING < ERROR < CRITICAL. This applies to both the table and `--json`
+  output, and the TOTAL row of the table only sums the levels that are shown.
+- LEVEL is case-insensitive and accepts the same aliases as log lines (`warn`, `err`, `fatal`).
+- Without the option, output is exactly as today.
+- An unknown LEVEL is a usage error: argparse-style, exit status 2, and the message on stderr
+  must name the bad value and list the valid levels (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+- `--help` documents the option.
+
+`main(argv)` must keep returning the exit status for normal runs.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "easy"]
