@@ -575,3 +575,43 @@ def test_number_formatting_caps():
     assert _fmt_seconds(2.25) == "2.2s" or _fmt_seconds(2.25) == "2.3s"
     assert _total([None, 10**400, 1.0]) == float("inf")
     assert _total([1.0, None, 2]) == 3.0
+
+
+# --------------------------------------------------------------------------- power
+
+
+def test_power_json_output(capsys):
+    code, out, err = run_cli(
+        capsys, "power", "--effect", "20", "--tasks", "10,20", "--repeats", "1",
+        "--sims", "20", "--seed", "5", "--format", "json",
+    )
+    assert code == 0, err
+    data = json.loads(out)
+    assert data["model"]["name"] == "beta"
+    assert [(r["tasks"], r["repeats"]) for r in data["rows"]] == [(10, 1), (20, 1)]
+    assert data["false_positive"]["effect_pts"] == 0.0
+    assert {"effect_pts", "design"} <= set(data["recommendations"][0])
+
+
+def test_power_text_output(capsys):
+    code, out, _ = run_cli(capsys, "power", "--tasks", "10", "--repeats", "1", "--sims", "10")
+    assert code == 0
+    assert "Power plan" in out and "Smallest design with at least 80% power:" in out
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [("--effect", "0"), ("--effect", "100"), ("--effect", "10,x"), ("--tasks", "10,,20"),
+     ("--tasks", "-5"), ("--repeats", "0"), ("--alpha", "2"), ("--sims", "0"),
+     ("--seed", "1.5")],
+)
+def test_power_bad_values_exit_2_with_one_line(capsys, flag, value):
+    code, out, err = run_cli(capsys, "power", flag, value)
+    assert code == 2
+    assert out == ""
+    assert err.count("\n") == 1 and err.startswith("agent-ab: error: ") and flag in err
+
+
+def test_power_missing_run_dir_exits_2(tmp_path, capsys):
+    code, _, err = run_cli(capsys, "power", tmp_path / "nope", "--sims", "5")
+    assert code == 2 and "run directory not found" in err

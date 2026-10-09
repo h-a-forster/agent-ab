@@ -1,4 +1,4 @@
-"""Command-line entry point: ``agent-ab init | validate | run | report | status | show``.
+"""Command-line entry point: ``agent-ab init | validate | run | report | status | show | power``.
 
 Output conventions: results go to stdout, progress and diagnostics to stderr. Streams keep
 the console's encoding and replace what it cannot show; control characters from run data are
@@ -24,13 +24,14 @@ import signal
 import sys
 import tempfile
 import threading
+import time
 import traceback
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any, TextIO
 
-from agent_ab import __version__
+from agent_ab import __version__, power
 from agent_ab.adapters import get_adapter
 from agent_ab.config import compute_fingerprint, load_experiment
 from agent_ab.errors import AgentABError, ConfigError, RunStoreError
@@ -362,6 +363,39 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("show", help="one trial's record and artifact paths")
     p.add_argument("run_dir", metavar="RUN_DIR")
     p.add_argument("trial_id", metavar="TRIAL_ID", help="e.g. fix-slugify__control__r0")
+
+    p = sub.add_parser(
+        "power",
+        help="how many tasks and repeats you need (simulation)",
+        description="Estimate, by simulation, the chance that a run of a given size detects "
+        "a given pass-rate improvement. Optionally base task difficulty on a pilot run.",
+    )
+    p.add_argument(
+        "run_dir", metavar="RUN_DIR", nargs="?",
+        help="pilot run whose baseline arm sets the task difficulty distribution",
+    )
+    p.add_argument(
+        "--effect", default=power.DEFAULT_EFFECTS, metavar="PTS[,PTS...]",
+        help=f"improvements to detect, in percentage points (default {power.DEFAULT_EFFECTS})",
+    )
+    p.add_argument(
+        "--tasks", default=power.DEFAULT_TASKS, metavar="N[,N...]",
+        help=f"task counts to simulate (default {power.DEFAULT_TASKS})",
+    )
+    p.add_argument(
+        "--repeats", default=power.DEFAULT_REPEATS, metavar="R[,R...]",
+        help=f"repeats per task and arm (default {power.DEFAULT_REPEATS})",
+    )
+    p.add_argument(
+        "--alpha", default=power.DEFAULT_ALPHA, metavar="A",
+        help=f"significance level (default {power.DEFAULT_ALPHA})",
+    )
+    p.add_argument(
+        "--sims", default=power.DEFAULT_SIMS, metavar="N",
+        help=f"simulated experiments per design (default {power.DEFAULT_SIMS})",
+    )
+    p.add_argument("--seed", default="0", metavar="S", help="simulation seed (default 0)")
+    p.add_argument("--format", choices=("text", "md", "json"), default="text")
     return parser
 
 
@@ -1084,6 +1118,41 @@ def cmd_show(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+# --------------------------------------------------------------------------- power
+
+
+def cmd_power(args: argparse.Namespace) -> int:
+    try:
+        options = power.parse_options(
+            effect=args.effect, tasks=args.tasks, repeats=args.repeats,
+            alpha=args.alpha, sims=args.sims, seed=args.seed,
+        )
+    except ValueError as e:
+        raise UsageError(str(e)) from e
+    if args.run_dir is None:
+        model = power.beta_model()
+    else:
+        store = _open_run(args.run_dir)
+        try:
+            model = power.pilot_model(store.meta, store.records())
+        except ValueError as e:
+            raise UsageError(str(e)) from e
+    for warning in model.warnings:
+        _warn(warning)
+
+    started = time.monotonic()
+
+    def progress(done: int, total: int, row: power.DesignResult) -> None:
+        if time.monotonic() - started > 2 and done < total:
+            _err(f"[{done}/{total}] effect +{row.effect:g} pts, tasks {row.tasks}, "
+                 f"repeats {row.repeats}")
+
+    plan = power.run_plan(model, options, progress=progress)
+    sys.stdout.write(power.render(plan, args.format))
+    sys.stdout.flush()
+    return EXIT_OK
+
+
 # --------------------------------------------------------------------------- main
 
 
@@ -1094,6 +1163,7 @@ _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "report": cmd_report,
     "status": cmd_status,
     "show": cmd_show,
+    "power": cmd_power,
 }
 
 
