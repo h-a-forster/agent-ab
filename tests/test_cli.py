@@ -128,7 +128,7 @@ def test_init_refuses_non_empty_dir(tmp_path, capsys):
 def test_validate_summary(demo, capsys):
     code, out, _ = run_cli(capsys, "validate", demo / "experiment.toml")
     assert code == 0
-    assert "Planned trials: 4 tasks x 2 arms x 3 repeats = 24" in out
+    assert "Planned trials: 4 tasks x 2 arms x 2 repeats = 16" in out
     assert "control *" in out and "arms/with-guide" in out
     assert "available" in out
 
@@ -188,7 +188,7 @@ def test_dry_run_creates_nothing(demo, capsys):
     code, out, err = run_cli(capsys, "run", demo / "experiment.toml", "--dry-run",
                              "--out", out_dir)
     assert code == 0
-    assert "24 planned" in err and "dry run" in err
+    assert "16 planned" in err and "dry run" in err
     assert not out_dir.exists() and not (demo / "runs").exists()
     assert out == ""
 
@@ -237,11 +237,13 @@ def test_quiet_suppresses_trial_lines(demo, capsys):
 def test_budget_stop_then_resume(demo, capsys):
     cfg = demo / "experiment.toml"
     run_dir = demo / "r"
-    code, _, err = run_cli(capsys, "run", cfg, "--out", run_dir, "--budget", "0", *SMALL)
+    # One job and a budget below one trial's cost: exactly one trial runs, then it stops.
+    code, _, err = run_cli(capsys, "run", cfg, "--out", run_dir, "--budget", "0.001",
+                           "--jobs", "1", *SMALL)
     assert code == 0
     assert "budget" in err and "--resume" in err
     assert "--repeats 1" in err  # the hint reproduces the fingerprint-relevant overrides
-    assert RunStore.open(run_dir).records() == []
+    assert len(RunStore.open(run_dir).records()) == 1
 
     # A different --repeats changes the fingerprint, so resuming must refuse.
     code, _, err = run_cli(capsys, "run", cfg, "--resume", run_dir, "--repeats", "2",
@@ -266,6 +268,8 @@ def test_ctrl_c_exits_130_with_resume_hint(demo, capsys, monkeypatch):
     import agent_ab.runner as runner
 
     def interrupted(exp, run_dir, **kwargs):
+        if kwargs["options"].dry_run:  # the CLI's silent preflight
+            return None
         RunStore.create(run_dir, exp, planned_trials=4)
         raise KeyboardInterrupt
 
@@ -281,6 +285,8 @@ def test_cancelled_summary_exits_130(demo, capsys, monkeypatch):
     import agent_ab.runner as runner
 
     def cancelled(exp, run_dir, **kwargs):
+        if kwargs["options"].dry_run:  # the CLI's silent preflight
+            return None
         RunStore.create(run_dir, exp, planned_trials=4)
         return runner.RunSummary(run_dir=run_dir, planned=4, completed=1, errors=0,
                                  skipped_budget=0, cancelled=True, total_cost_usd=0.0,
@@ -387,7 +393,7 @@ def test_show_unknown_trial_suggests(demo, capsys):
     assert code == 2
     assert err.startswith("agent-ab: error: ")
     assert "did you mean" in err and "fix-slugify__control__r0" in err
-    code, _, err = run_cli(capsys, "show", run_dir, "parse-duration__control__r2")
+    code, _, err = run_cli(capsys, "show", run_dir, "parse-duration__control__r1")
     assert code == 2 and "has not run yet" in err
 
 
@@ -397,3 +403,175 @@ def test_show_finished_trial_lists_artifacts(finished_run, capsys):
     assert code == 0
     for name in ("prompt.md", "agent.stdout", "check.stdout", "record.json"):
         assert name in out
+
+
+# --------------------------------------------------------------------------- robustness
+
+
+def test_termination_signal_cancels_run_and_restores_handler(demo, capsys, monkeypatch):
+    import signal
+    import time
+
+    import agent_ab.runner as runner
+
+    sig = signal.SIGBREAK if sys.platform == "win32" else signal.SIGTERM
+    before = signal.getsignal(sig)
+
+    def killed(exp, run_dir, **kwargs):
+        if kwargs["options"].dry_run:
+            return None
+        RunStore.create(run_dir, exp, planned_trials=4)
+        signal.raise_signal(sig)  # Ctrl-Break / console close / kill
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:  # the handler interrupts this wait
+            time.sleep(0.01)
+        raise AssertionError("the signal did not interrupt the run")
+
+    monkeypatch.setattr(runner, "run_experiment", killed)
+    run_dir = demo / "r"
+    code, _, err = run_cli(capsys, "run", demo / "experiment.toml", "--out", run_dir, *SMALL)
+    assert code == 130
+    assert "interrupted; resume with: agent-ab run" in err
+    assert signal.getsignal(sig) == before
+
+
+def test_streams_keep_console_encoding(monkeypatch):
+    import io
+
+    from agent_ab import cli
+
+    raw = io.BytesIO()
+    utf8 = io.TextIOWrapper(raw, encoding="utf-8", errors="strict")
+    monkeypatch.setattr(sys, "stdout", utf8)
+    cli._setup_streams()
+    assert utf8.encoding == "utf-8" and utf8.errors == "replace"
+    cli._out("run dir ü 日本")
+    assert raw.getvalue().decode("utf-8").strip() == "run dir ü 日本"
+
+    raw = io.BytesIO()
+    legacy = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdout", legacy)
+    cli._setup_streams()
+    cli._out("ü 日")  # cannot be encoded: replaced, not a crash
+    assert raw.getvalue().decode("cp1252").strip() == "ü ?"
+
+
+def test_clean_strips_terminal_controls():
+    from agent_ab.cli import _clean
+
+    hostile = "a\x1b[2J\x1b]0;title\x07b\x1b]8;;http://x\x1b\\c\x9b31md\x07\x00e\x7f\x85f\tg\nh"
+    assert _clean(hostile) == "abcde" + "f\tg\nh"
+    assert _clean("plain ü text") == "plain ü text"
+
+
+@pytest.mark.parametrize("cmd", ["report", "status"])
+def test_missing_run_dir_exits_2(tmp_path, capsys, cmd):
+    code, out, err = run_cli(capsys, cmd, tmp_path / "nope")
+    assert code == 2
+    assert err.count("\n") == 1 and "run directory not found" in err
+    code, _, err = run_cli(capsys, "show", tmp_path / "nope", "a__b__r0")
+    assert code == 2
+
+
+def test_resume_missing_dir_exits_2_before_header(demo, capsys):
+    code, _, err = run_cli(capsys, "run", demo / "experiment.toml", "--resume", demo / "nope")
+    assert code == 2
+    assert err.count("\n") == 1 and "run directory not found" in err
+
+
+def test_out_onto_existing_run_exits_2_before_header(finished_run, capsys):
+    config, run_dir = finished_run
+    code, _, err = run_cli(capsys, "run", config, "--out", run_dir, *SMALL)
+    assert code == 2
+    assert err.count("\n") == 1 and "already contains a run" in err and "--resume" in err
+
+
+def test_unavailable_adapter_fails_before_header(demo, capsys):
+    cfg = demo / "experiment.claude-code.toml"
+    text = cfg.read_text(encoding="utf-8").replace(
+        'max_turns = 30', 'max_turns = 30\nexecutable = "agent-ab-no-such-binary"'
+    )
+    cfg.write_text(text, encoding="utf-8")
+    code, _, err = run_cli(capsys, "run", cfg, "--out", demo / "r")
+    assert code == 1
+    assert "agent-ab-no-such-binary" in err
+    assert "experiment " not in err and "run dir" not in err
+    assert not (demo / "r").exists()
+
+
+def test_incomplete_run_json_is_a_clear_error(tmp_path, capsys):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.json").write_text('{"tool": "agent-ab", "schema": 1}', encoding="utf-8")
+    for argv in (["report", run_dir], ["status", run_dir], ["show", run_dir, "a__b__r0"]):
+        code, _, err = run_cli(capsys, *argv)
+        assert code == 1
+        assert "run.json is incomplete" in err and "baseline" in err and "None" not in err
+
+
+@pytest.mark.parametrize("name", ["con", "NUL.html", "aux.md", "com1.txt", "LPT9", "sub/prn.json"])
+def test_report_out_reserved_device_name(finished_run, tmp_path, capsys, name):
+    _, run_dir = finished_run
+    code, _, err = run_cli(capsys, "report", run_dir, "--out", str(tmp_path / name))
+    assert code == 2
+    assert "reserved device name" in err
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [("--budget", "0"), ("--budget", "-1"), ("--budget", "nan"), ("--jobs", "0"),
+     ("--jobs", "x"), ("--repeats", "0"), ("--repeats", "-2")],
+)
+def test_numeric_flags_must_be_positive(demo, capsys, flag, value):
+    code, _, err = run_cli(capsys, "run", demo / "experiment.toml", flag, value)
+    assert code == 2
+    assert flag in err and "Traceback" not in err
+
+
+def _hostile_run(demo: Path) -> Path:
+    exp = load_experiment(demo / "experiment.toml")
+    run_dir = demo / "hostile"
+    RunStore.create(run_dir, exp, planned_trials=24)
+    lines = [
+        {"trial_id": "fix-slugify__control__r0", "task": "fix-slugify", "arm": "control",
+         "repeat": 0, "attempt": 2, "status": "error", "cost_usd": 10**400,
+         "error": "boom\x1b]0;owned\x07\x1b[2J\x1b[1A hidden", "artifacts": "../../.."},
+        {"trial_id": "x\x1b[31m__with-guide__r0", "task": "x\x1b[31m", "arm": "with-guide",
+         "repeat": 0, "attempt": 2, "status": "error", "cost_usd": 1e308, "duration_s": 1e300,
+         "error": "\x9b2J\x00bad"},
+    ]
+    with open(run_dir / "trials.jsonl", "a", encoding="utf-8") as f:
+        for line in lines:
+            f.write(json.dumps(line) + "\n")
+    return run_dir
+
+
+def test_status_survives_hostile_records(demo, capsys):
+    run_dir = _hostile_run(demo)
+    code, out, err = run_cli(capsys, "status", run_dir)
+    assert code == 0, err
+    assert "\x1b" not in out and "\x07" not in out and "\x9b" not in out and "\x00" not in out
+    assert "spend: >$1e6" in out
+    assert "boom" in out and "hidden" in out
+
+
+def test_show_refuses_artifacts_outside_run_dir(demo, capsys):
+    run_dir = _hostile_run(demo)
+    code, out, err = run_cli(capsys, "show", run_dir, "fix-slugify__control__r0")
+    assert code == 0
+    assert "outside the run directory" in err
+    assert "(not listed)" in out
+    assert "\x1b" not in out + err
+
+
+def test_number_formatting_caps():
+    from agent_ab.cli import _fmt_cost, _fmt_seconds, _total
+
+    assert _fmt_cost(None) == "-" and _fmt_cost("x") == "-"
+    assert _fmt_cost(10**400) == ">$1e6" and _fmt_cost(float("inf")) == ">$1e6"
+    assert _fmt_cost(-(10**400)) == "<-$1e6" and _fmt_cost(float("nan")) == "-"
+    assert _fmt_cost(0.25) == "$0.250"
+    assert _fmt_seconds(1e300) == ">1e6s" and _fmt_seconds(None) == "-"
+    assert _fmt_seconds(2.25) == "2.2s" or _fmt_seconds(2.25) == "2.3s"
+    assert _total([None, 10**400, 1.0]) == float("inf")
+    assert _total([1.0, None, 2]) == 3.0

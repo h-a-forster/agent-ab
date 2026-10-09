@@ -12,9 +12,13 @@ import pytest
 from agent_ab import adapters
 from agent_ab.adapters.base import Adapter
 from agent_ab.config import (
+    COMMAND_PLACEHOLDERS,
+    TASK_PLACEHOLDERS,
+    check_placeholders,
     compute_fingerprint,
     expand_placeholders,
     experiment_to_dict,
+    find_placeholders,
     load_experiment,
     load_task,
 )
@@ -646,7 +650,7 @@ def test_task_error_is_located_in_task_file(exp_dir: Path):
         ('prompt = "x"\ncheck = ["{pyhton}"]\n', "check[0]", "unknown placeholder {pyhton}"),
         ('prompt = "x"\ncheck = "echo {prompt}"\n', "check", "unknown placeholder {prompt}"),
         ('prompt = "x"\ncheck = "find . -exec {} +"\n', "check", "unknown placeholder {}"),
-        ('prompt = "x"\ncheck = "echo }"\n', "check", "unmatched '}'"),
+        ('prompt = "x"\ncheck = "echo }"\n', "check", "unbalanced brace '}'"),
         ('prompt = "x"\ncheck = ["a"]\nsetup = ["{x}"]\n', "setup[0]", "unknown placeholder"),
         ('prompt = "x"\ncheck = ["a"]\ntimeout_s = 0\n', "timeout_s", "must be > 0"),
         ('prompt = "x"\ncheck = ["a"]\ntimeout_s = "5"\n', "timeout_s", "expected a number"),
@@ -733,6 +737,32 @@ def test_expand_placeholders_errors(template):
 def test_expand_placeholders_error_lists_known():
     with pytest.raises(ConfigError, match=r"known: \{python\}, \{workspace\}"):
         expand_placeholders("{pyth}", {"python": "p", "workspace": "w"})
+
+
+def test_find_placeholders_ignores_literal_braces():
+    assert find_placeholders("{python} {{x}} {{{workspace}}} {seed}") == {
+        "python", "workspace", "seed"
+    }
+    assert find_placeholders("awk '{{print}}'") == set()
+
+
+@pytest.mark.parametrize("template", ["{prompt}", "x }", "{python"])
+def test_check_placeholders_rejects(template):
+    with pytest.raises(ConfigError):
+        check_placeholders(template, TASK_PLACEHOLDERS)
+
+
+def test_check_placeholders_accepts_known():
+    check_placeholders("{python} {{literal}} {workspace}", TASK_PLACEHOLDERS)
+    check_placeholders(" ".join("{" + n + "}" for n in COMMAND_PLACEHOLDERS),
+                       COMMAND_PLACEHOLDERS)
+
+
+def test_description_round_trips(exp_dir: Path):
+    exp = load(exp_dir, 'description = "Does a guide help?"\n' + BASE)
+    assert exp.description == "Does a guide help?"
+    assert experiment_to_dict(exp)["description"] == "Does a guide help?"
+    assert load(exp_dir, BASE).description == ""
 
 
 def test_command_placeholders_all_accepted(exp_dir: Path):

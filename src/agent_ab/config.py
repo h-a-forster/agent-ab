@@ -17,7 +17,7 @@ import os
 import re
 import tomllib
 from collections.abc import Mapping, Sequence
-from dataclasses import fields, replace
+from dataclasses import replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -198,14 +198,16 @@ class _Table:
 
 # --------------------------------------------------------------------------- placeholders
 
+# The single implementation of ``{name}`` placeholders, shared by task commands, the command
+# adapter and validation, so every place agrees on what is a placeholder and what is literal.
 _TOKEN_RE = re.compile(r"\{\{|\}\}|\{([^{}]*)\}|[{}]")
 
 
 def expand_placeholders(template: str, values: Mapping[str, str]) -> str:
     """Replace ``{name}`` with ``values[name]``; ``{{`` and ``}}`` are literal braces.
 
-    Raises ``ConfigError`` for an unknown placeholder or an unmatched brace, so typos never
-    reach a subprocess as literal text.
+    Raises ``ConfigError`` for an unknown placeholder or an unbalanced brace, so typos never
+    reach a subprocess as literal text. Substituted values are never expanded again.
     """
 
     def substitute(match: re.Match[str]) -> str:
@@ -217,7 +219,8 @@ def expand_placeholders(template: str, values: Mapping[str, str]) -> str:
         name = match.group(1)
         if name is None:
             raise ConfigError(
-                f"unmatched {token!r} in {template!r} (write {token * 2!r} for a literal brace)"
+                f"unbalanced brace {token!r} in {template!r} "
+                f"(write {token * 2!r} for a literal brace)"
             )
         if name not in values:
             known = ", ".join("{" + k + "}" for k in sorted(values)) or "none"
@@ -227,9 +230,19 @@ def expand_placeholders(template: str, values: Mapping[str, str]) -> str:
     return _TOKEN_RE.sub(substitute, template)
 
 
+def find_placeholders(template: str) -> set[str]:
+    """Names of the ``{placeholders}`` used in ``template`` (literal ``{{``/``}}`` excluded)."""
+    return {m.group(1) for m in _TOKEN_RE.finditer(template) if m.group(1) is not None}
+
+
+def check_placeholders(template: str, allowed: frozenset[str] | set[str]) -> None:
+    """Raise ``ConfigError`` if ``template`` is malformed or uses a name outside ``allowed``."""
+    expand_placeholders(template, dict.fromkeys(allowed, ""))
+
+
 def _check_template(template: str, allowed: frozenset[str], where: str) -> None:
     try:
-        expand_placeholders(template, dict.fromkeys(allowed, "x"))
+        check_placeholders(template, allowed)
     except ConfigError as e:
         raise ConfigError(str(e), where) from None
 
@@ -624,12 +637,9 @@ def load_experiment(
         for _, task_dir in _discover_tasks(t, root, select_tasks)
     )
 
-    extra: dict[str, Any] = {}
-    # Forward compatible: store the description once the model grows a field for it.
-    if "description" in {f.name for f in fields(Experiment)}:
-        extra["description"] = description
     exp = Experiment(
         name=name,
+        description=description,
         config_path=config_path,
         root=root,
         tasks=tasks,
@@ -637,7 +647,6 @@ def load_experiment(
         baseline=baseline,
         workspace_root=workspace_root,
         **scalars,
-        **extra,
     )
     return replace(exp, fingerprint=compute_fingerprint(exp))
 
@@ -672,7 +681,7 @@ def experiment_to_dict(exp: Experiment) -> dict:
 
     return {
         "name": exp.name,
-        "description": getattr(exp, "description", ""),
+        "description": exp.description,
         "config": rel(exp.config_path),
         "repeats": exp.repeats,
         "jobs": exp.jobs,

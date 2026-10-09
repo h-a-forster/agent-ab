@@ -25,19 +25,19 @@ _EXPERIMENT = """\
 # agent-ab demo experiment.
 #
 # Runs offline with the built-in "mock" adapter: a fake agent that "solves" a task by
-# copying the task's solution/ into the workspace with a fixed probability. No network,
+# copying the task's solution/ into the workspace with a set probability. No network,
 # no API keys, no cost. Use it to see the whole pipeline before pointing agent-ab at a
 # real agent (see experiment.claude-code.toml).
 #
 #   agent-ab validate experiment.toml --tasks   # each check must fail before, pass after
-#   agent-ab run experiment.toml                # 4 tasks x 2 arms x 3 repeats = 24 trials
+#   agent-ab run experiment.toml                # 4 tasks x 2 arms x 2 repeats = 16 trials
 
 name = "demo"
 description = "Does an instruction file help? (simulated with the mock adapter)"
 tasks = ["tasks/*"]      # every directory under tasks/ that holds a task.toml
-repeats = 3              # agents are not deterministic: run each task/arm pair 3 times
+repeats = 2              # agents are not deterministic: run each task/arm pair twice
 jobs = 4                 # concurrent trials
-seed = 0                 # fixes the trial order and every trial's seed
+seed = 73                # fixes the trial order and every trial's seed (and so the result)
 timeout_s = 60           # agent wall-clock limit per attempt
 check_timeout_s = 60     # hidden check limit
 baseline = "control"     # every other arm is compared against this one
@@ -46,23 +46,31 @@ baseline = "control"     # every other arm is compared against this one
 adapter = "mock"
 
 [agent.options]          # adapter-specific settings (see docs/adapters.md)
-cost_usd = [0.02, 0.04]  # simulated spend per trial, uniform in [low, high]
+solve_rate = 0.5         # chance of solving a task that task_rates does not list
+cost_usd = [0.02, 0.03]  # simulated spend per trial, uniform in [low, high]
 duration_s = [0.0, 0.2]  # simulated thinking time, kept tiny for the demo
 tokens = 1500
 
 [[arms]]
 name = "control"
 description = "Stock setup"
-[arms.agent.options]     # merged over [agent.options]
-solve_rate = 0.3
+[arms.agent.options.task_rates]   # per-task solve chance, merged over [agent.options]
+fix-slugify = 0.7
+roman-numerals = 0.5
+merge-intervals = 0.3
+parse-duration = 0.2
 
 [[arms]]
 name = "with-guide"
 description = "Adds an AGENTS.md with working rules"
 overlay = "arms/with-guide"   # copied into the workspace before the agent starts
-[arms.agent.options]
-solve_rate = 0.8
-cost_usd = [0.03, 0.05]
+[arms.agent.options]     # the simulated guide helps on every task but costs a little more
+cost_usd = [0.03, 0.04]
+[arms.agent.options.task_rates]
+fix-slugify = 0.9
+roman-numerals = 0.8
+merge-intervals = 0.6
+parse-duration = 0.5
 """
 
 _EXPERIMENT_CLAUDE = """\
@@ -159,7 +167,7 @@ whole run takes seconds and costs nothing. The numbers are simulated; the pipeli
 ## Layout
 
 ```text
-experiment.toml               the demo experiment (mock adapter, 2 arms, 3 repeats)
+experiment.toml               the demo experiment (mock adapter, 2 arms, 2 repeats)
 experiment.claude-code.toml   commented template for a real Claude Code experiment
 arms/with-guide/              files copied into the workspace for the "with-guide" arm
 tasks/<task>/
@@ -180,9 +188,10 @@ agent-ab status runs/<run-dir>              # progress, spend, errors
 agent-ab report runs/<run-dir> --format html --out report.html
 ```
 
-With 4 tasks the confidence intervals are wide and the verdict will usually be
-"no detectable difference": that is the honest answer for so little data. Raise `repeats`,
-add tasks, or change `solve_rate` in `experiment.toml` and watch the intervals move.
+The simulated guide solves 25 points more often, yet the verdict is "no detectable
+difference": with only 4 tasks no result can reach p < 0.05, as the report's notes explain.
+The cost difference, measured on every trial, is detected. Add tasks, raise `repeats`, or
+change `task_rates` and `seed` in `experiment.toml` to see how the verdicts move.
 
 ## Next: a real agent
 

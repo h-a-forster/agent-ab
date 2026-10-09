@@ -30,7 +30,7 @@ def test_templates_are_valid_toml_and_load(tmp_path):
     demo = load_experiment(tmp_path / "demo" / "experiment.toml")
     assert demo.arms[0].agent.adapter == "mock"
     assert [a.name for a in demo.arms] == ["control", "with-guide"]
-    assert demo.repeats == 3 and demo.jobs == 4 and len(demo.tasks) == 4
+    assert demo.repeats == 2 and demo.jobs == 4 and len(demo.tasks) == 4
     assert demo.arms[1].overlay is not None and (demo.arms[1].overlay / "AGENTS.md").is_file()
 
     claude = load_experiment(tmp_path / "demo" / "experiment.claude-code.toml")
@@ -76,3 +76,30 @@ def test_refuses_file_target(tmp_path):
 def test_creates_missing_parents(tmp_path):
     init_project(tmp_path / "a" / "b")
     assert (tmp_path / "a" / "b" / "experiment.toml").is_file()
+
+
+def test_demo_result_is_plausible(tmp_path):
+    # The demo is a first impression: the guide should help visibly on every task (a believable
+    # effect, honestly not significant with 4 tasks) and cost more on every trial.
+    from agent_ab.mock_agent import decide
+    from agent_ab.model import trial_id, trial_seed
+
+    init_project(tmp_path)
+    demo = load_experiment(tmp_path / "experiment.toml")
+    solved: dict[tuple[str, str], int] = {}
+    costs: dict[str, list[float]] = {}
+    for arm in demo.arms:
+        for task in demo.tasks:
+            for r in range(demo.repeats):
+                seed = trial_seed(demo.seed, trial_id(task.id, arm.name, r))
+                d = decide(seed, arm.agent.options, task.id)
+                solved[arm.name, task.id] = solved.get((arm.name, task.id), 0) + d.solve
+                costs.setdefault(arm.name, []).append(d.cost_usd)
+    n = demo.repeats * len(demo.tasks)
+    control = sum(v for (a, _), v in solved.items() if a == "control") / n
+    guide = sum(v for (a, _), v in solved.items() if a == "with-guide") / n
+    assert 0.3 <= control <= 0.6
+    assert 0.2 <= guide - control <= 0.3
+    assert all(solved["with-guide", t.id] >= solved["control", t.id] for t in demo.tasks)
+    assert min(costs["with-guide"]) >= max(costs["control"])
+    assert len(demo.tasks) * len(demo.arms) * demo.repeats <= 16  # keeps the demo fast
