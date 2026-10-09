@@ -85,6 +85,7 @@ class Experiment:
     keep_workspaces: bool = False
     workspace_root: Path | None = None  # default: the system temp directory
     fingerprint: str = ""  # sha256 over resolved config + task/overlay file contents
+    description: str = ""
 
     def arm(self, name: str) -> Arm:
         for a in self.arms:
