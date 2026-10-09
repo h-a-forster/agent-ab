@@ -1,196 +1,152 @@
 # Statistics
 
-This page explains how agent-ab turns trial outcomes into pass rates, intervals, p-values
-and verdicts, and why it is designed this way.
+How agent-ab turns trial outcomes into pass rates, intervals, p-values and verdicts.
 
-## The data
+## Data
 
-An experiment runs every task under every arm, `repeats` times. Each trial ends as `pass`,
-`fail` or `error` (an infrastructure error). Only the last attempt of each trial is used.
+Each trial ends as `pass`, `fail` or `error` (infrastructure error). Only the last attempt
+of a trial counts. For each (task, arm) cell, the **pass fraction** is passes divided by
+completed (pass or fail) trials. With 3 repeats it is 0, 1/3, 2/3 or 1.
 
-For each (task, arm) cell, agent-ab computes the **pass fraction**: passes divided by
-completed (pass or fail) trials. With 3 repeats a cell's fraction is 0, 1/3, 2/3 or 1.
+## Tasks are the unit
 
-## Tasks are the unit of replication
+Repeats of one task are not independent: some tasks are easy for every arm, some are hard.
+360 trials over 40 tasks carry closer to 40 observations' worth of evidence than 360. So
+every statistic treats the task as the unit:
 
-Trials of the same task are not independent. Some tasks are easy for every arm, some are
-hard for every arm, and repeats of one task share whatever makes it easy or hard. Treating
-360 trials over 40 tasks as 360 independent coin flips overstates how much you know: the
-evidence is closer to 40 observations than 360.
-
-So every inference in agent-ab treats the **task** as the unit:
-
-- An arm's **pass rate** is the mean, over tasks, of the cell pass fractions. Each task
-  weighs the same, however many trials completed.
+- An arm's **pass rate** is the mean of its cell pass fractions. Every task weighs the same.
 - Intervals resample tasks, not trials.
 - Comparisons pair arms on the same task.
 
-This answers the question you usually care about: "on tasks like these, does arm B solve
-more of them than arm A?"
+## Arm pass rate
 
-## Arm pass rate and its interval
+The interval is a percentile **cluster bootstrap**: resample tasks with replacement,
+recompute the mean pass fraction, repeat 10,000 times, take the `alpha/2` and `1 - alpha/2`
+percentiles.
 
-The interval for an arm's pass rate is a percentile **cluster bootstrap**: draw tasks with
-replacement (keeping all of a task's trials together), recompute the mean of the pass
-fractions, repeat many times (10,000 by default), and take the 2.5th and 97.5th percentiles
-for a 95% interval.
-
-### Why a trial-level Wilson interval is shown but not used
-
-Reports also show a Wilson score interval computed from total passes over total trials. It
-treats every trial as independent, so when tasks differ in difficulty it is too narrow. It
-is shown for comparison with tools that report trial-level intervals, and because a large
-gap between it and the cluster interval tells you task heterogeneity dominates. Verdicts
-never use it.
+`analysis.json` also contains a Wilson score interval over all trials
+(`pass_rate_wilson`), at the same `alpha`. It treats trials as independent, so it is too
+narrow when tasks differ. Reports do not show it and verdicts do not use it.
 
 ## Comparing an arm with the baseline
 
-Comparisons use only tasks where **both** arms have at least one completed trial (paired
-tasks). For each paired task:
+Comparisons use **paired tasks**: tasks with at least one completed trial in both arms. For
+each paired task:
 
 ```text
-d_task = pass_fraction(arm, task) − pass_fraction(baseline, task)
+d_task = pass_fraction(arm, task) - pass_fraction(baseline, task)
 ```
 
-- The **pass-rate difference** is the mean of `d_task`, in absolute terms (`0.10` is reported
-  as +10 points).
-- Its **confidence interval** is a percentile bootstrap over paired tasks.
-- **Tasks better / worse / tied** count tasks with `d_task` above, below and equal to zero.
+- The **difference** is the mean of `d_task`, reported in percentage points.
+- Its **CI** is a percentile bootstrap over paired tasks.
+- **Better / worse / tied** count tasks with `d_task` above, below and equal to zero.
 
-Pairing removes task difficulty from the comparison. A hard task drags both arms down
-equally, so it does not widen the interval for the difference.
+Pairing removes task difficulty: a hard task lowers both arms equally.
 
-### The paired sign-flip test
+### Sign-flip permutation test
 
-The p-value comes from a two-sided **sign-flip permutation test** on the `d_task` values.
-Under the null hypothesis that the arm makes no difference, the labels "arm" and "baseline"
-are exchangeable within each task, so each `d_task` is equally likely to have either sign.
-The test compares the observed mean difference with the distribution of mean differences
-under random sign flips.
+The p-value is a two-sided paired **sign-flip permutation test** on the `d_task` values.
+If the arm makes no difference, each `d_task` is equally likely to have either sign. The test
+compares the observed mean with the means under random sign flips.
 
-- With 16 or fewer non-zero differences, all sign patterns are enumerated (exact test).
-- With more, a Monte Carlo sample is used (20,000 by default), with the `(hits + 1) / (n + 1)`
-  correction so the p-value is never zero.
-- If every difference is zero, p = 1.
+- Up to 16 non-zero differences: all sign patterns are enumerated (exact).
+- More: 20,000 random flips, with `(hits + 1) / (n + 1)` so p is never zero.
+- All differences zero: p = 1.
 
-The test makes no distributional assumptions beyond exchangeability, and it handles the
-discrete values of `d_task` correctly.
+The smallest possible p with `n` paired tasks is `2^(1-n)`. With 5 or fewer tasks, p < 0.05
+is impossible; the report says so.
 
-### Multiple comparisons: Holm
+### Holm correction
 
-With several arms, each is compared with the baseline. Running k tests at level `alpha`
-raises the chance that at least one is a false positive. agent-ab applies the **Holm**
-step-down correction across all comparisons in the report and uses the adjusted p-values for
-verdicts. With one comparison the adjusted and raw p-values are equal.
+With several arms, each is compared with the baseline. agent-ab applies the Holm step-down
+correction across those comparisons and uses the adjusted p for verdicts. With one
+comparison, adjusted and raw p are equal.
 
-### Verdict rules
+### Verdicts
 
 | Condition | Verdict |
 |---|---|
 | fewer than 2 paired tasks | `insufficient data` |
-| Holm-adjusted p < `alpha` **and** the CI excludes 0, difference > 0 | `better` |
-| Holm-adjusted p < `alpha` **and** the CI excludes 0, difference < 0 | `worse` |
+| Holm p < `alpha` and CI entirely above 0 | `better` |
+| Holm p < `alpha` and CI entirely below 0 | `worse` |
 | otherwise | `no detectable difference` |
 
 `alpha` defaults to 0.05; change it with `agent-ab report --alpha`. Requiring both the test
-and the interval to agree avoids a verdict when the two methods disagree near the boundary.
+and the interval avoids a verdict when they disagree at the margin.
 
-### "No detectable difference" is not "no difference"
+"No detectable difference" is not "no difference". The data is compatible with every effect
+inside the CI:
 
-A non-significant result means the data is compatible with no effect. It is also compatible
-with every effect inside the confidence interval. Always read the interval:
+- `-1.5 pts [-3.0, +0.2]`: any effect is probably small.
+- `-7.5 pts [-16.7, +1.7]`: the arm may be clearly worse; the experiment cannot tell.
 
-- `-1.5 pts (-3.0, +0.2)` with many tasks: any effect is probably small.
-- `-7.5 pts (-16.7, +1.7)`: the arm might be clearly worse; the experiment cannot tell.
+### Notes on small experiments
 
-Reports always show the interval next to the verdict for this reason.
+- Fewer than 20 paired tasks: the report notes that intervals from few tasks tend to be too
+  narrow (the percentile bootstrap undercovers) and that verdicts rely on the permutation
+  test, which is exact.
+- Every task has the same difference: the CI has zero width and is not informative.
 
 ## Cost and time ratios
 
-For each arm and task, agent-ab averages cost (and agent duration) over completed trials.
-The **cost ratio** is the mean of these per-task means for the arm divided by the same for
-the baseline, over paired tasks. Its interval is a bootstrap over paired tasks. A ratio of
-0.8 means the arm cost about 20% less per trial.
+For each arm and task, cost and agent duration are averaged over completed trials. The
+**cost ratio** is the arm's mean of these per-task values divided by the baseline's, over
+paired tasks, with a bootstrap CI. 0.8 means the arm cost about 20% less per trial.
 
-If an arm reports no cost (for example the Codex adapter without prices), the ratio is not
-computed and a note says so. If the baseline's mean is zero, the ratio has no estimate.
+If an arm reports no cost (for example `codex` without prices), the ratio is not computed.
+If the baseline cost is mostly zero, a note says the ratio's interval is unreliable.
 
-**Cost per pass** is total cost divided by total passes. It combines cost and success into
-the number you pay per solved task.
+**Cost per pass** is total cost divided by total passes.
 
-## Infrastructure errors and their bias risk
+## Infrastructure errors
 
-Attempts that end in an infrastructure error are retried up to `max_retries` times. Trials
-whose final attempt is still an error are **excluded** from every statistic, and the report
-notes how many.
+Trials whose final attempt is an infrastructure error are excluded from every statistic,
+and the report counts them. Exclusion is unbiased only if errors are unrelated to the arm
+and the outcome. An arm with longer sessions may hit rate limits more often, and lose its
+hardest trials. If error counts differ between arms, resume the run to retry them (see
+[run-directory.md](run-directory.md#resume)).
 
-Exclusion is unbiased only if errors are unrelated to the arm and the task outcome. That is
-not guaranteed. For example:
-
-- An arm that produces much longer sessions may hit rate limits more often, and the trials
-  it loses may be the hardest ones.
-- A larger model may be more likely to be overloaded at peak times.
-
-If error counts differ noticeably between arms, or concentrate on particular tasks, treat
-the comparison with suspicion: resume the run to retry (see
-[run-directory.md](run-directory.md#resume)), or rerun the affected arms at a quieter time.
-The per-arm error counts in the report are there so you can check.
-
-Timeouts are not infrastructure errors. By default (`timeout_is_failure = true`) an agent
-timeout is a fail, because running out of time is a legitimate outcome of a configuration.
+Agent timeouts are not infrastructure errors. With `timeout_is_failure = true` (the
+default) they are fails.
 
 ## Flaky tasks
 
-A task is listed as **flaky** if, within some arm, it both passed and failed across repeats.
-Flakiness comes from the agent's own randomness or from a flaky check. The first is
-expected; the second is noise you should remove. Run `agent-ab validate --tasks` repeatedly
-to rule out the check. See [tasks.md](tasks.md#avoid-flaky-checks).
+A task is **flaky** if, within some arm, it both passed and failed across repeats. The
+cause is the agent's randomness or a flaky check. Rule out the check by running
+`agent-ab validate --tasks` several times.
 
-## Power rule of thumb
+## How many tasks
 
-How many tasks do you need to detect a given difference? Take the simplest case, one trial
-per task per arm. Then `d_task` is -1, 0 or +1. Let `q` be the fraction of tasks that are
-discordant (pass in one arm, fail in the other) and `d` the true difference in pass rate.
-The variance of `d_task` is
+Run `agent-ab power` for an estimate by simulation; see [power.md](power.md). The intuition
+behind it:
 
-```text
-Var(d_task) = q − d²
-```
-
-The normal approximation for a two-sided test at level 0.05 with 80% power gives
+Take one trial per task per arm. Then `d_task` is -1, 0 or +1. If a fraction `q` of tasks
+are discordant (pass in one arm, fail in the other) and the true difference is `d`, then
+`Var(d_task) = q - d^2`. The normal approximation for 80% power at a two-sided 5% level
+gives
 
 ```text
-n ≈ (z₀.₀₂₅ + z₀.₂₀)² × Var(d_task) / d²
-  ≈ (1.96 + 0.84)² × (q − d²) / d²
-  ≈ 7.84 × (q − d²) / d²
+n ≈ (1.96 + 0.84)^2 × (q - d^2) / d^2  ≈  7.84 × (q - d^2) / d^2
 ```
 
-| `d` | `q` | `n` (paired tasks) |
-|---|---|---|
-| 0.20 | 0.30 | about 50 |
-| 0.10 | 0.20 | about 150 |
-| 0.10 | 0.30 | about 230 |
-| 0.05 | 0.20 | about 600 |
+For `d = 0.10` and `q = 0.20` that is about 150 paired tasks; for `d = 0.20` and `q = 0.30`,
+about 50. `q` is at least `d` and usually two to three times larger.
 
-Discordance `q` is at least `d`, and in practice usually two to three times larger, because
-agents fail some tasks in each arm for reasons unrelated to the change.
+Caveats:
 
-Consequences:
-
-- Detecting a 10-point difference needs on the order of a hundred-plus paired tasks.
-- With 20-30 tasks, only differences of 25-30 points or more are reliably detectable.
-- Repeats turn `d_task` into a difference of fractions and remove some trial-level noise,
-  so with 3 repeats the numbers above are somewhat conservative. They do not remove the
-  variation between tasks, so they are not a substitute for more tasks.
+- The permutation test is discrete, so at these `n` its power is about 72-77%, not 80%.
+  Plan for roughly 20% more tasks.
+- Repeats help when the effect is similar across tasks: they average out trial-level noise.
+  In simulation, 100 tasks with 3 repeats each reached about 87% power for a 10-point
+  difference. They do not help with an effect that varies between tasks, and they cannot
+  tell you about tasks you did not include.
 - Holm correction with several arms raises the bar for each comparison.
 
-A practical approach: run a pilot with the tasks you have, read the interval width, and use
-it to decide whether more tasks are worth building.
+Small suites detect only large effects. Run a pilot, look at the CI width, and decide
+whether more tasks are worth building.
 
 ## Determinism
 
-The analysis is a pure function of the trial records and the analysis seed. Rerunning
-`agent-ab report` with the same `--seed` produces the same intervals and p-values. The seed
-affects only the Monte Carlo parts (bootstrap and, for more than 16 non-zero differences,
-the permutation test); with the default number of resamples, changing it moves interval
-endpoints by small amounts.
+The analysis is a pure function of the trial records and the analysis seed (`--seed`,
+default 0). The seed affects only the bootstrap and, above 16 non-zero differences, the
+permutation test.

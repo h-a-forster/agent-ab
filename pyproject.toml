@@ -38,7 +38,7 @@ dev = ["pytest>=8", "ruff>=0.6"]
 packages = ["src/agent_ab"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/agent_ab", "tests", "examples", "docs", "README.md", "LICENSE", "CHANGELOG.md"]
+include = ["src/agent_ab", "tests", "examples", "docs", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
