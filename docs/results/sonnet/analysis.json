@@ -1,0 +1,293 @@
+{
+  "analysis": {
+    "alpha": 0.05,
+    "arms": [
+      {
+        "arm": "control",
+        "cost_per_pass_usd": 0.14311310666666666,
+        "errors": 0,
+        "mean_cost_usd": {
+          "estimate": 0.14311310666666666,
+          "high": 0.19401695783333328,
+          "low": 0.11144187333333334
+        },
+        "mean_duration_s": {
+          "estimate": 34.84119999999999,
+          "high": 48.80325166666666,
+          "low": 25.469134166666667
+        },
+        "mean_input_tokens": 12.133333333333333,
+        "mean_output_tokens": 3359.233333333333,
+        "mean_turns": 8.766666666666667,
+        "pass_rate": {
+          "estimate": 1.0,
+          "high": 1.0,
+          "low": 1.0
+        },
+        "pass_rate_wilson": {
+          "estimate": 1.0,
+          "high": 1.0,
+          "low": 0.8864866068260314
+        },
+        "passes": 30,
+        "tasks": 10,
+        "total_cost_usd": 4.2933932,
+        "trials": 30
+      },
+      {
+        "arm": "no-tests",
+        "cost_per_pass_usd": 0.11255888,
+        "errors": 0,
+        "mean_cost_usd": {
+          "estimate": 0.11255887999999999,
+          "high": 0.13679548533333333,
+          "low": 0.09699875133333333
+        },
+        "mean_duration_s": {
+          "estimate": 23.683466666666668,
+          "high": 30.533978333333334,
+          "low": 18.47886666666667
+        },
+        "mean_input_tokens": 9.266666666666667,
+        "mean_output_tokens": 2410.133333333333,
+        "mean_turns": 6.266666666666667,
+        "pass_rate": {
+          "estimate": 1.0,
+          "high": 1.0,
+          "low": 1.0
+        },
+        "pass_rate_wilson": {
+          "estimate": 1.0,
+          "high": 1.0,
+          "low": 0.8864866068260314
+        },
+        "passes": 30,
+        "tasks": 10,
+        "total_cost_usd": 3.3767664,
+        "trials": 30
+      }
+    ],
+    "baseline": "control",
+    "cells": [
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.12351026666666669,
+        "mean_duration_s": 24.93766666666667,
+        "passes": 3,
+        "task": "cli-min-level-flag",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.099926,
+        "mean_duration_s": 17.822666666666667,
+        "passes": 3,
+        "task": "cli-min-level-flag",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.15363946666666664,
+        "mean_duration_s": 39.27633333333333,
+        "passes": 3,
+        "task": "config-validation-errors",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.11399626666666667,
+        "mean_duration_s": 23.666666666666668,
+        "passes": 3,
+        "task": "config-validation-errors",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.35732079999999994,
+        "mean_duration_s": 92.20299999999999,
+        "passes": 3,
+        "task": "csv-quoted-newlines",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.21272586666666668,
+        "mean_duration_s": 49.635333333333335,
+        "passes": 3,
+        "task": "csv-quoted-newlines",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.1072296,
+        "mean_duration_s": 24.645666666666667,
+        "passes": 3,
+        "task": "dedupe-quadratic",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.09551293333333333,
+        "mean_duration_s": 16.563,
+        "passes": 3,
+        "task": "dedupe-quadratic",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.10167826666666667,
+        "mean_duration_s": 20.922,
+        "passes": 3,
+        "task": "dst-daily-schedule",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.09695273333333332,
+        "mean_duration_s": 18.141000000000002,
+        "passes": 3,
+        "task": "dst-daily-schedule",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.13520653333333335,
+        "mean_duration_s": 34.31766666666667,
+        "passes": 3,
+        "task": "lru-cache-thread-safety",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.11387413333333334,
+        "mean_duration_s": 29.474333333333334,
+        "passes": 3,
+        "task": "lru-cache-thread-safety",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.11968926666666668,
+        "mean_duration_s": 35.43233333333333,
+        "passes": 3,
+        "task": "money-decimal-rounding",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.11116573333333334,
+        "mean_duration_s": 27.229,
+        "passes": 3,
+        "task": "money-decimal-rounding",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.0922458,
+        "mean_duration_s": 19.036333333333335,
+        "passes": 3,
+        "task": "pagination-off-by-one",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.0830406,
+        "mean_duration_s": 13.406666666666666,
+        "passes": 3,
+        "task": "pagination-off-by-one",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.1243784,
+        "mean_duration_s": 30.677000000000003,
+        "passes": 3,
+        "task": "portable-path-normalize",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.09321439999999999,
+        "mean_duration_s": 17.693,
+        "passes": 3,
+        "task": "portable-path-normalize",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.11623266666666666,
+        "mean_duration_s": 26.964,
+        "passes": 3,
+        "task": "semver-precedence",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.10518013333333333,
+        "mean_duration_s": 23.203,
+        "passes": 3,
+        "task": "semver-precedence",
+        "trials": 3
+      }
+    ],
+    "comparisons": [
+      {
+        "arm": "no-tests",
+        "baseline": "control",
+        "cost_ratio": {
+          "estimate": 0.786502945968238,
+          "high": 0.8867659967073446,
+          "low": 0.698650981921849
+        },
+        "duration_ratio": {
+          "estimate": 0.6797546200092611,
+          "high": 0.7844976444632452,
+          "low": 0.604430616409407
+        },
+        "p_value": 1.0,
+        "p_value_adjusted": 1.0,
+        "paired_tasks": 10,
+        "pass_rate_diff": {
+          "estimate": 0.0,
+          "high": 0.0,
+          "low": 0.0
+        },
+        "tasks_better": 0,
+        "tasks_tied": 10,
+        "tasks_worse": 0,
+        "verdict": "no detectable difference"
+      }
+    ],
+    "completed_trials": 60,
+    "error_trials": 0,
+    "experiment": "claude-sonnet-no-tests",
+    "flaky_tasks": [],
+    "notes": [
+      "no-tests vs control: every paired task has the same difference (+0.0 pts). There is no variation across tasks, so the interval is not informative."
+    ],
+    "planned_trials": 60,
+    "total_cost_usd": 7.6701596
+  },
+  "schema": 1,
+  "tool": "agent-ab"
+}

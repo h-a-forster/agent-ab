@@ -1,0 +1,36 @@
+# The exact configuration behind docs/results.md (Claude Haiku run).
+# Same design as examples/claude-code/experiment.toml, with model = "haiku" and the
+# CLI restricted to project settings so personal configuration stays out of the trials.
+
+name = "claude-haiku-no-tests"
+description = "Control vs. an instruction not to write or run tests."
+
+tasks = ["../../../examples/tasks/*"]
+repeats = 3
+jobs = 4
+seed = 0
+budget_usd = 10.0
+timeout_s = 900
+check_timeout_s = 300
+max_retries = 2
+baseline = "control"
+
+[agent]
+adapter = "claude-code"
+model = "haiku"
+
+[agent.options]
+permission_mode = "bypassPermissions"
+setting_sources = "project"
+max_budget_usd = 1.0
+max_turns = 60
+
+[[arms]]
+name = "control"
+description = "Task prompt only; the agent decides whether to write tests."
+
+[[arms]]
+name = "no-tests"
+description = "Same prompt plus an instruction not to write or run tests."
+prompt_suffix = """Do not write new tests and do not run the test suite. Implement the change \
+directly, then stop."""

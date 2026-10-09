@@ -1,0 +1,326 @@
+{
+  "baseline": "control",
+  "config": {
+    "arms": [
+      {
+        "agent": {
+          "adapter": "claude-code",
+          "args": [],
+          "command": null,
+          "effort": null,
+          "env": {},
+          "model": "haiku",
+          "options": {
+            "max_budget_usd": 1.0,
+            "max_turns": 60,
+            "permission_mode": "bypassPermissions",
+            "setting_sources": "project"
+          }
+        },
+        "description": "Task prompt only; the agent decides whether to write tests.",
+        "name": "control",
+        "overlay": null,
+        "prompt_prefix": "",
+        "prompt_suffix": "",
+        "remove": []
+      },
+      {
+        "agent": {
+          "adapter": "claude-code",
+          "args": [],
+          "command": null,
+          "effort": null,
+          "env": {},
+          "model": "haiku",
+          "options": {
+            "max_budget_usd": 1.0,
+            "max_turns": 60,
+            "permission_mode": "bypassPermissions",
+            "setting_sources": "project"
+          }
+        },
+        "description": "Same prompt plus an instruction not to write or run tests.",
+        "name": "no-tests",
+        "overlay": null,
+        "prompt_prefix": "",
+        "prompt_suffix": "Do not write new tests and do not run the test suite. Implement the change directly, then stop.",
+        "remove": []
+      }
+    ],
+    "baseline": "control",
+    "budget_usd": 10.0,
+    "check_timeout_s": 300.0,
+    "config": "experiment.toml",
+    "description": "Control vs. an instruction not to write or run tests.",
+    "fingerprint": "d35fe049ebe897c23ea623cb366cbd4c93f666aea266721e69dcd5a40ec04a34",
+    "jobs": 4,
+    "keep_workspaces": false,
+    "max_retries": 2,
+    "name": "claude-haiku-no-tests",
+    "repeats": 3,
+    "seed": 0,
+    "tasks": [
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "examples/tasks/cli-min-level-flag/checks",
+        "id": "cli-min-level-flag",
+        "path": "examples/tasks/cli-min-level-flag",
+        "prompt": "Feature request for the `levelcount` CLI: add a `--min-level LEVEL` option (short form `-m`)\nso noisy levels can be hidden, e.g. `python -m levelcount --min-level warning app.log`.\n\nRequired behaviour:\n\n- Only levels at or above LEVEL are counted and shown, using the existing severity order\n  DEBUG < INFO < WARNING < ERROR < CRITICAL. This applies to both the table and `--json`\n  output, and the TOTAL row of the table only sums the levels that are shown.\n- LEVEL is case-insensitive and accepts the same aliases as log lines (`warn`, `err`, `fatal`).\n- Without the option, output is exactly as today.\n- An unknown LEVEL is a usage error: argparse-style, exit status 2, and the message on stderr\n  must name the bad value and list the valid levels (DEBUG, INFO, WARNING, ERROR, CRITICAL).\n- `--help` documents the option.\n\n`main(argv)` must keep returning the exit status for normal runs.\n",
+        "repo": "examples/tasks/cli-min-level-flag/repo",
+        "setup": null,
+        "solution": "examples/tasks/cli-min-level-flag/solution",
+        "tags": [
+          "feature",
+          "easy"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "examples/tasks/config-validation-errors/checks",
+        "id": "config-validation-errors",
+        "path": "examples/tasks/config-validation-errors",
+        "prompt": "`svcconf.load_config()` accepts almost anything. A config with `\"port\": \"8080\"` or\n`\"workers\": 0` loads fine and the service crashes much later, and a missing `host` surfaces as\na bare `KeyError: 'host'`. Operators need to be told exactly what is wrong, all at once.\n\nPlease add validation to `load_config()` (and therefore `load_config_file()`). Any problem\nraises `svcconf.ConfigError`; its `errors` attribute lists every problem found and `str(error)`\nis those messages joined with `\"; \"`. Messages must be exactly as below.\n\nSchema (see README): `host` string, required, not blank; `port` integer 1..65535, required;\n`workers` integer >= 1 (default 4); `log_level` one of debug, info, warning, error, matched\ncase-insensitively and stored lower-case (default \"info\"); `timeout_s` number > 0, stored as a\nfloat (default 30.0). Booleans are never accepted as numbers.\n\nMessages (JSON type names: string, integer, number, boolean, array, object, null; an integer\nvalue is reported as `integer`, a non-integral number as `number`):\n\n- text is not valid JSON (only this error is reported):\n  `invalid JSON at line <L>, column <C>: <msg>` using the decoder's line, column and message\n- top level is not an object (only this error is reported):\n  `config must be a JSON object, got <type>`\n- `unknown key '<key>'`\n- `<field>: required`\n- `<field>: expected <expected>, got <type>` with expected `string`, `integer` or `number`\n- `host: must not be empty`\n- `port: must be between 1 and 65535, got <value>`\n- `workers: must be >= 1, got <value>`\n- `log_level: must be one of debug, info, warning, error, got '<value>'`\n- `timeout_s: must be > 0, got <value>`\n\n`<value>` is the value as written by `json.dumps` (e.g. `70000`, `-1.5`). Order: unknown-key\nerrors first, sorted by key, then one error at most per field in the order host, port,\nworkers, log_level, timeout_s.\n",
+        "repo": "examples/tasks/config-validation-errors/repo",
+        "setup": null,
+        "solution": "examples/tasks/config-validation-errors/solution",
+        "tags": [
+          "feature",
+          "medium"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "examples/tasks/csv-quoted-newlines/checks",
+        "id": "csv-quoted-newlines",
+        "path": "examples/tasks/csv-quoted-newlines",
+        "prompt": "`tinycsv` breaks on quoted fields that contain line breaks. Exports from our ticketing system\nhave multi-line \"description\" columns, e.g.\n\n    id,description\n    1,\"first line\n    second line\"\n\n`parse()` raises `CSVError: line 2: unterminated quoted field` instead of returning\n`[[\"id\", \"description\"], [\"1\", \"first line\\nsecond line\"]]`.\n\nPlease make the reader handle this properly. Required behaviour:\n\n- A quoted field may contain the delimiter, doubled quotes (`\"\"` -> `\"`), and line breaks.\n  Line breaks inside quotes are kept exactly as written (`\\n` stays `\\n`, `\\r\\n` stays `\\r\\n`).\n- Outside quotes, a row ends at `\\n` or `\\r\\n` only. Any other character, including a lone\n  `\\r` or Unicode line/paragraph separators, is ordinary field content.\n- A final row terminator does not create an extra row; empty lines outside quotes are still\n  skipped, as today.\n- Errors raise `CSVError` whose `line` is the 1-based physical line in the input:\n  - a quoted field that is never closed -> the line where that quoted field started;\n  - any character other than the delimiter or a row end directly after a closing quote\n    (e.g. `\"ab\"c`) -> the line where that character is;\n  - `parse_records()` field-count mismatch -> the line where the offending row starts\n    (physical lines, so rows after a multi-line field report their real line number).\n- The public API (`parse`, `parse_records`, `CSVError`) and the delimiter option stay the same.\n",
+        "repo": "examples/tasks/csv-quoted-newlines/repo",
+        "setup": null,
+        "solution": "examples/tasks/csv-quoted-newlines/solution",
+        "tags": [
+          "bugfix",
+          "medium"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 300.0,
+        "checks": "examples/tasks/dedupe-quadratic/checks",
+        "id": "dedupe-quadratic",
+        "path": "examples/tasks/dedupe-quadratic",
+        "prompt": "The nightly merge job has become unusably slow. With ~200k records per export,\n`recmerge.consolidate()`, `recmerge.missing_ids()` and `recmerge.changed_ids()` each take many\nminutes; with 10k records they were fine. Profiling shows all three do repeated linear scans\nof lists inside loops, so they are quadratic in the input size.\n\nPlease rewrite them to run in roughly linear time. Each function must still return exactly\nwhat it returns today for every input, including:\n\n- `consolidate`: one record per id, the highest `version` wins, ties go to the record that\n  comes later in the input, ids in order of first appearance, and the returned items are the\n  original record objects (not copies).\n- `missing_ids`: keeps the order of `expected` and its duplicates.\n- `changed_ids`: compares each new record against the *last* record with the same id in\n  `old`, and lists each changed id once, at the position of its first changed record in `new`.\n- All three accept any iterable for their record arguments (including generators).\n\nIds are strings or integers. Target: each function handles 200,000 records in well under\na second on an ordinary laptop.\n",
+        "repo": "examples/tasks/dedupe-quadratic/repo",
+        "setup": null,
+        "solution": "examples/tasks/dedupe-quadratic/solution",
+        "tags": [
+          "perf",
+          "medium"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "examples/tasks/dst-daily-schedule/checks",
+        "id": "dst-daily-schedule",
+        "path": "examples/tasks/dst-daily-schedule",
+        "prompt": "Daily jobs drift by an hour after a daylight-saving change.\n\nA job scheduled with `cronlite.daily_occurrences(date(2024, 3, 8), 4, time(9, 0), EASTERN)`\nruns at 09:00 on March 8 and 9, but at 10:00 on March 10 and 11 (DST started on March 10).\nThe same happens in November in the other direction. `next_run()` is affected too because it\nis built on `daily_occurrences()`.\n\nA daily job is defined by its local wall-clock time, so every occurrence must be at `at` local\ntime on consecutive calendar days, with the correct UTC offset for that day. Two special cases:\n\n- If `at` does not exist on a given day (it falls in the hour skipped when DST starts, e.g.\n  02:30 on 2024-03-10 in EASTERN), the job runs at the equivalent instant after the gap,\n  i.e. shifted forward by the length of the gap (02:30 becomes 03:30 EDT that day).\n- If `at` happens twice on a given day (the repeated hour when DST ends, e.g. 01:30 on\n  2024-11-03), the job runs once, at the first occurrence (01:30 EDT), with `fold=0`.\n\nReturned datetimes must stay timezone-aware in the requested zone and compare/convert correctly\n(e.g. `.astimezone(timezone.utc)` gives the right instant). Do not change the zone rules in\n`cronlite/zones.py`, and keep the existing argument validation.\n",
+        "repo": "examples/tasks/dst-daily-schedule/repo",
+        "setup": null,
+        "solution": "examples/tasks/dst-daily-schedule/solution",
+        "tags": [
+          "bugfix",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 180.0,
+        "checks": "examples/tasks/lru-cache-thread-safety/checks",
+        "id": "lru-cache-thread-safety",
+        "path": "examples/tasks/lru-cache-thread-safety",
+        "prompt": "`keepcache.LRUCache` misbehaves in production, where it is shared by many worker threads:\n\n- It is not least-recently-*used*: `get()` does not mark an entry as recently used, so hot\n  entries get evicted.\n- Re-`put()`-ting an existing key evicts an unrelated entry even though the cache did not grow,\n  and afterwards the cache occasionally crashes with `KeyError` during eviction.\n- Under concurrent use, statistics drift, `len()` can exceed the capacity, and\n  `get_or_compute()` runs the expensive `compute` function many times for the same key when\n  several threads miss on it at once.\n\nPlease make `LRUCache` correct and thread-safe, keeping its public API. Required behaviour:\n\n1. `get()` and `get_or_compute()` hits mark the entry most recently used; `peek()` and\n   `in` / `len()` never change recency or statistics.\n2. `put()` of an existing key replaces the value, marks it most recently used and never evicts.\n   A new key evicts exactly the least recently used entry when the cache is full.\n3. `on_evict(key, value)` is called once per capacity eviction (not for replacements or\n   `clear()`), with the evicted pair, in eviction order. The callback may call methods of the\n   same cache without deadlocking.\n4. `stats()`: every `get()` counts as exactly one hit or one miss; `evictions` counts capacity\n   evictions. Counters stay exact under concurrency.\n5. `get_or_compute(key, compute)`: when many threads miss on the same key concurrently,\n   `compute(key)` runs only once and every caller gets its result. If `compute` raises, the\n   exception propagates, nothing is cached, and a later call tries again. Computing one key\n   must not block callers that are working with other, already cached keys.\n6. All methods are safe to call from any number of threads; the cache never holds more than\n   `capacity` entries.\n",
+        "repo": "examples/tasks/lru-cache-thread-safety/repo",
+        "setup": null,
+        "solution": "examples/tasks/lru-cache-thread-safety/solution",
+        "tags": [
+          "bugfix",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "examples/tasks/money-decimal-rounding/checks",
+        "id": "money-decimal-rounding",
+        "path": "examples/tasks/money-decimal-rounding",
+        "prompt": "Invoice totals are off by a cent. `ledgerfmt` does its arithmetic with binary floats:\n\n- `format_money(2.675)` gives `$2.67`, and `format_money(\"0.125\")` gives `$0.12`; the\n  documented rule is that halves round away from zero, so these must be `$2.68` and `$0.13`.\n- `total([\"0.10\", \"0.20\"])` is `0.30000000000000004`.\n- `split(\"100.00\", 3)` returns three shares of 33.33 that add up to 99.99.\n- `format_money(-0.001)` prints `-$0.00`.\n\nPlease switch the module to `decimal.Decimal`. Required behaviour:\n\n- All functions accept `int`, `str`, `Decimal` and `float`. A float is interpreted by its\n  shortest repr (`2.675` means `Decimal(\"2.675\")`, not the binary expansion).\n- `format_money` rounds half away from zero to the currency's minor unit, keeps the existing\n  output format (symbol, thousands separators, leading `-` for negatives), and never prints a\n  negative zero: anything that rounds to zero is formatted without a sign.\n- `total()` returns the exact sum as a `Decimal` (no rounding).\n- `split(amount, parts, currency)` returns a list of `Decimal` shares quantised to the\n  currency's minor unit that add up exactly to `amount` rounded (half away from zero) to that\n  unit. Shares differ by at most one minor unit; the larger shares come first. Negative\n  amounts are split the same way with the signs flipped.\n- Unsupported currencies and `parts < 1` still raise `ValueError`.\n",
+        "repo": "examples/tasks/money-decimal-rounding/repo",
+        "setup": null,
+        "solution": "examples/tasks/money-decimal-rounding/solution",
+        "tags": [
+          "bugfix",
+          "easy"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "examples/tasks/pagination-off-by-one/checks",
+        "id": "pagination-off-by-one",
+        "path": "examples/tasks/pagination-off-by-one",
+        "prompt": "Pagination in `pagekit.paginate()` is broken in two ways:\n\n1. Every page comes back one item short. With 10 items and `per_page=3`, page 1 should contain\n   items 1-3, but it only contains items 1-2.\n2. The last, partially filled page is unreachable. With 10 items and `per_page=3` there should be\n   4 pages (the last one holding a single item), but `total_pages` is 3 and asking for page 4\n   raises `PageOutOfRange`.\n\nExpected behaviour (pages are 1-based):\n\n- `total_pages` is the number of pages needed to show every item, and is at least 1: an empty\n  sequence has exactly one (empty) page, so `paginate([], 1)` returns a page with no items.\n- `has_prev` / `has_next` tell whether a previous / next page exists.\n- Requesting a page below 1 or above `total_pages` raises `PageOutOfRange`.\n- `per_page` below 1 still raises `ValueError`.\n\nPlease fix `paginate()` without changing its signature or the `Page` fields.\n",
+        "repo": "examples/tasks/pagination-off-by-one/repo",
+        "setup": null,
+        "solution": "examples/tasks/pagination-off-by-one/solution",
+        "tags": [
+          "bugfix",
+          "easy"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "examples/tasks/portable-path-normalize/checks",
+        "id": "portable-path-normalize",
+        "path": "examples/tasks/portable-path-normalize",
+        "prompt": "`archpath.normalize()` gives different answers depending on the OS it runs on, which breaks\narchives that are created on one platform and extracted on another:\n\n- On Windows, `normalize(\"docs/a.txt\")` returns `docs\\a.txt`, so members no longer match the\n  manifest, which uses forward slashes.\n- On Linux and macOS, `normalize(\"docs\\..\\..\\secret\")` is accepted unchanged, although an\n  archive written on Windows means \"go two levels up\" here, and `C:\\temp\\x` is accepted as a\n  relative name.\n- On every OS, a legitimate file named `..config` is rejected as escaping the root.\n\nPlease make `normalize()`, `split_parts()` and `is_safe()` behave identically on every OS,\nwithout touching the filesystem. Rules:\n\n- Both `/` and `\\` are separators.\n- Empty components and `.` are dropped; `..` removes the previous component. A `..` that would\n  go above the root raises `UnsafePathError`, even if later components would come back down\n  (`a/../../a/b` is unsafe).\n- Absolute paths raise `UnsafePathError`: anything starting with a separator (including UNC\n  forms like `\\\\server\\share` and `//server/share`) and anything whose first component starts\n  with a drive letter and a colon (`C:`, `c:\\x`, `C:foo`, `d:/x`).\n- A NUL character anywhere raises `UnsafePathError`.\n- The result joins the remaining components with `/`: no leading or trailing separator, and\n  `\"\"` for paths that resolve to the root (`\"\"`, `.`, `a/..`, `./`). Component text, including\n  case, spaces and names such as `..config`, `a..b` or `...`, is kept exactly.\n- `split_parts()` returns the components of the normalised path (`[]` for the root);\n  `is_safe()` returns False exactly when `normalize()` would raise.\n",
+        "repo": "examples/tasks/portable-path-normalize/repo",
+        "setup": null,
+        "solution": "examples/tasks/portable-path-normalize/solution",
+        "tags": [
+          "bugfix",
+          "medium"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "examples/tasks/semver-precedence/checks",
+        "id": "semver-precedence",
+        "path": "examples/tasks/semver-precedence",
+        "prompt": "`verso` only understands plain `MAJOR.MINOR.PATCH`. Our registry now publishes pre-releases\nand build metadata (`2.0.0-rc.1`, `1.4.0+build.7`), and `parse()` rejects them, so the release\ntooling crashes.\n\nPlease implement full Semantic Versioning 2.0.0 support (sections 2, 9, 10 and 11 of the\nspec) in `verso/version.py`, keeping the public API (`Version`, `parse`, `compare`,\n`sort_versions`):\n\n- `parse()` accepts `MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]` and fills `Version.prerelease`\n  and `Version.build` with the dot-separated identifiers as strings. It raises `ValueError` for\n  anything that is not a valid semver string, including: empty identifiers (`1.0.0-alpha..1`,\n  `1.0.0-`, `1.0.0+`), characters outside `[0-9A-Za-z-]` in identifiers, leading zeros in the\n  numeric core (`01.2.3`) or in numeric pre-release identifiers (`1.0.0-alpha.01`), a `v`\n  prefix, and surrounding whitespace. Build identifiers may have leading zeros (`1.0.0+001`).\n- Precedence follows the spec exactly: a pre-release version has lower precedence than the\n  associated normal version; pre-release identifiers are compared left to right, numeric\n  identifiers numerically (no size limit), alphanumeric ones lexically in ASCII order, numeric\n  identifiers always lower than alphanumeric ones, and a larger set of identifiers wins when\n  all preceding ones are equal. Build metadata is ignored for precedence.\n- `compare()` returns -1, 0 or 1 and accepts `Version` objects or strings. `==`, `<`, `>` etc.\n  on `Version` follow precedence (so `1.0.0+a == 1.0.0+b`), and `hash()` is consistent with `==`.\n- `str(parse(s)) == s` for every valid `s`.\n- `sort_versions()` sorts by precedence and keeps the input order for versions of equal\n  precedence.\n",
+        "repo": "examples/tasks/semver-precedence/repo",
+        "setup": null,
+        "solution": "examples/tasks/semver-precedence/solution",
+        "tags": [
+          "feature",
+          "medium"
+        ],
+        "timeout_s": null
+      }
+    ],
+    "timeout_is_failure": true,
+    "timeout_s": 900.0,
+    "workspace_root": null
+  },
+  "created_at": "2026-10-09T22:19:46Z",
+  "experiment": "claude-haiku-no-tests",
+  "fingerprint": "d35fe049ebe897c23ea623cb366cbd4c93f666aea266721e69dcd5a40ec04a34",
+  "planned_trials": 60,
+  "schema": 1,
+  "seed": 0,
+  "tool": "agent-ab",
+  "version": "0.1.0"
+}

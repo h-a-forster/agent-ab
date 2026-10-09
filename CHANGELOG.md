@@ -5,7 +5,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-## 0.1.0 - 2026-10-09
+## 0.1.0 - 2026-10-10
 
 Initial release.
 
@@ -28,3 +28,5 @@ Initial release.
 - Commands: `init`, `validate` (with fail-before/pass-after task checks), `run`, `report`,
   `status`, `show`, `power`.
 - Linux, macOS and Windows; Python 3.11-3.13; no runtime dependencies.
+- Example results: Claude Code (Haiku, Sonnet) with and without tests on the example tasks
+  (`docs/results.md`).

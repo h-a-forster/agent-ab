@@ -1,0 +1,298 @@
+{
+  "analysis": {
+    "alpha": 0.05,
+    "arms": [
+      {
+        "arm": "control",
+        "cost_per_pass_usd": 0.3268762611111111,
+        "errors": 0,
+        "mean_cost_usd": {
+          "estimate": 0.19612575666666668,
+          "high": 0.23373009991666668,
+          "low": 0.15621675008333336
+        },
+        "mean_duration_s": {
+          "estimate": 124.7329,
+          "high": 165.46825249999998,
+          "low": 92.15006666666666
+        },
+        "mean_input_tokens": 147.86666666666667,
+        "mean_output_tokens": 11570.266666666666,
+        "mean_turns": 19.333333333333332,
+        "pass_rate": {
+          "estimate": 0.6,
+          "high": 0.8666666666666666,
+          "low": 0.3333333333333333
+        },
+        "pass_rate_wilson": {
+          "estimate": 0.6,
+          "high": 0.7540937188319814,
+          "low": 0.42320360253322487
+        },
+        "passes": 18,
+        "tasks": 10,
+        "total_cost_usd": 5.883772700000001,
+        "trials": 30
+      },
+      {
+        "arm": "no-tests",
+        "cost_per_pass_usd": 0.1819908,
+        "errors": 0,
+        "mean_cost_usd": {
+          "estimate": 0.10919448,
+          "high": 0.14903971416666664,
+          "low": 0.08193506441666668
+        },
+        "mean_duration_s": {
+          "estimate": 72.2906,
+          "high": 106.6884,
+          "low": 48.383251666666666
+        },
+        "mean_input_tokens": 64.73333333333333,
+        "mean_output_tokens": 7928.366666666667,
+        "mean_turns": 8.466666666666667,
+        "pass_rate": {
+          "estimate": 0.6,
+          "high": 0.8333333333333334,
+          "low": 0.36666666666666664
+        },
+        "pass_rate_wilson": {
+          "estimate": 0.6,
+          "high": 0.7540937188319814,
+          "low": 0.42320360253322487
+        },
+        "passes": 18,
+        "tasks": 10,
+        "total_cost_usd": 3.2758344,
+        "trials": 30
+      }
+    ],
+    "baseline": "control",
+    "cells": [
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.1899411666666667,
+        "mean_duration_s": 93.66666666666667,
+        "passes": 3,
+        "task": "cli-min-level-flag",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.1387412,
+        "mean_duration_s": 67.41166666666666,
+        "passes": 3,
+        "task": "cli-min-level-flag",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.2696317000000001,
+        "mean_duration_s": 153.85966666666667,
+        "passes": 0,
+        "task": "config-validation-errors",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.07777733333333332,
+        "mean_duration_s": 50.60399999999999,
+        "passes": 0,
+        "task": "config-validation-errors",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.25249916666666666,
+        "mean_duration_s": 143.073,
+        "passes": 0,
+        "task": "csv-quoted-newlines",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.26692563333333336,
+        "mean_duration_s": 210.92666666666665,
+        "passes": 1,
+        "task": "csv-quoted-newlines",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.1328706,
+        "mean_duration_s": 79.22933333333333,
+        "passes": 2,
+        "task": "dedupe-quadratic",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.07123286666666667,
+        "mean_duration_s": 36.422333333333334,
+        "passes": 2,
+        "task": "dedupe-quadratic",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.1953161666666667,
+        "mean_duration_s": 134.875,
+        "passes": 3,
+        "task": "dst-daily-schedule",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.10025973333333332,
+        "mean_duration_s": 70.318,
+        "passes": 0,
+        "task": "dst-daily-schedule",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.27950823333333336,
+        "mean_duration_s": 272.547,
+        "passes": 3,
+        "task": "lru-cache-thread-safety",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.11104143333333333,
+        "mean_duration_s": 93.31766666666665,
+        "passes": 3,
+        "task": "lru-cache-thread-safety",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.11652936666666669,
+        "mean_duration_s": 65.66666666666667,
+        "passes": 1,
+        "task": "money-decimal-rounding",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.09289390000000002,
+        "mean_duration_s": 56.453,
+        "passes": 1,
+        "task": "money-decimal-rounding",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.08535370000000002,
+        "mean_duration_s": 52.30733333333333,
+        "passes": 3,
+        "task": "pagination-off-by-one",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.056122933333333326,
+        "mean_duration_s": 26.66633333333333,
+        "passes": 3,
+        "task": "pagination-off-by-one",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.23222846666666672,
+        "mean_duration_s": 132.84400000000002,
+        "passes": 3,
+        "task": "portable-path-normalize",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.08233656666666667,
+        "mean_duration_s": 51.58866666666666,
+        "passes": 3,
+        "task": "portable-path-normalize",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.207379,
+        "mean_duration_s": 119.26033333333334,
+        "passes": 0,
+        "task": "semver-precedence",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.09461320000000001,
+        "mean_duration_s": 59.19766666666667,
+        "passes": 2,
+        "task": "semver-precedence",
+        "trials": 3
+      }
+    ],
+    "comparisons": [
+      {
+        "arm": "no-tests",
+        "baseline": "control",
+        "cost_ratio": {
+          "estimate": 0.556757469573901,
+          "high": 0.7403334760155573,
+          "low": 0.41683268728938516
+        },
+        "duration_ratio": {
+          "estimate": 0.5795632106685565,
+          "high": 0.8634093582049072,
+          "low": 0.4054686587370735
+        },
+        "p_value": 1.0,
+        "p_value_adjusted": 1.0,
+        "paired_tasks": 10,
+        "pass_rate_diff": {
+          "estimate": -5.551115123125783e-18,
+          "high": 0.2333333333333333,
+          "low": -0.26666666666666666
+        },
+        "tasks_better": 2,
+        "tasks_tied": 7,
+        "tasks_worse": 1,
+        "verdict": "no detectable difference"
+      }
+    ],
+    "completed_trials": 60,
+    "error_trials": 0,
+    "experiment": "claude-haiku-no-tests",
+    "flaky_tasks": [
+      "csv-quoted-newlines",
+      "dedupe-quadratic",
+      "money-decimal-rounding",
+      "semver-precedence"
+    ],
+    "notes": [
+      "no-tests vs control: only 10 paired tasks. Intervals from few tasks tend to be too narrow; verdicts rely on the paired permutation test."
+    ],
+    "planned_trials": 60,
+    "total_cost_usd": 9.1596071
+  },
+  "schema": 1,
+  "tool": "agent-ab"
+}

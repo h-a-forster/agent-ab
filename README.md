@@ -15,6 +15,9 @@ the configurations, it says "no detectable difference".
 
 Runs on Linux, macOS and Windows. Python 3.11+, no runtime dependencies.
 
+Example: [Claude Code with and without tests](docs/results.md), on Haiku and Sonnet. Skipping
+tests cut cost per trial by 21-44%. Ten tasks were too few to measure the effect on pass rate.
+
 ## Install
 
 Not on PyPI yet. Install from GitHub:
@@ -191,6 +194,7 @@ configuration error, `130` interrupted. Set `AGENT_AB_DEBUG=1` for tracebacks.
 - [Adapters](docs/adapters.md)
 - [Statistics](docs/statistics.md)
 - [Power analysis](docs/power.md)
+- [Example results](docs/results.md)
 - [Run directory](docs/run-directory.md)
 - [Safety](docs/safety.md)
 - [Examples](examples/README.md)
