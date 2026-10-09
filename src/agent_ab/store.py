@@ -54,7 +54,7 @@ class RunStore:
             "experiment": exp.name,
             "fingerprint": exp.fingerprint,
             "created_at": utc_now(),
-            "config": experiment_to_dict(exp),
+            "config": _redact_env(experiment_to_dict(exp)),
             "planned_trials": planned_trials,
             "seed": exp.seed,
             "baseline": exp.baseline,
@@ -173,6 +173,23 @@ class RunStore:
     def relpath(self, path: Path) -> str:
         """Run-dir-relative posix path, as stored in records."""
         return Path(path).resolve().relative_to(self.run_dir.resolve()).as_posix()
+
+
+def _redact_env(value: Any) -> Any:
+    """Drop environment values from stored config: they often hold credentials.
+
+    Keys stay so a reader can see which variables were set; the fingerprint, computed
+    from the unredacted config, still detects changed values on resume.
+    """
+    if isinstance(value, dict):
+        return {
+            k: ({name: "<redacted>" for name in v} if k == "env" and isinstance(v, dict)
+                else _redact_env(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_env(v) for v in value]
+    return value
 
 
 def is_done(record: TrialRecord, max_retries: int) -> bool:

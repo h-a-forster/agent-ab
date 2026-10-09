@@ -164,7 +164,9 @@ class CodexAdapter(Adapter):
         if spec.model:
             argv += ["-m", spec.model]
         if spec.effort:
-            argv += ["-c", f'model_reasoning_effort="{spec.effort}"']
+            # Unquoted on purpose: Windows .cmd shims mangle embedded quotes, and codex
+            # treats a value that is not valid TOML as a literal string.
+            argv += ["-c", f"model_reasoning_effort={spec.effort}"]
         if o.get("ignore_user_config"):
             argv.append("--ignore-user-config")
         argv += list(spec.args)

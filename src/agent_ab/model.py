@@ -150,6 +150,7 @@ class TrialContext:
     workspace: Path
     artifacts: Path  # per-attempt directory for logs, transcripts, usage files
     seed: int
+    root: Path | None = None  # experiment directory, for wrapper scripts shipped beside the config
 
 
 @dataclass

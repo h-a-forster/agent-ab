@@ -292,7 +292,7 @@ def test_codex_argv_combinations(tmp_path, bypass, sandbox, model, effort, ignor
     if model:
         expected += ["-m", model]
     if effort:
-        expected += ["-c", f'model_reasoning_effort="{effort}"']
+        expected += ["-c", f"model_reasoning_effort={effort}"]
     if ignore:
         expected.append("--ignore-user-config")
     expected += [*args, "-"]

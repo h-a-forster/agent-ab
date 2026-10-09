@@ -31,7 +31,7 @@ ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 TASK_PLACEHOLDERS = frozenset({"python", "workspace"})
 #: Placeholders allowed in the ``command`` adapter's argv template.
 COMMAND_PLACEHOLDERS = frozenset(
-    {"prompt_file", "prompt", "workspace", "artifacts", "model", "effort", "python", "seed"}
+    {"prompt_file", "prompt", "workspace", "artifacts", "model", "effort", "python", "seed", "root"}
 )
 
 # Never part of a task's identity: caches and VCS metadata differ between machines.

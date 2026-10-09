@@ -150,3 +150,15 @@ def test_is_done():
     assert is_done(rec(status="fail"), 2)
     assert not is_done(rec(status="error", attempt=1), 2)
     assert is_done(rec(status="error", attempt=2), 2)
+
+
+def test_env_values_are_redacted_in_run_json(tmp_path):
+    from dataclasses import replace
+
+    exp = make_exp(tmp_path)
+    secret = AgentSpec(adapter="mock", env={"API_TOKEN": "s3cret"})
+    exp = replace(exp, arms=(Arm(name="a", agent=secret), Arm(name="b", agent=secret)))
+    RunStore.create(tmp_path / "run", exp, 1)
+    text = (tmp_path / "run" / "run.json").read_text(encoding="utf-8")
+    assert "s3cret" not in text
+    assert "API_TOKEN" in text

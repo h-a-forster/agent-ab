@@ -19,7 +19,7 @@ from agent_ab.errors import ConfigError
 from agent_ab.model import AgentInvocation, AgentSpec, AgentUsage, ProcResult, TrialContext
 
 PLACEHOLDERS: frozenset[str] = frozenset(
-    {"prompt_file", "prompt", "workspace", "artifacts", "model", "effort", "python", "seed"}
+    {"prompt_file", "prompt", "workspace", "artifacts", "model", "effort", "python", "seed", "root"}
 )
 
 USAGE_FILE = "usage.json"
@@ -160,6 +160,7 @@ class CommandAdapter(Adapter):
             "effort": spec.effort or "",
             "python": sys.executable,
             "seed": str(ctx.seed),
+            "root": str(ctx.root) if ctx.root is not None else str(ctx.workspace),
         }
         template = tuple(spec.command or ())
         if spec.options.get("shell"):
