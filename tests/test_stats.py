@@ -76,6 +76,16 @@ def test_wilson_known_values(k, n, low, high):
     assert hi == pytest.approx(high, abs=1e-4)
 
 
+def test_paired_ratio_skipped_fraction():
+    from agent_ab.stats import _paired_ratio_counted
+
+    ci, skipped = _paired_ratio_counted([0.0] * 9 + [1.0], [1.0] * 10, n_boot=2000, alpha=0.05,
+                                        rng=1)
+    assert ci.estimate == pytest.approx(10.0)
+    assert skipped == pytest.approx(0.9**10, abs=0.05)
+    assert _paired_ratio_counted([1.0, 2.0], [1.0, 1.0], n_boot=100, alpha=0.05, rng=1)[1] == 0
+
+
 def test_wilson_edge_cases():
     assert wilson_interval(0, 0) == (0.0, 1.0)
     with pytest.raises(ValueError):
@@ -250,11 +260,90 @@ def test_analyze_single_task_insufficient():
 
 
 def test_analyze_few_tasks_note():
-    records = grid(3, 1, lambda i, arm, r: arm == "treat")
+    records = grid(3, 2, lambda i, arm, r: arm == "treat" and (i > 0 or r == 0))
     a = analyze(meta(), records, n_boot=N_BOOT)
     # Three tasks all better: exact p = 0.25, so never "better" with alpha 0.05.
     assert a.comparisons[0].verdict == "no detectable difference"
-    assert any("intervals are wide" in n for n in a.notes)
+    (note,) = [n for n in a.notes if n.startswith("treat vs control:")]
+    assert "too narrow" in note and "permutation test" in note
+    assert "no result can reach p < 0.05" in note and "smallest possible p is 0.25" in note
+    assert "wide" not in note
+
+
+@pytest.mark.parametrize(("n_tasks", "floor"), [(5, True), (6, False), (19, False)])
+def test_analyze_few_tasks_p_floor(n_tasks, floor):
+    # Mixed differences so the degenerate-data note does not apply.
+    records = grid(n_tasks, 2, lambda i, arm, r: arm == "treat" and (i > 0 or r == 0))
+    a = analyze(meta(), records, n_boot=N_BOOT)
+    (note,) = [n for n in a.notes if n.startswith("treat vs control:")]
+    assert "too narrow" in note
+    assert ("smallest possible p is 0.0625" in note) == floor
+    assert ("no result can reach" in note) == floor
+
+
+def test_analyze_many_tasks_no_small_sample_note():
+    records = grid(20, 2, lambda i, arm, r: arm == "treat" and (i > 0 or r == 0))
+    a = analyze(meta(), records, n_boot=N_BOOT)
+    assert not any(n.startswith("treat vs control:") for n in a.notes)
+
+
+def test_analyze_few_tasks_p_floor_follows_alpha():
+    records = grid(6, 2, lambda i, arm, r: arm == "treat" and (i > 0 or r == 0))
+    a = analyze(meta(), records, n_boot=N_BOOT, alpha=0.03)  # 2**-5 = 0.03125 >= alpha
+    assert any("no result can reach p < 0.03 " in n for n in a.notes)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "pts"),
+    [
+        (lambda i, arm, r: True, "+0.0 pts"),  # all pass in both arms
+        (lambda i, arm, r: False, "+0.0 pts"),  # all fail in both arms
+        (lambda i, arm, r: arm == "treat", "+100.0 pts"),
+    ],
+)
+def test_analyze_degenerate_note(outcome, pts):
+    a = analyze(meta(), grid(20, 3, outcome), n_boot=N_BOOT)
+    c = a.comparisons[0]
+    assert c.pass_rate_diff.low == c.pass_rate_diff.high  # zero-width interval
+    (note,) = [n for n in a.notes if n.startswith("treat vs control:")]
+    assert f"same difference ({pts})" in note
+    assert "no variation across tasks" in note and "not informative" in note
+    assert "too narrow" not in note
+
+
+def test_analyze_degenerate_two_tasks_mentions_p_floor():
+    a = analyze(meta(), grid(2, 3, lambda i, arm, r: arm == "treat"), n_boot=N_BOOT)
+    (note,) = [n for n in a.notes if n.startswith("treat vs control:")]
+    assert "not informative" in note and "smallest possible p is 0.5" in note
+    assert "wide" not in note
+
+
+def test_analyze_wilson_follows_alpha():
+    records = grid(6, 2, lambda i, arm, r: r == 0)
+    wide = analyze(meta(), records, n_boot=50, alpha=0.01).arms[0].pass_rate_wilson
+    narrow = analyze(meta(), records, n_boot=50, alpha=0.2).arms[0].pass_rate_wilson
+    z99, z80 = 2.5758293035489, 1.2815515655446
+    assert (wide.low, wide.high) == pytest.approx(wilson_interval(6, 12, z=z99))
+    assert (narrow.low, narrow.high) == pytest.approx(wilson_interval(6, 12, z=z80))
+    assert wide.low < narrow.low < narrow.high < wide.high
+
+
+def test_analyze_ratio_note_when_baseline_cost_mostly_zero():
+    # Baseline cost is zero on all but one of 10 tasks: about 35% of resamples miss that task.
+    records = grid(
+        10, 1, lambda i, arm, r: True,
+        cost=lambda i, arm: 1.0 if arm == "treat" else (2.0 if i == 0 else 0.0),
+    )
+    a = analyze(meta(), records, n_boot=N_BOOT)
+    assert a.comparisons[0].cost_ratio.estimate == pytest.approx(5.0)
+    notes = [n for n in a.notes if "ratio interval is unreliable" in n]
+    assert len(notes) == 1 and "baseline cost is mostly zero" in notes[0]
+
+
+def test_analyze_no_ratio_note_with_positive_costs():
+    records = grid(10, 1, lambda i, arm, r: True, cost=lambda i, arm: 0.1 + i)
+    a = analyze(meta(), records, n_boot=N_BOOT)
+    assert not any("unreliable" in n for n in a.notes)
 
 
 def test_analyze_errors_excluded_and_retries():

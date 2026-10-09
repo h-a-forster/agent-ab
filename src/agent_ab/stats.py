@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 import random
 from collections.abc import Callable, Iterable, Sequence
-from statistics import fmean
+from statistics import NormalDist, fmean
 
 from .model import Analysis, ArmSummary, Comparison, Interval, TaskCell, TrialRecord
 
@@ -32,7 +32,11 @@ _EXACT_MAX_NONZERO = 16
 # Absolute tolerance when comparing permutation statistics, so float noise in summation order
 # never excludes the observed pattern (or its mirror image) from the count.
 _TIE_TOL = 1e-12
-_FEW_TASKS = 5
+# Below this many paired tasks the percentile bootstrap tends to undercover (too-narrow
+# intervals); an audit measured 0.87-0.93 coverage for a nominal 95% CI at about 10 tasks.
+_FEW_TASKS = 20
+# Share of ratio resamples skipped for a zero denominator above which the interval is flagged.
+_MAX_SKIPPED_FRACTION = 0.05
 
 RngLike = random.Random | int | str | None
 
@@ -62,6 +66,34 @@ def _percentile_interval(estimate: float, stats: list[float], alpha: float) -> I
     return Interval(estimate, _quantile(stats, alpha / 2), _quantile(stats, 1 - alpha / 2))
 
 
+def _bootstrap_counted(
+    n: int,
+    statistic: Callable[[list[int]], float | None],
+    estimate: float,
+    *,
+    n_boot: int,
+    alpha: float,
+    rng: RngLike,
+) -> tuple[Interval, float]:
+    """Percentile bootstrap over ``n`` resampling units (indices).
+
+    Returns the interval and the fraction of resamples skipped because the statistic was
+    undefined (e.g. a zero denominator). With one unit every resample is identical, so the
+    "interval" would be a point that says nothing about uncertainty; bounds are left as None.
+    """
+    if n < 2:
+        return Interval(estimate, None, None), 0.0
+    r = _rng(rng)
+    population = range(n)
+    stats: list[float] = []
+    for _ in range(n_boot):
+        value = statistic(r.choices(population, k=n))
+        if value is not None:  # undefined resamples (e.g. zero denominator) are skipped
+            stats.append(value)
+    skipped = (n_boot - len(stats)) / n_boot if n_boot > 0 else 0.0
+    return _percentile_interval(estimate, stats, alpha), skipped
+
+
 def _bootstrap(
     n: int,
     statistic: Callable[[list[int]], float | None],
@@ -71,21 +103,7 @@ def _bootstrap(
     alpha: float,
     rng: RngLike,
 ) -> Interval:
-    """Percentile bootstrap over ``n`` resampling units (indices).
-
-    With one unit every resample is identical, so the "interval" would be a point that says
-    nothing about uncertainty; bounds are left as None instead.
-    """
-    if n < 2:
-        return Interval(estimate, None, None)
-    r = _rng(rng)
-    population = range(n)
-    stats: list[float] = []
-    for _ in range(n_boot):
-        value = statistic(r.choices(population, k=n))
-        if value is not None:  # undefined resamples (e.g. zero denominator) are skipped
-            stats.append(value)
-    return _percentile_interval(estimate, stats, alpha)
+    return _bootstrap_counted(n, statistic, estimate, n_boot=n_boot, alpha=alpha, rng=rng)[0]
 
 
 # --------------------------------------------------------------------------- public helpers
@@ -166,16 +184,28 @@ def paired_ratio_ci(
     defined even when some per-task baseline values are zero. If ``mean(a)`` is 0 the ratio is
     undefined and the estimate is None; resamples with a zero denominator are skipped.
     """
+    return _paired_ratio_counted(a, b, n_boot=n_boot, alpha=alpha, rng=rng)[0]
+
+
+def _paired_ratio_counted(
+    a: Sequence[float],
+    b: Sequence[float],
+    *,
+    n_boot: int,
+    alpha: float,
+    rng: RngLike,
+) -> tuple[Interval, float]:
+    """``paired_ratio_ci`` plus the fraction of resamples skipped for a zero denominator."""
     if len(a) != len(b):
         raise ValueError("paired samples must have equal length")
     xa = [float(v) for v in a]
     xb = [float(v) for v in b]
     n = len(xa)
     if n == 0:
-        return Interval(None, None, None)
+        return Interval(None, None, None), 0.0
     mean_a = fmean(xa)
     if mean_a == 0:
-        return Interval(None, None, None)
+        return Interval(None, None, None), 0.0
 
     def ratio(idx: list[int]) -> float | None:
         den = sum(map(xa.__getitem__, idx))
@@ -183,7 +213,7 @@ def paired_ratio_ci(
             return None
         return sum(map(xb.__getitem__, idx)) / den
 
-    return _bootstrap(n, ratio, fmean(xb) / mean_a, n_boot=n_boot, alpha=alpha, rng=rng)
+    return _bootstrap_counted(n, ratio, fmean(xb) / mean_a, n_boot=n_boot, alpha=alpha, rng=rng)
 
 
 def sign_flip_test(
@@ -323,6 +353,32 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
+def _comparison_notes(arm: str, base: str, diffs: Sequence[float], alpha: float) -> list[str]:
+    """Caveats on a pass-rate comparison that depend on the number and spread of paired tasks."""
+    n = len(diffs)
+    prefix = f"{arm} vs {base}:"
+    if n < 2:
+        return [f"{prefix} {n} paired task(s); at least 2 are needed to compare."]
+    sentences: list[str] = []
+    if max(diffs) - min(diffs) <= _TIE_TOL:
+        sentences.append(
+            f"every paired task has the same difference ({diffs[0] * 100:+.1f} pts). "
+            "There is no variation across tasks, so the interval is not informative."
+        )
+    elif n < _FEW_TASKS:
+        sentences.append(
+            f"only {n} paired tasks. Intervals from few tasks tend to be too narrow; "
+            "verdicts rely on the paired permutation test."
+        )
+    min_p = 2.0 ** (1 - n)  # every task differs, all in the same direction
+    if min_p >= alpha:
+        sentences.append(
+            f"With {n} paired tasks no result can reach p < {alpha:g} "
+            f"(the smallest possible p is {min_p:.4g})."
+        )
+    return [f"{prefix} " + " ".join(sentences)] if sentences else []
+
+
 def analyze(
     exp_meta: dict,
     records: Iterable[TrialRecord],
@@ -382,6 +438,7 @@ def analyze(
 
     notes: list[str] = []
     summaries: list[ArmSummary] = []
+    z_wilson = NormalDist().inv_cdf(1 - alpha / 2)
     for arm in arms:
         recs = [r for r in finals if r.arm == arm]
         done = [r for r in recs if r.status != "error"]
@@ -395,7 +452,7 @@ def analyze(
             rng=rng_for(f"pass_rate:{arm}"),
         )
         if n:
-            lo, hi = wilson_interval(passes, n)
+            lo, hi = wilson_interval(passes, n, z=z_wilson)
             wilson = Interval(passes / n, lo, hi)
         else:
             wilson = Interval(None, None, None)
@@ -459,6 +516,18 @@ def analyze(
             rng=rng_for(f"diff:{arm}"),
         )
         p = sign_flip_test(diffs, rng=rng_for(f"perm:{arm}")) if paired else None
+        cost_ratio, cost_skipped = _paired_ratio_counted(
+            *_pairs(task_cost, base, arm, paired),
+            n_boot=n_boot,
+            alpha=alpha,
+            rng=rng_for(f"cost_ratio:{arm}"),
+        )
+        dur_ratio, dur_skipped = _paired_ratio_counted(
+            *_pairs(task_dur, base, arm, paired),
+            n_boot=n_boot,
+            alpha=alpha,
+            rng=rng_for(f"duration_ratio:{arm}"),
+        )
 
         comparisons.append(
             Comparison(
@@ -468,32 +537,22 @@ def analyze(
                 pass_rate_diff=diff_ci,
                 p_value=p,
                 p_value_adjusted=None,
-                cost_ratio=paired_ratio_ci(
-                    *_pairs(task_cost, base, arm, paired),
-                    n_boot=n_boot,
-                    alpha=alpha,
-                    rng=rng_for(f"cost_ratio:{arm}"),
-                ),
-                duration_ratio=paired_ratio_ci(
-                    *_pairs(task_dur, base, arm, paired),
-                    n_boot=n_boot,
-                    alpha=alpha,
-                    rng=rng_for(f"duration_ratio:{arm}"),
-                ),
+                cost_ratio=cost_ratio,
+                duration_ratio=dur_ratio,
                 tasks_better=sum(1 for d in diffs if d > _TIE_TOL),
                 tasks_worse=sum(1 for d in diffs if d < -_TIE_TOL),
                 tasks_tied=sum(1 for d in diffs if abs(d) <= _TIE_TOL),
                 verdict="insufficient data",
             )
         )
-        if len(paired) < 2:
-            notes.append(
-                f"{arm} vs {base}: {len(paired)} paired task(s); at least 2 are needed to compare."
-            )
-        elif len(paired) < _FEW_TASKS:
-            notes.append(
-                f"{arm} vs {base}: only {len(paired)} paired tasks, so intervals are wide."
-            )
+        notes.extend(_comparison_notes(arm, base, diffs, alpha))
+        for skipped, what in ((cost_skipped, "cost"), (dur_skipped, "time")):
+            if skipped > _MAX_SKIPPED_FRACTION:
+                notes.append(
+                    f"{arm} vs {base}: the {what} ratio interval is unreliable because the "
+                    f"baseline {what} is mostly zero ({skipped:.0%} of bootstrap resamples had "
+                    "a zero baseline and were skipped)."
+                )
 
     for comp, adj in zip(comparisons, holm([c.p_value for c in comparisons]), strict=True):
         comp.p_value_adjusted = adj

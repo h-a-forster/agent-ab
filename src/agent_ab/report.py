@@ -208,7 +208,7 @@ def _cell_label(c: TaskCell | None) -> str:
     if c.trials <= 0:
         return "err" if c.errors else "-"
     s = f"{c.passes}/{c.trials}"
-    return f"{s}+{c.errors}e" if c.errors else s
+    return f"{s} +{c.errors} err" if c.errors else s
 
 
 def _summary_bits(a: Analysis) -> list[str]:
@@ -840,8 +840,14 @@ def _card(a: Analysis, c: Comparison) -> str:
         expl = (f"Only {n} task{'' if n == 1 else 's'} completed in both arms; at least 2 are "
                 "needed for a comparison.")
     elif c.verdict == "no detectable difference":
-        expl = (f"The data are consistent with a true difference anywhere from {ci_text}."
-                if has_ci else "No difference was detected.")
+        if has_ci and iv.low < iv.high and iv.low <= 0 <= iv.high:
+            expl = f"The data are consistent with a true difference anywhere from {ci_text}."
+        else:
+            # A zero-width interval, one that excludes 0, or none at all: quoting it as the
+            # range of plausible differences would contradict the verdict.
+            expl = (f"Holm-adjusted p = {fmt_p(c.p_value_adjusted)} is not below alpha "
+                    f"{a.alpha:g}. With few or uniform tasks the bootstrap interval "
+                    "understates uncertainty.")
     else:
         expl = (f"Holm-adjusted p = {fmt_p(c.p_value_adjusted)} is below alpha {a.alpha:g} and "
                 f"the {level} ({ci_text}) excludes zero.")
@@ -943,7 +949,7 @@ def render_html(a: Analysis, *, title: str | None = None) -> str:
         heat = '<p class="muted">No task results.</p>'
     else:
         intro = ('<p class="small muted">Each cell shows passes / completed trials for one task '
-                 'and arm ("+1e" marks infrastructure errors, excluded from the count). Tasks '
+                 'and arm ("+1 err" marks infrastructure errors, excluded from the count). Tasks '
                  "where arms disagree come first.</p>")
         heat = intro + _LEGEND
         if n_tasks <= HEATMAP_FULL_LIMIT:

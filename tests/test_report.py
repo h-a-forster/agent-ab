@@ -71,7 +71,9 @@ def analysis_typical() -> Analysis:
                           "no detectable difference")],
         cells=cells(tasks, ["control", "no-tests"], lambda i, j: (3, (i + j) % 4, 0)),
         flaky_tasks=["task-01", "task-02"], planned_trials=60, completed_trials=60,
-        error_trials=0, total_cost_usd=2.865, notes=["only 10 paired tasks: intervals are wide"],
+        error_trials=0, total_cost_usd=2.865,
+        notes=["no-tests vs control: only 10 paired tasks. Intervals from few tasks tend to be "
+               "too narrow."],
     )
 
 
@@ -111,7 +113,7 @@ def analysis_one_task() -> Analysis:
         cells=[TaskCell("only", "a", 1, 1, 0, 0.05, 3.0),
                TaskCell("only", "b", 1, 0, 0, None, None)],
         flaky_tasks=[], planned_trials=2, completed_trials=2, error_trials=0,
-        total_cost_usd=0.05, notes=["only 1 paired task: intervals are wide"],
+        total_cost_usd=0.05, notes=["b vs a: 1 paired task(s); at least 2 are needed to compare."],
     )
 
 
@@ -348,8 +350,54 @@ def test_html_four_arms():
     out = render_html(analysis_four_arms())
     assert "higher pass rate" in out and "insufficient data" in out
     assert "Not shown (no cost or pass-rate data): no-cost, broken" in out
-    assert ">err<" in out and "+1e" in out
+    assert ">err<" in out and "0/3 +1 err" in out and "+1e" not in out
     assert out.count('class="card"') == 3
+
+
+def _card_expl(out: str) -> str:
+    return re.search(r'<p class="small muted">([^<]*)</p><dl class="kv">', out).group(1)
+
+
+@pytest.mark.parametrize(
+    ("lo", "hi"),
+    [
+        (0.2, 0.6),  # CI excludes 0 but Holm p is not below alpha (e.g. 5 tasks all better)
+        (-0.4, -0.1),
+        (0.0, 0.0),  # zero-width: every task had the same difference
+        (1.0, 1.0),
+        (None, None),
+    ],
+)
+def test_html_no_difference_card_never_contradicts(lo, hi):
+    a = analysis_typical()
+    a.comparisons = [comp("no-tests", "control", 0.4 if lo is None else (lo + hi) / 2, lo, hi,
+                          0.0625, 0.0625, "no detectable difference", paired=5)]
+    expl = _card_expl(render_html(a))
+    assert "consistent with" not in expl
+    assert expl == ("Holm-adjusted p = 0.062 is not below alpha 0.05. With few or uniform tasks "
+                    "the bootstrap interval understates uncertainty.")
+
+
+def test_html_no_difference_card_ci_spans_zero():
+    expl = _card_expl(render_html(analysis_typical()))
+    assert expl == "The data are consistent with a true difference anywhere from -6.1 to +14.5 pts."
+
+
+def test_text_and_markdown_no_contradicting_wording():
+    a = analysis_typical()
+    a.comparisons = [comp("no-tests", "control", 0.0, 0.0, 0.0, 1.0, 1.0,
+                          "no detectable difference")]
+    for out in (render_text(a), render_markdown(a)):
+        assert "no detectable difference" in out and "consistent with" not in out
+
+
+def test_cell_label_errors_not_scientific():
+    out = render_markdown(analysis_four_arms())
+    assert "0/3 +1 err" in out and "+1e" not in out
+    a = analysis_typical()
+    a.cells[0] = TaskCell(a.cells[0].task, a.cells[0].arm, 3, 1, 2, 0.05, 40.0)
+    html = render_html(a)
+    assert "1/3 +2 err" in html and '"+1 err" marks infrastructure errors' in html
 
 
 def test_html_no_cost_data():
