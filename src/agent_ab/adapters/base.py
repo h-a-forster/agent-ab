@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+import os
+import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from pathlib import Path
 
+from agent_ab.errors import AdapterError
 from agent_ab.model import AgentInvocation, AgentSpec, AgentUsage, ProcResult, TrialContext
+
+IS_WINDOWS = os.name == "nt"
+
+_BATCH_SUFFIXES = frozenset({".cmd", ".bat"})
+# cmd.exe re-parses the command line of a batch file: these characters can start a new
+# command, redirect output, expand variables, or end the argument list early.
+_BATCH_UNSAFE = re.compile(r'[&|<>^%!"\r\n]')
 
 
 class Adapter(ABC):
@@ -47,3 +58,49 @@ def read_text(path: Path, limit: int | None = None) -> str:
     if limit is not None and len(data) > limit:
         data = data[-limit:]
     return data.decode("utf-8", errors="replace")
+
+
+def is_batch_file(path: str | None) -> bool:
+    """Whether ``path`` names a Windows batch file (``.cmd``/``.bat``), e.g. an npm shim."""
+    return bool(path) and Path(path).suffix.lower() in _BATCH_SUFFIXES
+
+
+def batch_argv_problems(argv: Sequence[str]) -> list[str]:
+    """Describe the arguments that cmd.exe would re-parse if ``argv[0]`` is a batch file.
+
+    Pure: looks only at the ``argv[0]`` suffix, so it behaves the same on every platform.
+    Returns an empty list when ``argv[0]`` is not a batch file or every argument is safe.
+    """
+    if not argv or not is_batch_file(argv[0]):
+        return []
+    problems = []
+    for arg in argv[1:]:
+        bad = sorted(set(_BATCH_UNSAFE.findall(arg)))
+        if bad:
+            shown = ", ".join(repr(c) for c in bad)
+            problems.append(f"argument {arg[:80]!r} contains {shown}")
+    if not problems:
+        return []
+    return [
+        f"{Path(argv[0]).name} is a Windows batch file, and cmd.exe re-parses its arguments "
+        "(it can run injected commands, expand %variables% or cut text at a newline): "
+        + "; ".join(problems)
+        + ". Install the native executable and point [agent.options].executable at it, "
+        "or avoid these characters"
+    ]
+
+
+def batch_argv_issue(argv: Sequence[str]) -> str | None:
+    """``batch_argv_problems`` for this platform: always None off Windows, where a ``.cmd``
+    suffix has no special meaning."""
+    if not IS_WINDOWS:
+        return None
+    problems = batch_argv_problems(argv)
+    return problems[0] if problems else None
+
+
+def check_batch_argv(argv: Sequence[str]) -> None:
+    """Raise ``AdapterError`` if ``argv`` cannot be passed safely through a Windows batch file."""
+    issue = batch_argv_issue(argv)
+    if issue:
+        raise AdapterError(issue)

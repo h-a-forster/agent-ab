@@ -8,14 +8,19 @@ import os
 import re
 import shlex
 import shutil
-import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from agent_ab.adapters.base import Adapter
-from agent_ab.errors import ConfigError
+from agent_ab.adapters.base import (
+    IS_WINDOWS,
+    Adapter,
+    batch_argv_issue,
+    check_batch_argv,
+    is_batch_file,
+)
+from agent_ab.errors import AdapterError, ConfigError
 from agent_ab.model import AgentInvocation, AgentSpec, AgentUsage, ProcResult, TrialContext
 
 PLACEHOLDERS: frozenset[str] = frozenset(
@@ -62,6 +67,11 @@ def _template_problems(template: tuple[str, ...]) -> list[str]:
         except ConfigError as e:
             problems.append(f"command: {e}")
     return problems
+
+
+def _placeholders(template: tuple[str, ...]) -> set[str]:
+    """Names of the ``{placeholders}`` used anywhere in ``template`` (literal braces excluded)."""
+    return {m.group(1) for item in template for m in _TOKEN.finditer(item) if m.group(1)}
 
 
 def _resolve(name: str) -> str | None:
@@ -114,7 +124,25 @@ def _shell_argv(line: str, artifacts: Path) -> list[str]:
 
 
 def _shell_quote(value: str) -> str:
-    return subprocess.list2cmdline([value]) if os.name == "nt" else shlex.quote(value)
+    if os.name != "nt":
+        return shlex.quote(value)
+    # Always quoted so cmd.exe treats & | < > ^ as literal text; _shell_value_problem has
+    # already rejected the characters a double-quoted string cannot protect. Trailing
+    # backslashes are doubled so they do not escape the closing quote.
+    trailing = len(value) - len(value.rstrip("\\"))
+    return '"' + value + "\\" * trailing + '"'
+
+
+def _shell_value_problem(name: str, value: str) -> str | None:
+    """Why ``value`` cannot be substituted into a shell line safely, or None."""
+    if "\n" in value or "\r" in value:
+        return f"{{{name}}} contains a newline"
+    if IS_WINDOWS:
+        bad = sorted({c for c in value if c in '%!"'})
+        if bad:
+            shown = ", ".join(repr(c) for c in bad)
+            return f"{{{name}}} contains {shown}, which cmd.exe does not keep literal in quotes"
+    return None
 
 
 class CommandAdapter(Adapter):
@@ -136,21 +164,52 @@ class CommandAdapter(Adapter):
             problems += _template_problems(tuple(spec.command))
         problems += _check_bool(spec.options, "stdin")
         problems += _check_bool(spec.options, "shell")
+        # Checked only once the template is known to be well formed.
+        if (
+            not problems
+            and spec.options.get("shell") is True
+            and "prompt" in _placeholders(tuple(spec.command))
+        ):
+            problems.append(
+                "command: {prompt} cannot be used with shell = true (arbitrary prompt text "
+                "cannot be quoted safely for a shell); use {prompt_file} or stdin = true"
+            )
         return problems
 
     def check_available(self, spec: AgentSpec) -> str | None:
         if not spec.command or spec.options.get("shell"):
             return None
         exe = spec.command[0]
-        if "{" in exe or _resolve(exe) is not None:
+        if "{" in exe:
             return None
-        return f"command: executable {exe!r} not found on PATH"
+        resolved = _resolve(exe)
+        if resolved is None:
+            return f"command: executable {exe!r} not found on PATH"
+        if not (IS_WINDOWS and is_batch_file(resolved)):
+            return None
+        if "prompt" in _placeholders(tuple(spec.command)):
+            return (
+                f"command: {exe!r} is a Windows batch file, and cmd.exe re-parses its "
+                "arguments, so {prompt} cannot be passed safely; use {prompt_file} or "
+                "stdin = true, or run the native executable"
+            )
+        # Items with placeholders are only known per attempt; build() checks them.
+        static = [_expand(x, {}) for x in spec.command[1:] if not _placeholders((x,))]
+        issue = batch_argv_issue([resolved, *static])
+        return f"command: {issue}" if issue else None
 
     def build(self, ctx: TrialContext) -> AgentInvocation:
         spec = ctx.spec
         ctx.artifacts.mkdir(parents=True, exist_ok=True)
         prompt_path = ctx.artifacts / PROMPT_FILE
-        prompt_path.write_text(ctx.prompt, encoding="utf-8", newline="\n")
+        # Same content as the runner's copy, which normally exists already: leave it untouched.
+        content = ctx.prompt + "\n"
+        try:
+            current = prompt_path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            current = None
+        if current != content:
+            prompt_path.write_text(content, encoding="utf-8", newline="\n")
         values = {
             "prompt_file": str(prompt_path),
             "prompt": ctx.prompt,
@@ -164,12 +223,18 @@ class CommandAdapter(Adapter):
         }
         template = tuple(spec.command or ())
         if spec.options.get("shell"):
+            used = _placeholders(template)
+            for name in sorted(used & values.keys()):
+                problem = _shell_value_problem(name, values[name])
+                if problem:
+                    raise AdapterError(f"command (shell = true): {problem}")
             quoted = {k: _shell_quote(v) for k, v in values.items()}
             argv = _shell_argv(" ".join(_expand(item, quoted) for item in template), ctx.artifacts)
         else:
             argv = [_expand(item, values) for item in template]
             if argv:
                 argv[0] = _resolve(argv[0]) or argv[0]
+            check_batch_argv(argv)
         return AgentInvocation(
             argv=argv,
             env=dict(spec.env),

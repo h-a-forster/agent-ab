@@ -11,12 +11,17 @@ from pathlib import Path
 
 import pytest
 
-from agent_ab.adapters import ADAPTER_NAMES, get_adapter
-from agent_ab.adapters.claude_code import ClaudeCodeAdapter, parse_result_text
+from agent_ab.adapters import ADAPTER_NAMES, base, get_adapter
+from agent_ab.adapters import command as command_mod
+from agent_ab.adapters.claude_code import (
+    SYSTEM_PROMPT_FILE,
+    ClaudeCodeAdapter,
+    parse_result_text,
+)
 from agent_ab.adapters.codex import CodexAdapter, parse_events
 from agent_ab.adapters.command import CommandAdapter, _expand, _read_usage_file
 from agent_ab.adapters.mock import MockAdapter
-from agent_ab.errors import ConfigError
+from agent_ab.errors import AdapterError, ConfigError
 from agent_ab.model import AgentSpec, Arm, ProcResult, Task, TrialContext
 
 FIXTURES = Path(__file__).parent / "fixtures" / "adapters"
@@ -92,8 +97,10 @@ def test_claude_all_options_argv(tmp_path):
     assert argv == ["nope-claude", *CLAUDE_BASE, "--permission-mode", "acceptEdits",
                     "--model", "opus", "--effort", "xhigh", "--max-budget-usd", "2.5",
                     "--max-turns", "30", "--safe-mode", "--bare",
-                    "--setting-sources", "project,local", "--append-system-prompt", "Be brief.",
+                    "--setting-sources", "project,local",
+                    "--append-system-prompt-file", str(tmp_path / "art" / SYSTEM_PROMPT_FILE),
                     "--verbose"]
+    assert (tmp_path / "art" / SYSTEM_PROMPT_FILE).read_text(encoding="utf-8") == "Be brief."
 
 
 FLAG_OPTIONS = {
@@ -102,7 +109,7 @@ FLAG_OPTIONS = {
     "safe_mode": (True, ["--safe-mode"]),
     "bare": (True, ["--bare"]),
     "setting_sources": ("", ["--setting-sources", ""]),
-    "append_system_prompt": ("x y", ["--append-system-prompt", "x y"]),
+    "append_system_prompt": ("x y", ["--append-system-prompt-file", SYSTEM_PROMPT_FILE]),
 }
 
 
@@ -114,7 +121,8 @@ def test_claude_option_combinations(tmp_path, r):
         expected = ["nope-claude", *CLAUDE_BASE, "--permission-mode", "bypassPermissions"]
         for k in FLAG_OPTIONS:  # flags are emitted in a fixed order
             if k in combo:
-                expected += FLAG_OPTIONS[k][1]
+                expected += [str(tmp_path / "art" / x) if x == SYSTEM_PROMPT_FILE else x
+                             for x in FLAG_OPTIONS[k][1]]
         assert argv == expected
 
 
@@ -454,7 +462,7 @@ def test_command_build_expands_and_writes_prompt(tmp_path):
     ctx = make_ctx(tmp_path, spec, prompt="hello\nworld")
     inv = CommandAdapter().build(ctx)
     prompt_file = ctx.artifacts / "prompt.md"
-    assert prompt_file.read_bytes() == b"hello\nworld"
+    assert prompt_file.read_bytes() == b"hello\nworld\n"
     assert Path(inv.argv[0]).resolve() == Path(sys.executable).resolve()
     assert inv.argv[1:] == ["-c", "pass", str(prompt_file), "hello\nworld", str(ctx.workspace),
                             str(ctx.artifacts), "m1", "e1", "42", "{lit}"]
@@ -539,7 +547,7 @@ def test_command_end_to_end(tmp_path):
     inv = CommandAdapter().build(ctx)
     cp = subprocess.run(inv.argv, cwd=inv.cwd, timeout=30)
     u = CommandAdapter().parse(ctx, proc_result(tmp_path, code=cp.returncode))
-    assert (u.cost_usd, u.final_message) == (0.25, "say hi")
+    assert (u.cost_usd, u.final_message) == (0.25, "say hi\n")
 
 
 # --------------------------------------------------------------------------- mock
@@ -592,3 +600,211 @@ def test_mock_adapter_end_to_end(tmp_path):
 
 def test_mock_check_available():
     assert MockAdapter().check_available(AgentSpec(adapter="mock")) is None
+
+
+def test_mock_rejects_args():
+    problems = MockAdapter().validate(AgentSpec(adapter="mock", args=("--verbose",)))
+    assert any("does not accept 'args'" in p for p in problems), problems
+    assert MockAdapter().validate(AgentSpec(adapter="mock", args=())) == []
+
+
+# --------------------------------------------------------------------------- command prompt file
+
+
+def test_command_keeps_existing_identical_prompt_file(tmp_path):
+    spec = AgentSpec(adapter="command", command=("tool", "{prompt_file}"))
+    ctx = make_ctx(tmp_path, spec, prompt="same")
+    path = ctx.artifacts / "prompt.md"
+    path.write_bytes(b"same\n")  # what the runner writes
+    os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+    CommandAdapter().build(ctx)
+    assert path.stat().st_mtime_ns == 1_000_000_000
+    assert path.read_bytes() == b"same\n"
+
+
+def test_command_rewrites_different_prompt_file(tmp_path):
+    spec = AgentSpec(adapter="command", command=("tool", "{prompt_file}"))
+    ctx = make_ctx(tmp_path, spec, prompt="new")
+    (ctx.artifacts / "prompt.md").write_bytes(b"stale")
+    CommandAdapter().build(ctx)
+    assert (ctx.artifacts / "prompt.md").read_bytes() == b"new\n"
+
+
+# --------------------------------------------------------------------------- command shell mode
+
+
+@pytest.mark.parametrize("item", ["{prompt}", "--msg={prompt}", "x{prompt}y"])
+def test_command_shell_rejects_prompt_placeholder(item):
+    spec = AgentSpec(adapter="command", command=("tool", item), options={"shell": True})
+    problems = CommandAdapter().validate(spec)
+    assert any("{prompt} cannot be used with shell = true" in p for p in problems), problems
+    assert any("{prompt_file}" in p for p in problems)
+
+
+def test_command_shell_allows_prompt_file_and_literal_braces():
+    for command in (("tool", "{prompt_file}"), ("tool", "{{prompt}}")):
+        spec = AgentSpec(adapter="command", command=command, options={"shell": True})
+        assert CommandAdapter().validate(spec) == []
+    # Without shell mode {prompt} stays allowed.
+    assert CommandAdapter().validate(AgentSpec(adapter="command", command=("t", "{prompt}"))) == []
+
+
+def test_command_shell_rejects_newline_in_value(tmp_path):
+    spec = AgentSpec(adapter="command", model="a\nb", command=("tool", "{model}"),
+                     options={"shell": True})
+    with pytest.raises(AdapterError, match="newline"):
+        CommandAdapter().build(make_ctx(tmp_path, spec))
+    # Unused placeholders are not checked.
+    ok = AgentSpec(adapter="command", model="a\nb", command=("tool",), options={"shell": True})
+    CommandAdapter().build(make_ctx(tmp_path, ok))
+
+
+@pytest.mark.parametrize("value", ["100%", "%USERNAME%", "hi!", 'say "x"'])
+def test_command_shell_rejects_cmd_expansion_on_windows(tmp_path, monkeypatch, value):
+    monkeypatch.setattr(command_mod, "IS_WINDOWS", True)
+    spec = AgentSpec(adapter="command", model=value, command=("tool", "{model}"),
+                     options={"shell": True})
+    with pytest.raises(AdapterError, match="cmd.exe"):
+        CommandAdapter().build(make_ctx(tmp_path, spec))
+    monkeypatch.setattr(command_mod, "IS_WINDOWS", False)
+    CommandAdapter().build(make_ctx(tmp_path, spec))
+
+
+def test_command_shell_keeps_metacharacters_literal(tmp_path):
+    out = tmp_path / "out.txt"
+    marker = tmp_path / "pwned.txt"
+    value = f"a&b|c^d<e>f & echo x>{marker}"
+    script = "import sys; open(sys.argv[1], 'w', encoding='utf-8').write(sys.argv[2])"
+    spec = AgentSpec(adapter="command", model=value, options={"shell": True},
+                     command=("{python}", "-c", f'"{script}"', str(out), "{model}"))
+    inv = CommandAdapter().build(make_ctx(tmp_path, spec))
+    subprocess.run(inv.argv, cwd=inv.cwd, check=True, timeout=30)
+    assert out.read_text(encoding="utf-8") == value
+    assert not marker.exists()
+
+
+# --------------------------------------------------------------------------- Windows batch shims
+
+
+@pytest.mark.parametrize("ch", list("&|<>^%!\"\r\n"))
+def test_batch_argv_problems_flags_each_character(ch):
+    problems = base.batch_argv_problems(["C:/bin/claude.CMD", "-p", f"a{ch}b"])
+    assert len(problems) == 1
+    assert "batch file" in problems[0] and "native executable" in problems[0]
+
+
+def test_batch_argv_problems_ignores_safe_and_non_batch():
+    assert base.batch_argv_problems(["x.cmd", "-p", "C:/Program Files/a b", "k=v", "(x)"]) == []
+    assert base.batch_argv_problems(["claude.exe", "a&b", "100%"]) == []
+    assert base.batch_argv_problems(["claude", "a&b"]) == []
+    assert base.batch_argv_problems([]) == []
+    assert base.batch_argv_problems(["run.bat", "a&b"])
+    # The executable path itself is not re-parsed as an argument.
+    assert base.batch_argv_problems(["C:/odd&dir/run.cmd", "ok"]) == []
+
+
+def test_check_batch_argv_only_on_windows(monkeypatch):
+    monkeypatch.setattr(base, "IS_WINDOWS", True)
+    with pytest.raises(AdapterError, match="batch file"):
+        base.check_batch_argv(["claude.cmd", "%USERNAME%"])
+    base.check_batch_argv(["claude.cmd", "plain"])
+    monkeypatch.setattr(base, "IS_WINDOWS", False)
+    base.check_batch_argv(["claude.cmd", "%USERNAME%"])
+    assert base.batch_argv_issue(["claude.cmd", "%USERNAME%"]) is None
+
+
+def fake_shim(tmp_path: Path, name: str) -> Path:
+    """A ``.cmd`` that records its argv as JSON, like an npm shim forwarding ``%*``."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    (bindir / "dump.py").write_text(
+        "import json, os, sys\n"
+        "with open(os.path.join(os.path.dirname(__file__), 'argv.json'), 'w') as f:\n"
+        "    json.dump(sys.argv[1:], f)\n"
+        "sys.stdin.read()\n",
+        encoding="utf-8",
+    )
+    shim = bindir / name
+    shim.write_text(f'@"{sys.executable}" "%~dp0dump.py" %*\r\n', encoding="utf-8", newline="")
+    shim.chmod(0o755)
+    return shim
+
+
+@pytest.fixture
+def windows(monkeypatch):
+    monkeypatch.setattr(base, "IS_WINDOWS", True)
+    monkeypatch.setattr(command_mod, "IS_WINDOWS", True)
+
+
+def test_claude_batch_shim_checked_up_front(tmp_path, windows):
+    shim = str(fake_shim(tmp_path, "claude.cmd"))
+    a = ClaudeCodeAdapter()
+    ok = AgentSpec(adapter="claude-code", model="sonnet",
+                   options={"executable": shim, "append_system_prompt": "a & b\n100%"})
+    assert a.check_available(ok) is None  # the system prompt goes through a file
+    for spec in (
+        AgentSpec(adapter="claude-code", model="x&y", options={"executable": shim}),
+        AgentSpec(adapter="claude-code", args=("--foo=%PATH%",), options={"executable": shim}),
+    ):
+        msg = a.check_available(spec)
+        assert msg and msg.startswith("claude-code:") and "batch file" in msg, msg
+
+
+def test_claude_batch_shim_rejects_unsafe_artifacts_path(tmp_path, windows):
+    shim = str(fake_shim(tmp_path, "claude.cmd"))
+    spec = AgentSpec(adapter="claude-code",
+                     options={"executable": shim, "append_system_prompt": "hi"})
+    (tmp_path / "100%").mkdir()
+    ctx = make_ctx(tmp_path / "100%", spec)
+    with pytest.raises(AdapterError, match="batch file"):
+        ClaudeCodeAdapter().build(ctx)
+
+
+def test_codex_batch_shim_checked(tmp_path, windows):
+    shim = str(fake_shim(tmp_path, "codex.cmd"))
+    a = CodexAdapter()
+    assert a.check_available(AgentSpec(adapter="codex", options={"executable": shim})) is None
+    bad = AgentSpec(adapter="codex", args=("-c", "x=a|b"), options={"executable": shim})
+    assert "batch file" in a.check_available(bad)
+    spec = AgentSpec(adapter="codex", options={"executable": shim})
+    (tmp_path / "a&b").mkdir()
+    (tmp_path / "plain").mkdir()
+    with pytest.raises(AdapterError, match="batch file"):
+        a.build(make_ctx(tmp_path / "a&b", spec))
+    a.build(make_ctx(tmp_path / "plain", spec))
+
+
+def test_command_batch_shim_checked(tmp_path, windows):
+    shim = str(fake_shim(tmp_path, "tool.cmd"))
+    a = CommandAdapter()
+    msg = a.check_available(AgentSpec(adapter="command", command=(shim, "{prompt}")))
+    assert msg and "{prompt} cannot be passed safely" in msg
+    assert "batch file" in a.check_available(AgentSpec(adapter="command", command=(shim, "a&b")))
+    assert a.check_available(AgentSpec(adapter="command", command=(shim, "{prompt_file}"))) is None
+    spec = AgentSpec(adapter="command", command=(shim, "{model}"), model="x^y")
+    with pytest.raises(AdapterError, match="batch file"):
+        a.build(make_ctx(tmp_path, spec))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="needs cmd.exe")
+def test_claude_batch_shim_end_to_end(tmp_path):
+    shim = fake_shim(tmp_path, "claude.cmd")
+    marker = tmp_path / "pwned.txt"
+    text = f"Line one.\nUse %USERNAME% & echo INJECTED>{marker}\n\"quoted\" ^ !x!"
+    spec = AgentSpec(adapter="claude-code", model="sonnet",
+                     options={"executable": str(shim), "append_system_prompt": text})
+    assert ClaudeCodeAdapter().check_available(spec) is None
+    ctx = make_ctx(tmp_path, spec)
+    inv = ClaudeCodeAdapter().build(ctx)
+    assert text not in inv.argv
+    subprocess.run(inv.argv, cwd=inv.cwd, input=inv.stdin, text=True, check=True, timeout=30)
+    got = json.loads((shim.parent / "argv.json").read_text(encoding="utf-8"))
+    assert got == inv.argv[1:]
+    path = got[got.index("--append-system-prompt-file") + 1]
+    assert Path(path).read_bytes().decode("utf-8") == text
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="needs cmd.exe")
+def test_real_windows_flag_matches_platform():
+    assert base.IS_WINDOWS is True and command_mod.IS_WINDOWS is True

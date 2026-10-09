@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from agent_ab.adapters.base import Adapter, read_text
+from agent_ab.adapters.base import Adapter, batch_argv_issue, check_batch_argv, read_text
 from agent_ab.adapters.claude_code import _int, _looks_like_infra, _tail
 from agent_ab.adapters.command import _check_bool, _is_number, _resolve
 from agent_ab.model import AgentInvocation, AgentSpec, AgentUsage, ProcResult, TrialContext
@@ -172,25 +172,21 @@ class CodexAdapter(Adapter):
 
     def check_available(self, spec: AgentSpec) -> str | None:
         exe = spec.options.get("executable", "codex")
-        if _resolve(exe) is None:
+        resolved = _resolve(exe)
+        if resolved is None:
             return (
                 f"codex: executable {exe!r} not found on PATH "
                 "(install the Codex CLI or set [agent.options].executable)"
             )
-        return None
+        # The workspace path is only known per attempt; build() checks it.
+        issue = batch_argv_issue(self._argv(spec, resolved, None))
+        return f"codex: {issue}" if issue else None
 
-    def build(self, ctx: TrialContext) -> AgentInvocation:
-        spec, o = ctx.spec, ctx.spec.options
-        exe = o.get("executable", "codex")
-        argv = [
-            _resolve(exe) or exe,
-            "exec",
-            "--json",
-            "--skip-git-repo-check",
-            "--ephemeral",
-            "-C",
-            str(ctx.workspace),
-        ]
+    def _argv(self, spec: AgentSpec, exe: str, workspace: str | None) -> list[str]:
+        o = spec.options
+        argv = [exe, "exec", "--json", "--skip-git-repo-check", "--ephemeral"]
+        if workspace is not None:
+            argv += ["-C", workspace]
         if o.get("bypass_sandbox"):
             argv.append("--dangerously-bypass-approvals-and-sandbox")
         else:
@@ -205,6 +201,13 @@ class CodexAdapter(Adapter):
             argv.append("--ignore-user-config")
         argv += list(spec.args)
         argv.append("-")  # read the prompt from stdin
+        return argv
+
+    def build(self, ctx: TrialContext) -> AgentInvocation:
+        spec = ctx.spec
+        exe = spec.options.get("executable", "codex")
+        argv = self._argv(spec, _resolve(exe) or exe, str(ctx.workspace))
+        check_batch_argv(argv)
         return AgentInvocation(argv=argv, env=dict(spec.env), stdin=ctx.prompt, cwd=ctx.workspace)
 
     def parse(self, ctx: TrialContext, result: ProcResult) -> AgentUsage:

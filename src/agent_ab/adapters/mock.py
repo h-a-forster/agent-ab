@@ -57,6 +57,11 @@ class MockAdapter(Adapter):
 
     def validate(self, spec: AgentSpec) -> list[str]:
         problems = super().validate(spec)
+        if spec.args:
+            problems.append(
+                "adapter 'mock' does not accept 'args' (the mock agent rejects unknown "
+                "arguments); configure it with [agent.options] instead"
+            )
         o = spec.options
         for key in _RATES:
             if key in o and not _is_rate(o[key]):

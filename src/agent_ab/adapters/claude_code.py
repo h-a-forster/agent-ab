@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from agent_ab.adapters.base import Adapter, read_text
+from agent_ab.adapters.base import Adapter, batch_argv_issue, check_batch_argv, read_text
 from agent_ab.adapters.command import _check_bool, _is_number, _resolve
 from agent_ab.model import AgentInvocation, AgentSpec, AgentUsage, ProcResult, TrialContext
 
@@ -16,6 +16,7 @@ PERMISSION_MODES: frozenset[str] = frozenset(
     {"acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"}
 )
 SETTING_SOURCES: frozenset[str] = frozenset({"user", "project", "local"})
+SYSTEM_PROMPT_FILE = "append_system_prompt.md"
 
 # Failures of the provider or the account rather than of the configuration under test.
 # Only consulted when a run already failed, so a successful answer that mentions "429" is safe.
@@ -204,18 +205,20 @@ class ClaudeCodeAdapter(Adapter):
 
     def check_available(self, spec: AgentSpec) -> str | None:
         exe = spec.options.get("executable", "claude")
-        if _resolve(exe) is None:
+        resolved = _resolve(exe)
+        if resolved is None:
             return (
                 f"claude-code: executable {exe!r} not found on PATH "
                 "(install Claude Code or set [agent.options].executable)"
             )
-        return None
+        # The system-prompt file path is only known per attempt; build() checks it.
+        issue = batch_argv_issue(self._argv(spec, resolved, None))
+        return f"claude-code: {issue}" if issue else None
 
-    def build(self, ctx: TrialContext) -> AgentInvocation:
-        spec, o = ctx.spec, ctx.spec.options
-        exe = o.get("executable", "claude")
+    def _argv(self, spec: AgentSpec, exe: str, system_prompt_file: str | None) -> list[str]:
+        o = spec.options
         argv = [
-            _resolve(exe) or exe,
+            exe,
             "-p",
             "--output-format",
             "json",
@@ -230,6 +233,8 @@ class ClaudeCodeAdapter(Adapter):
         if o.get("max_budget_usd") is not None:
             argv += ["--max-budget-usd", _format_number(o["max_budget_usd"])]
         if o.get("max_turns") is not None:
+            # Hidden from ``claude --help`` in recent releases but still accepted (unknown
+            # options are rejected); passed through unchanged.
             argv += ["--max-turns", str(o["max_turns"])]
         if o.get("safe_mode"):
             argv.append("--safe-mode")
@@ -237,9 +242,24 @@ class ClaudeCodeAdapter(Adapter):
             argv.append("--bare")
         if o.get("setting_sources") is not None:
             argv += ["--setting-sources", o["setting_sources"]]
-        if o.get("append_system_prompt") is not None:
-            argv += ["--append-system-prompt", o["append_system_prompt"]]
+        if system_prompt_file is not None:
+            argv += ["--append-system-prompt-file", system_prompt_file]
         argv += list(spec.args)
+        return argv
+
+    def build(self, ctx: TrialContext) -> AgentInvocation:
+        spec, o = ctx.spec, ctx.spec.options
+        exe = o.get("executable", "claude")
+        system_prompt_file = None
+        if o.get("append_system_prompt") is not None:
+            # Passed as a file: multi-line text does not survive a command line intact
+            # (a Windows batch shim would cut it at the first newline).
+            ctx.artifacts.mkdir(parents=True, exist_ok=True)
+            path = ctx.artifacts / SYSTEM_PROMPT_FILE
+            path.write_text(o["append_system_prompt"], encoding="utf-8", newline="")
+            system_prompt_file = str(path)
+        argv = self._argv(spec, _resolve(exe) or exe, system_prompt_file)
+        check_batch_argv(argv)
         # The prompt goes on stdin: no argv length limits or Windows quoting pitfalls.
         return AgentInvocation(argv=argv, env=dict(spec.env), stdin=ctx.prompt, cwd=ctx.workspace)
 
