@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import re
 import shlex
 import shutil
 import sys
@@ -20,50 +19,25 @@ from agent_ab.adapters.base import (
     check_batch_argv,
     is_batch_file,
 )
+from agent_ab.config import COMMAND_PLACEHOLDERS, check_placeholders, find_placeholders
+from agent_ab.config import expand_placeholders as _expand
 from agent_ab.errors import AdapterError, ConfigError
 from agent_ab.model import AgentInvocation, AgentSpec, AgentUsage, ProcResult, TrialContext
 
-PLACEHOLDERS: frozenset[str] = frozenset(
-    {"prompt_file", "prompt", "workspace", "artifacts", "model", "effort", "python", "seed", "root"}
-)
+PLACEHOLDERS: frozenset[str] = COMMAND_PLACEHOLDERS
 
 USAGE_FILE = "usage.json"
 PROMPT_FILE = "prompt.md"
-
-_TOKEN = re.compile(r"\{\{|\}\}|\{([^{}]*)\}|[{}]")
 
 _INT_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "turns")
 _STR_FIELDS = ("final_message", "infra_error")
 
 
-def _expand(template: str, values: Mapping[str, str]) -> str:
-    """Substitute ``{name}`` placeholders; ``{{``/``}}`` are literal braces.
-
-    Raises ``ConfigError`` for unknown names or unbalanced braces.
-    """
-
-    def repl(m: re.Match[str]) -> str:
-        tok = m.group(0)
-        if tok == "{{":
-            return "{"
-        if tok == "}}":
-            return "}"
-        name = m.group(1)
-        if name is None:
-            raise ConfigError(f"unbalanced brace in {template!r} (use {{{{ or }}}} for literals)")
-        if name not in values:
-            raise ConfigError(f"unknown placeholder {{{name}}} in {template!r}")
-        return values[name]
-
-    return _TOKEN.sub(repl, template)
-
-
 def _template_problems(template: tuple[str, ...]) -> list[str]:
-    dummy = dict.fromkeys(PLACEHOLDERS, "")
     problems = []
     for item in template:
         try:
-            _expand(item, dummy)
+            check_placeholders(item, PLACEHOLDERS)
         except ConfigError as e:
             problems.append(f"command: {e}")
     return problems
@@ -71,7 +45,7 @@ def _template_problems(template: tuple[str, ...]) -> list[str]:
 
 def _placeholders(template: tuple[str, ...]) -> set[str]:
     """Names of the ``{placeholders}`` used anywhere in ``template`` (literal braces excluded)."""
-    return {m.group(1) for item in template for m in _TOKEN.finditer(item) if m.group(1)}
+    return {name for item in template for name in find_placeholders(item)}
 
 
 def _resolve(name: str) -> str | None:

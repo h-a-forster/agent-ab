@@ -23,7 +23,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
-from .errors import ConfigError, WorkspaceError
+from .config import expand_placeholders as _expand
+from .errors import WorkspaceError
 from .model import Arm, Command, ProcResult, Task
 from .proc import IS_WINDOWS, build_env, run_process
 
@@ -405,24 +406,6 @@ def destroy_workspace(ws: Workspace) -> bool:
                 break
             time.sleep(min(0.1 * 2 ** min(attempt, 4), 1.0, remaining))
     return not os.path.lexists(path)
-
-
-_PLACEHOLDER = re.compile(r"\{\{|\}\}|\{([^{}]*)\}")
-
-
-def _expand(template: str, values: Mapping[str, str]) -> str:
-    def sub(m: re.Match) -> str:
-        token = m.group(0)
-        if token == "{{":
-            return "{"
-        if token == "}}":
-            return "}"
-        name = m.group(1)
-        if name not in values:
-            raise ConfigError(f"unknown placeholder {{{name}}} in command: {template!r}")
-        return values[name]
-
-    return _PLACEHOLDER.sub(sub, template)
 
 
 def _shell_quote(value: str) -> str:
