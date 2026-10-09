@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: uv sync --group dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest
+
+  package:
+    name: build and smoke test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      - name: Install the wheel into a fresh virtual environment
+        run: |
+          uv venv "$RUNNER_TEMP/smoke"
+          uv pip install --python "$RUNNER_TEMP/smoke" dist/*.whl
+          if [ -d "$RUNNER_TEMP/smoke/Scripts" ]; then
+            echo "$RUNNER_TEMP/smoke/Scripts" >> "$GITHUB_PATH"
+          else
+            echo "$RUNNER_TEMP/smoke/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Smoke test the offline demo
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euxo pipefail
+          agent-ab --version
+          agent-ab init demo
+          cd demo
+          agent-ab validate experiment.toml
+          agent-ab validate experiment.toml --tasks
+          agent-ab run experiment.toml --out smoke-run --quiet
+          test -f smoke-run/run.json
+          test -f smoke-run/trials.jsonl
+          agent-ab status smoke-run
+          agent-ab report smoke-run --format json --out analysis-check.json
+          test -s analysis-check.json
+
+      - name: Upload distributions
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
