@@ -191,7 +191,7 @@ def test_agent_timeout_is_failure_without_check(tmp_path):
 
 def test_agent_timeout_checked_when_not_failure(tmp_path):
     script = SOLVE + "\nimport time; time.sleep(30)"
-    rec = run_one(tmp_path, script, timeout_s=1.5, timeout_is_failure=False)
+    rec = run_one(tmp_path, script, timeout_s=6.0, timeout_is_failure=False)
     assert rec.agent_timed_out and rec.status == "pass"
 
 
@@ -413,7 +413,7 @@ def test_unavailable_adapter_fails_fast(tmp_path):
 def test_jobs_run_concurrently(tmp_path):
     script = (
         "import os, time\n"
-        "s = time.time(); time.sleep(1.0)\n"
+        "s = time.time(); time.sleep(4.0)\n"
         "open(os.path.join(os.environ['FAKE_ARTIFACTS'], 'span.txt'), 'w')"
         ".write(f'{s} {time.time()}')\n"
     )

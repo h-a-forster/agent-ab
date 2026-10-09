@@ -49,7 +49,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @anthropic-ai/claude-code \
- && pip install --no-cache-dir agent-ab
+ && pip install --no-cache-dir git+https://github.com/h-a-forster/agent-ab
 
 RUN useradd --create-home runner
 USER runner

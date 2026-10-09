@@ -28,6 +28,12 @@ classifiers = [
 ]
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/h-a-forster/agent-ab"
+Documentation = "https://github.com/h-a-forster/agent-ab/tree/main/docs"
+Issues = "https://github.com/h-a-forster/agent-ab/issues"
+Changelog = "https://github.com/h-a-forster/agent-ab/blob/main/CHANGELOG.md"
+
 [project.scripts]
 agent-ab = "agent_ab.cli:main"
 

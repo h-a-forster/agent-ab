@@ -49,6 +49,7 @@ from agent_ab.workspace import (
     destroy_workspace,
     diff_stats,
     install_checks,
+    rebaseline,
     run_command,
 )
 
@@ -289,6 +290,7 @@ def _execute(
         if problem:
             rec.error = problem
             return
+        rebaseline(ws)
 
     prompt = _build_prompt(spec)
     _write_text(art / "prompt.md", prompt + "\n")

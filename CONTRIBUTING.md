@@ -35,7 +35,7 @@ pass on Windows: use `pathlib` and do not assume `sh`.
 ## Adapters
 
 See [docs/adapters.md](docs/adapters.md#adding-an-adapter). Register the class in `_REGISTRY`
-in `src/agent_ab/adapters/__init__.py` and add `tests/test_adapter_<name>.py` that tests
+in `src/agent_ab/adapters/__init__.py` and add tests to `tests/test_adapters.py` that cover
 `build` and `parse` against recorded output, including each kind of infrastructure error.
 `parse` must never raise. Mark a failure as an infrastructure error only if it is unrelated
 to the configuration under test; otherwise it is silently dropped from the statistics.

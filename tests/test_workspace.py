@@ -546,3 +546,25 @@ def test_diff_ignores_interpreter_caches(tmp_path):
         assert stats is not None and stats[0] == 1
     finally:
         destroy_workspace(ws)
+
+
+def test_rebaseline_excludes_setup_output_from_the_diff(tmp_path):
+    from agent_ab.model import AgentSpec, Arm, Task
+    from agent_ab.workspace import create_workspace, destroy_workspace, diff_stats, rebaseline
+
+    task_dir = tmp_path / "task"
+    (task_dir / "repo").mkdir(parents=True)
+    (task_dir / "repo" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    task = Task(id="t", path=task_dir, prompt="p", check="true", repo=task_dir / "repo")
+    ws = create_workspace(task, Arm(name="a", agent=AgentSpec(adapter="mock")), root=tmp_path,
+                          label="t")
+    try:
+        if ws.baseline_commit is None:
+            return
+        (ws.path / "generated.txt").write_text("from setup\n", encoding="utf-8")
+        rebaseline(ws)
+        assert diff_stats(ws, tmp_path / "d1.patch") == (0, 0, 0)
+        (ws.path / "a.py").write_text("x = 2\n", encoding="utf-8")
+        assert diff_stats(ws, tmp_path / "d2.patch")[0] == 1
+    finally:
+        destroy_workspace(ws)

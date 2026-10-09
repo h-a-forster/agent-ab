@@ -1,6 +1,6 @@
 # agent-ab
 
-[![CI](../../actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
+[![CI](https://github.com/h-a-forster/agent-ab/actions/workflows/ci.yml/badge.svg)](https://github.com/h-a-forster/agent-ab/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
@@ -17,12 +17,14 @@ Runs on Linux, macOS and Windows. Python 3.11+, no runtime dependencies.
 
 ## Install
 
+Not on PyPI yet. Install from GitHub:
+
 ```sh
-uv tool install agent-ab
+uv tool install git+https://github.com/h-a-forster/agent-ab
 # or
-pipx install agent-ab
+pipx install git+https://github.com/h-a-forster/agent-ab
 # or
-pip install agent-ab
+pip install git+https://github.com/h-a-forster/agent-ab
 ```
 
 ## Quick start
@@ -144,9 +146,10 @@ format: [docs/tasks.md](docs/tasks.md). Codex and other agents:
   CI excludes 0. Otherwise it is `no detectable difference`.
 - "No detectable difference" does not mean "no difference". Read the CI: it is the range of
   effects the data is compatible with.
-- More tasks help more than more repeats. Small effects need many tasks: a 10-point
-  difference typically needs well over 100. Run `agent-ab power` to estimate how many tasks
-  you need before spending money. See [docs/power.md](docs/power.md).
+- Small effects need many tasks: a 10-point difference typically needs around 100 tasks
+  with 3 repeats. Repeats help when the effect is similar across tasks; more tasks help
+  when it varies. Run `agent-ab power` to estimate what you need before spending money.
+  See [docs/power.md](docs/power.md).
 
 Details: [docs/statistics.md](docs/statistics.md).
 

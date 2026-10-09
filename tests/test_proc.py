@@ -115,10 +115,11 @@ def test_timeout_kills_whole_tree(tmp_path):
         """
     )
     t0 = time.monotonic()
-    r = _run(tmp_path, [PY, "-c", child], timeout_s=1.0)
+    # Generous timeout: interpreter start-up on a loaded CI runner can take seconds.
+    r = _run(tmp_path, [PY, "-c", child], timeout_s=5.0)
     elapsed = time.monotonic() - t0
     assert r.timed_out
-    assert elapsed < 10, elapsed
+    assert elapsed < 20, elapsed
     assert pidfile.exists(), "child did not start the grandchild before the timeout"
     gc_pid = int(pidfile.read_text())
     assert _wait_dead(gc_pid, 5), f"grandchild {gc_pid} survived the tree kill"

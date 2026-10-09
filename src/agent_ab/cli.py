@@ -403,10 +403,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    from agent_ab.scaffold import init_project
+    from agent_ab.scaffold import ScaffoldError, init_project
 
     dest = Path(args.dir)
-    written = init_project(dest, force=args.force)
+    try:
+        written = init_project(dest, force=args.force)
+    except ScaffoldError as e:
+        raise UsageError(str(e)) from None  # a wrong target directory is a usage error
     shown = args.dir if args.dir != "." else "the current directory"
     _out(f"Wrote an offline demo experiment to {shown} ({len(written)} files).")
     _out("")

@@ -118,7 +118,7 @@ def test_init_prints_next_steps(tmp_path, capsys):
 def test_init_refuses_non_empty_dir(tmp_path, capsys):
     (tmp_path / "file.txt").write_text("x", encoding="utf-8")
     code, _, err = run_cli(capsys, "init", tmp_path)
-    assert code == 1
+    assert code == 2
     assert err.startswith("agent-ab: error: ") and "--force" in err
     code, _, _ = run_cli(capsys, "init", tmp_path, "--force")
     assert code == 0

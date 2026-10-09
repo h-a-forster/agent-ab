@@ -21,7 +21,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PureWindowsPath
 
 from .config import expand_placeholders as _expand
 from .errors import WorkspaceError
@@ -84,7 +84,16 @@ def _is_within(path: Path, root: Path) -> bool:
 def _safe_target(root: Path, rel: str, what: str) -> Path:
     """Resolve a workspace-relative path, refusing anything that escapes the workspace."""
     pure = PurePath(rel)
-    if not rel or pure.is_absolute() or pure.anchor or ".." in pure.parts:
+    win = PureWindowsPath(rel)
+    # Apply Windows rules everywhere so a path is refused the same way on every OS.
+    if (
+        not rel
+        or pure.is_absolute()
+        or pure.anchor
+        or win.drive
+        or rel[0] in "/\\"
+        or ".." in re.split(r"[\\/]", rel)
+    ):
         raise WorkspaceError(f"{what} path must be relative and inside the workspace: {rel!r}")
     target = root / pure
     root_resolved = root.resolve()
@@ -326,6 +335,22 @@ def create_workspace(task: Task, arm: Arm, *, root: Path | None, label: str) -> 
         destroy_workspace(ws)
         raise
     return ws
+
+
+def rebaseline(ws: Workspace) -> None:
+    """Commit the workspace as it is now and make that the baseline.
+
+    Called after the task's setup command, so files setup creates (installed packages,
+    generated sources) are not counted as the agent's changes. A no-op without git.
+    """
+    if ws.baseline_commit is None or _git() is None:
+        return
+    _run_git(ws.path, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
+    _run_git(ws.path, "commit", "-q", "--no-verify", "--allow-empty", "-m", "agent-ab setup")
+    out = _run_git(ws.path, "rev-parse", "HEAD").stdout.decode("ascii", "replace").strip()
+    if not out:
+        raise WorkspaceError("git rev-parse returned no commit")
+    ws.baseline_commit = out
 
 
 def diff_stats(ws: Workspace, patch_path: Path) -> tuple[int, int, int] | None:

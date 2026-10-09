@@ -1,4 +1,4 @@
-# Quickstart: an offline A/B experiment you can run in seconds.
+# Quickstart: an offline A/B experiment (90 trials, about a minute).
 #
 #   agent-ab validate examples/quickstart/experiment.toml --tasks   # check the task suite
 #   agent-ab run examples/quickstart/experiment.toml                 # run the experiment
