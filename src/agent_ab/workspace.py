@@ -28,7 +28,11 @@ from .model import Arm, Command, ProcResult, Task
 from .proc import IS_WINDOWS, build_env, run_process
 
 _GIT_TIMEOUT_S = 600.0
-_EXCLUDED_DIRS = frozenset({".git"})
+# Never copied, whatever its type: a .git *file* (worktree/submodule pointer) would make the
+# snapshot commit into the repository it points at.
+_EXCLUDED_NAMES = frozenset({".git"})
+_DESTROY_BUDGET_S = 5.0  # total time destroy_workspace may spend retrying
+_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 # Variables a parent git process (e.g. when agent-ab itself runs from a hook) could leak in and
 # redirect our commands at a different repository.
@@ -61,6 +65,12 @@ class Workspace:
 # --------------------------------------------------------------------------- paths and copying
 
 
+# Interpreter and tool caches appear whenever an agent runs code; they are not changes it made.
+_CACHE_EXCLUDES = tuple(
+    f":(exclude,glob)**/{name}"
+    for name in ("__pycache__/**", "*.pyc", ".pytest_cache/**", ".mypy_cache/**", ".ruff_cache/**")
+)
+
 def _sanitize_label(label: str) -> str:
     clean = re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("-.")
     return clean[:60] or "ws"
@@ -91,8 +101,31 @@ def _make_writable(path: str | os.PathLike) -> None:
         os.chmod(path, os.stat(path, follow_symlinks=False).st_mode | stat.S_IWRITE)
 
 
+def _is_link(path: str | os.PathLike) -> bool:
+    """True for symlinks and, on Windows, junctions and other reparse points."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    return bool(IS_WINDOWS and getattr(st, "st_file_attributes", 0) & _REPARSE_POINT)
+
+
+def _unlink_link(path: Path) -> None:
+    # Removes the link itself, never its target. Directory links/junctions on Windows need
+    # rmdir when unlink refuses them.
+    _make_writable(path)
+    try:
+        os.unlink(path)
+    except (IsADirectoryError, PermissionError):
+        os.rmdir(path)
+
+
 def _remove_path(path: Path) -> None:
-    if path.is_symlink() or path.is_file():
+    if _is_link(path):
+        _unlink_link(path)
+    elif path.is_file():
         _make_writable(path)
         path.unlink()
     elif path.is_dir():
@@ -116,8 +149,10 @@ def _rmtree(path: Path) -> None:
 def _merge_copy(src: Path, dst: Path, root: Path) -> None:
     """Copy ``src`` onto ``dst`` recursively: directories merge, files overwrite.
 
-    ``.git`` directories are skipped. Symlinks are recreated as links (copied as files when the
-    platform refuses), and nothing is ever written through a link that leaves ``root``.
+    Entries named ``.git`` are skipped. Symlinks are recreated as links (copied as files when
+    the platform refuses). Whatever is in the way at a destination path (a link, junction, or
+    an entry of the other type) is removed without following it, so nothing is ever written
+    through a link.
     """
     root_resolved = root.resolve()
     if not _is_within(dst.resolve(), root_resolved):
@@ -127,14 +162,15 @@ def _merge_copy(src: Path, dst: Path, root: Path) -> None:
         for entry in entries:
             s = Path(entry.path)
             d = dst / entry.name
-            if entry.is_dir(follow_symlinks=False) and entry.name in _EXCLUDED_DIRS:
+            if entry.name in _EXCLUDED_NAMES:
                 continue
-            if d.is_symlink() or (d.exists() and d.is_dir() != entry.is_dir(follow_symlinks=False)):
+            src_is_link = _is_link(s)
+            if _is_link(d) or (
+                os.path.lexists(d) and (src_is_link or d.is_dir() != entry.is_dir())
+            ):
                 # Replace whatever is in the way rather than writing through or into it.
                 _remove_path(d)
-            if entry.is_symlink():
-                if d.exists():
-                    _remove_path(d)
+            if src_is_link:
                 try:
                     os.symlink(os.readlink(s), d, target_is_directory=s.is_dir())
                 except OSError:
@@ -211,14 +247,17 @@ def _git_argv(git: str, *args: str) -> list[str]:
     ]  # fmt: skip
 
 
-def _run_git(cwd: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
+def _run_git(ws: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
     git = _git()
     if git is None:
         raise WorkspaceError("git is not available")
+    # Explicit locations: discovery could otherwise climb into an enclosing repository or
+    # follow a .git file to someone else's.
+    located = (f"--git-dir={ws / '.git'}", f"--work-tree={ws}")
     try:
         cp = subprocess.run(
-            _git_argv(git, *args),
-            cwd=str(cwd),
+            _git_argv(git, *located, *args),
+            cwd=str(ws),
             env=_git_env(),
             stdin=subprocess.DEVNULL,
             stdout=stdout if stdout is not None else subprocess.PIPE,
@@ -235,9 +274,12 @@ def _run_git(cwd: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
 
 
 def _snapshot(ws: Path) -> str:
+    if os.path.lexists(ws / ".git"):
+        raise WorkspaceError(f"refusing to snapshot: {ws / '.git'} already exists")
     # An empty template dir keeps host-installed template hooks out of the new repository.
     _run_git(ws, "init", "-q", "--template=")
-    _run_git(ws, "add", "-A")
+    # --force: files the task's .gitignore matches are still part of the baseline.
+    _run_git(ws, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
     _run_git(ws, "commit", "-q", "--no-verify", "--allow-empty", "-m", "agent-ab baseline")
     out = _run_git(ws, "rev-parse", "HEAD").stdout.decode("ascii", "replace").strip()
     if not out:
@@ -289,16 +331,20 @@ def diff_stats(ws: Workspace, patch_path: Path) -> tuple[int, int, int] | None:
     """Write the agent's changes since the baseline to ``patch_path`` and count them.
 
     Returns ``(files_changed, lines_added, lines_removed)``; binary files count as changed with
-    zero lines. Returns None when there is no baseline (git unavailable) or git cannot read the
-    workspace any more (e.g. the agent deleted ``.git``), since diff stats are informational.
-    Call it before ``install_checks`` so check files do not show up as agent changes.
+    zero lines, and files ignored by the task's .gitignore count too. Returns None when there
+    is no baseline (git unavailable) or the workspace's git directory is gone or replaced
+    (e.g. the agent deleted ``.git``), since diff stats are informational. Call it before
+    ``install_checks`` so check files do not show up as agent changes.
     """
     if ws.baseline_commit is None or _git() is None:
         return None
+    git_dir = Path(ws.path) / ".git"
+    if _is_link(git_dir) or not git_dir.is_dir():
+        return None  # a .git file or link would redirect git into another repository
     base = ws.baseline_commit
     common = ("--no-renames", "--no-ext-diff", "--no-textconv")
     try:
-        _run_git(ws.path, "add", "-A")
+        _run_git(ws.path, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
         patch_path = Path(patch_path)
         patch_path.parent.mkdir(parents=True, exist_ok=True)
         with open(patch_path, "wb") as fh:
@@ -320,7 +366,11 @@ def diff_stats(ws: Workspace, patch_path: Path) -> tuple[int, int, int] | None:
 
 
 def install_checks(ws: Workspace, task: Task) -> None:
-    """Copy the task's hidden ``checks/`` over the workspace root, overwriting agent files."""
+    """Copy the task's hidden ``checks/`` over the workspace root, overwriting agent files.
+
+    Anything the agent left at a check path (file, directory, symlink, junction) is replaced
+    without following links. Raises ``WorkspaceError`` if the workspace cannot take the files.
+    """
     if task.checks is not None:
         _copy_into(Path(task.checks), ws.path, "checks")
 
@@ -331,21 +381,30 @@ def apply_solution(ws: Workspace, task: Task) -> None:
         _copy_into(Path(task.solution), ws.path, "solution")
 
 
-def destroy_workspace(ws: Workspace) -> None:
-    """Delete the workspace directory. Retries with backoff and never raises.
+def destroy_workspace(ws: Workspace) -> bool:
+    """Delete the workspace directory; return True once it is gone. Never raises.
 
     Windows keeps files locked briefly after processes exit and git writes read-only objects,
-    so a single ``rmtree`` is not enough; after a few attempts the directory is left behind.
+    so a single ``rmtree`` is not enough. Retries with backoff for about five seconds in total,
+    then gives up and leaves the directory behind (False) rather than stalling the run.
     """
     path = Path(ws.path)
-    for attempt in range(6):
+    deadline = time.monotonic() + _DESTROY_BUDGET_S
+    for attempt in range(12):
         try:
             if not os.path.lexists(path):
-                return
-            _rmtree(path)
-            return
+                return True
+            if _is_link(path):
+                _unlink_link(path)
+            else:
+                _rmtree(path)
+            return True
         except Exception:
-            time.sleep(min(0.1 * 2**attempt, 2.0))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.1 * 2 ** min(attempt, 4), 1.0, remaining))
+    return not os.path.lexists(path)
 
 
 _PLACEHOLDER = re.compile(r"\{\{|\}\}|\{([^{}]*)\}")

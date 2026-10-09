@@ -305,3 +305,74 @@ def test_kill_tree_direct(tmp_path):
     kill_tree(p)
     p.wait(timeout=10)
     assert p.returncode is not None
+
+
+def _spawner(pidfile: Path, then: str) -> str:
+    """Child that starts a 60 s grandchild, records its pid, then runs ``then``."""
+    return textwrap.dedent(
+        f"""
+        import subprocess, sys, time
+        gc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        with open({str(pidfile)!r}, "w") as fh:
+            fh.write(str(gc.pid))
+        {then}
+        """
+    )
+
+
+def test_leftovers_killed_after_normal_exit(tmp_path):
+    pidfile = tmp_path / "grandchild.pid"
+    t0 = time.monotonic()
+    r = _run(tmp_path, [PY, "-c", _spawner(pidfile, "sys.exit(0)")])
+    assert r.exit_code == 0 and not r.timed_out
+    assert time.monotonic() - t0 < 15
+    gc_pid = int(pidfile.read_text())
+    assert _wait_dead(gc_pid, 5), f"leftover grandchild {gc_pid} survived a normal exit"
+
+
+def test_leftovers_killed_after_shell_command(tmp_path):
+    pidfile = tmp_path / "grandchild.pid"
+    script = tmp_path / "spawn.py"
+    script.write_text(_spawner(pidfile, "pass"), encoding="utf-8")
+    r = _run(tmp_path, f'"{PY}" "{script}"')
+    assert r.exit_code == 0
+    assert _wait_dead(int(pidfile.read_text()), 5)
+
+
+@pytest.mark.skipif(not IS_WINDOWS, reason="Job Objects are Windows-only")
+def test_tree_dies_when_the_runner_itself_is_killed(tmp_path):
+    # A host process runs an agent through run_process and is then killed hard; the OS closes
+    # its job handle, which must take the agent's whole tree down with it.
+    pidfile = tmp_path / "grandchild.pid"
+    agent = tmp_path / "agent.py"
+    agent.write_text(_spawner(pidfile, "time.sleep(60)"), encoding="utf-8")
+    host = textwrap.dedent(
+        f"""
+        from pathlib import Path
+        from agent_ab.proc import run_process
+        d = Path({str(tmp_path)!r})
+        run_process([{PY!r}, {str(agent)!r}], cwd=d, env=None, timeout_s=60,
+                    stdout_path=d / "o.txt", stderr_path=d / "e.txt")
+        """
+    )
+    p = subprocess.Popen([PY, "-c", host])
+    try:
+        deadline = time.monotonic() + 20
+        while not pidfile.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert pidfile.exists(), "agent did not start"
+        time.sleep(0.2)
+        gc_pid = int(pidfile.read_text())
+    finally:
+        p.kill()  # TerminateProcess: no cleanup code runs in the host
+        p.wait(10)
+    assert _wait_dead(gc_pid, 5), f"grandchild {gc_pid} outlived the killed runner"
+
+
+@pytest.mark.skipif(not IS_WINDOWS, reason="Job Objects are Windows-only")
+def test_job_falls_back_when_assignment_fails(tmp_path, monkeypatch):
+    from agent_ab import proc as procmod
+
+    monkeypatch.setattr(procmod._Job, "assign", lambda self, pid: (self.close(), False)[1])
+    r = _run(tmp_path, [PY, "-c", "import time; time.sleep(60)"], timeout_s=0.5)
+    assert r.timed_out  # taskkill path still works

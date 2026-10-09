@@ -55,7 +55,7 @@ class FakeAdapter(Adapter):
     """Runs ``options['script']`` with the interpreter; reads optional usage.json."""
 
     name = "fake"
-    option_keys = frozenset({"script", "missing", "build_error", "argv"})
+    option_keys = frozenset({"script", "missing", "build_error", "argv", "parse_error"})
 
     def check_available(self, spec: AgentSpec) -> str | None:
         return spec.options.get("missing")
@@ -68,6 +68,8 @@ class FakeAdapter(Adapter):
         return AgentInvocation(argv=list(argv), env=env)
 
     def parse(self, ctx: TrialContext, result: ProcResult) -> AgentUsage:
+        if ctx.spec.options.get("parse_error"):
+            raise RecursionError("maximum recursion depth exceeded")
         path = ctx.artifacts / "usage.json"
         if not path.exists():
             return AgentUsage()
@@ -493,3 +495,128 @@ def test_relative_run_dir_keeps_artifacts_out_of_workspace(tmp_path, monkeypatch
     store = RunStore(Path("rel-run"))
     assert store.run_dir.is_absolute()
     assert store.attempt_dir("t__a__r0", 0).is_absolute()
+
+
+# --------------------------------------------------------------------------- hostile agents
+
+
+def raw_usage_snippet(raw: str) -> str:
+    return (
+        "import os; open(os.path.join(os.environ['FAKE_ARTIFACTS'], 'usage.json'), 'w')"
+        f".write({raw!r}); open('solution.txt', 'w').write('ok')"
+    )
+
+
+@pytest.mark.parametrize("raw", [
+    '{"cost_usd": 1e308, "input_tokens": 1' + "0" * 400 + ', "output_tokens": NaN,'
+    ' "cache_read_tokens": -1, "turns": true, "cache_write_tokens": 5}',
+    '{"cost_usd": 1' + "0" * 400 + ', "input_tokens": 1e3}',
+    '{"cost_usd": NaN}',
+])  # fmt: skip
+def test_absurd_usage_is_dropped_not_fatal(tmp_path, raw):
+    rec = run_one(tmp_path, raw_usage_snippet(raw), budget_usd=1.0)
+    assert rec.status == "pass" and rec.error is None
+    assert rec.cost_usd is None and rec.input_tokens is None and rec.output_tokens is None
+    assert rec.cache_read_tokens is None and rec.turns is None
+    art = tmp_path / "run" / rec.artifacts
+    assert "implausible usage values dropped" in (art / "usage_warning.txt").read_text("utf-8")
+    assert RunStore.open(tmp_path / "run").total_cost() == 0.0
+
+
+def test_plausible_usage_is_kept(tmp_path):
+    raw = '{"cost_usd": 2, "input_tokens": 10, "cache_write_tokens": 0}'
+    rec = run_one(tmp_path, raw_usage_snippet(raw))
+    assert rec.cost_usd == 2.0 and isinstance(rec.cost_usd, float)
+    assert rec.input_tokens == 10 and rec.cache_write_tokens == 0
+    assert not (tmp_path / "run" / rec.artifacts / "usage_warning.txt").exists()
+
+
+def test_parser_crash_means_usage_unknown_not_infra_error(tmp_path):
+    exp = make_exp(tmp_path, arms=[fake_arm("a", options={"script": SOLVE, "parse_error": True})])
+    run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert rec.status == "pass" and rec.attempt == 0 and rec.cost_usd is None
+    warning = (tmp_path / "run" / rec.artifacts / "usage_warning.txt").read_text("utf-8")
+    assert "RecursionError" in warning
+
+
+def test_grading_breakage_after_agent_is_fail_not_error(tmp_path, monkeypatch):
+    from agent_ab import runner
+    from agent_ab.errors import WorkspaceError
+
+    def broken(ws, task):
+        raise WorkspaceError("refusing to write outside the workspace")
+
+    monkeypatch.setattr(runner, "install_checks", broken)
+    exp = make_exp(tmp_path, arms=[fake_arm("a")])
+    run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")  # one attempt: nothing retried
+    assert rec.status == "fail" and rec.passed is False
+    assert "grading failed after the agent ran" in rec.error and "outside" in rec.error
+    assert (tmp_path / "run" / rec.artifacts / "traceback.txt").is_file()
+
+
+def test_check_that_cannot_start_is_fail(tmp_path):
+    rec = run_one(tmp_path, SOLVE, task_kw={"check": ("agent-ab-no-such-check-exe",)})
+    assert rec.status == "fail" and "check could not start" in rec.error
+
+
+def test_agent_link_over_checks_dir_is_replaced(tmp_path):
+    task = make_task(tmp_path)
+    checks = task.path / "checks" / "sub"
+    checks.mkdir(parents=True)
+    (checks / "helper.txt").write_text("hidden\n", encoding="utf-8")
+    task = replace(task, checks=task.path / "checks")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    # The agent swaps a checks path for a link (a junction on Windows) to a directory
+    # outside the workspace and deletes the snapshot repository.
+    script = (
+        "import os, shutil, subprocess, sys; shutil.rmtree('.git', ignore_errors=True);"
+        f"target = {str(outside)!r};"
+        "subprocess.run(['cmd', '/c', 'mklink', '/J', 'sub', target], check=True,"
+        " capture_output=True) if sys.platform == 'win32' else os.symlink(target, 'sub');"
+        "open('solution.txt', 'w').write('ok')"
+    )
+    exp = make_exp(tmp_path, arms=[fake_arm("a", script)], tasks=[task])
+    run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert rec.status == "pass", rec.error
+    assert list(outside.iterdir()) == []  # nothing written through the link
+    assert ws_left(tmp_path) == []
+
+
+def test_new_run_refuses_dir_with_stale_trial_log(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / TRIALS_FILE).write_text("{}\n", encoding="utf-8")
+    with pytest.raises(RunStoreError, match="no run.json"):
+        run_experiment(make_exp(tmp_path), run)
+    assert not (run / "run.json").exists()
+    assert ws_left(tmp_path) == []
+
+
+def test_resume_ignores_records_outside_the_plan(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    store = RunStore.open(tmp_path / "run")
+    store.append(TrialRecord(trial_id="gone__a__r0", task="gone", arm="a", repeat=0, attempt=0,
+                             status="pass", passed=True))
+    events = []
+    summary = run_experiment(exp, tmp_path / "run", resume=True,
+                             options=RunOptions(progress=events.append))
+    assert summary.planned == 2 and summary.completed == 2
+    assert any("not in the current plan" in e.message for e in events if e.kind == "info")
+
+
+def test_leaked_workspace_is_noted(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    monkeypatch.setattr(runner, "destroy_workspace", lambda ws: False)
+    exp = make_exp(tmp_path, arms=[fake_arm("a")])
+    run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    note = tmp_path / "run" / rec.artifacts / "workspace-leaked.txt"
+    (leaked,) = ws_left(tmp_path)
+    assert note.read_text(encoding="utf-8").strip() == str(leaked)
+    shutil.rmtree(leaked, ignore_errors=True)

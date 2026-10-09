@@ -403,3 +403,146 @@ def test_sys_executable_used(tmp_path):
     )
     assert r.exit_code == 0
     assert Path((tmp_path / "o").read_text().strip()).samefile(sys.executable)
+
+
+# --------------------------------------------------------------------------- hostile repos/agents
+
+
+def _make_link(link: Path, target: Path) -> None:
+    """A directory link the way an agent would make one: a junction on Windows."""
+    if IS_WINDOWS:
+        import subprocess
+
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                       check=True, capture_output=True)
+    else:
+        os.symlink(target, link, target_is_directory=True)
+
+
+def _git_tree(path: Path) -> list[tuple[str, int]]:
+    return sorted((p.relative_to(path).as_posix(), p.stat().st_size)
+                  for p in path.rglob("*") if p.is_file())
+
+
+@needs_git
+def test_git_file_in_repo_is_skipped_and_never_followed(tmp_path, root):
+    import subprocess
+
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    subprocess.run(["git", "init", "-q", str(victim)], check=True)
+    before = _git_tree(victim / ".git")
+    task = _task(tmp_path)
+    _write(task.repo / "a.txt", "hello\n")
+    _write(task.repo / ".git", f"gitdir: {(victim / '.git').as_posix()}\n")
+    _write(task.repo / "nested" / ".git", f"gitdir: {(victim / '.git').as_posix()}\n")
+    with create_workspace(task, _arm(), root=root, label="x") as ws:
+        assert (ws.path / ".git").is_dir()
+        assert not (ws.path / "nested" / ".git").exists()
+        _write(ws.path / "a.txt", "changed\n")
+        assert diff_stats(ws, tmp_path / "p.patch") == (1, 1, 1)
+    assert _git_tree(victim / ".git") == before
+
+
+@needs_git
+def test_snapshot_refuses_existing_git(tmp_path):
+    (tmp_path / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+    with pytest.raises(WorkspaceError, match="already exists"):
+        wsmod._snapshot(tmp_path)
+
+
+@needs_git
+def test_diff_stats_none_when_agent_plants_git_file(tmp_path, root, repo_task):
+    import subprocess
+
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    subprocess.run(["git", "init", "-q", str(victim)], check=True)
+    before = _git_tree(victim / ".git")
+    with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
+        wsmod._rmtree(ws.path / ".git")
+        _write(ws.path / ".git", f"gitdir: {(victim / '.git').as_posix()}\n")
+        assert diff_stats(ws, tmp_path / "p.patch") is None
+    assert _git_tree(victim / ".git") == before
+
+
+@needs_git
+def test_diff_stats_count_gitignored_files(tmp_path, root):
+    task = _task(tmp_path)
+    _write(task.repo / ".gitignore", "*.log\nbuild/\n")
+    _write(task.repo / "old.log", "baseline\n")
+    with create_workspace(task, _arm(), root=root, label="x") as ws:
+        _write(ws.path / "old.log", "baseline\nmore\n")
+        _write(ws.path / "build" / "out.txt", "a\nb\n")
+        assert diff_stats(ws, tmp_path / "p.patch") == (2, 3, 0)
+
+
+def test_install_checks_replaces_links_without_following(tmp_path, root, repo_task):
+    _write(repo_task.checks / "sub" / "helper.txt", "hidden\n")
+    _write(repo_task.checks / "single.txt", "check file\n")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _write(outside / "keep.txt", "untouched\n")
+    with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
+        wsmod._rmtree(ws.path / "sub")
+        _make_link(ws.path / "sub", outside)
+        (ws.path / "single.txt").mkdir()  # wrong type where a check file goes
+        _write(ws.path / "single.txt" / "x", "agent\n")
+        install_checks(ws, repo_task)
+        assert not wsmod._is_link(ws.path / "sub")
+        assert (ws.path / "sub" / "helper.txt").read_text(encoding="utf-8") == "hidden\n"
+        assert (ws.path / "single.txt").read_text(encoding="utf-8") == "check file\n"
+    assert sorted(p.name for p in outside.iterdir()) == ["keep.txt"]
+
+
+def test_destroy_reports_failure_within_budget(tmp_path, monkeypatch):
+    target = tmp_path / "stuck"
+    target.mkdir()
+
+    def boom(_path):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(wsmod, "_rmtree", boom)
+    monkeypatch.setattr(wsmod, "_DESTROY_BUDGET_S", 0.5)
+    import time
+
+    start = time.monotonic()
+    assert destroy_workspace(Workspace(path=target)) is False
+    assert time.monotonic() - start < 3
+    monkeypatch.undo()
+    assert destroy_workspace(Workspace(path=target)) is True
+    assert destroy_workspace(Workspace(path=target)) is True  # already gone
+
+
+def test_destroy_does_not_follow_links_inside(tmp_path, root):
+    outside = tmp_path / "outside"
+    _write(outside / "keep.txt", "untouched\n")
+    ws_dir = root / "ws"
+    ws_dir.mkdir()
+    _make_link(ws_dir / "link", outside)
+    assert destroy_workspace(Workspace(path=ws_dir)) is True
+    assert (outside / "keep.txt").exists()
+
+
+def test_diff_ignores_interpreter_caches(tmp_path):
+    from agent_ab.model import AgentSpec, Arm, Task
+    from agent_ab.workspace import create_workspace, destroy_workspace, diff_stats
+
+    task_dir = tmp_path / "task"
+    (task_dir / "repo").mkdir(parents=True)
+    (task_dir / "repo" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    task = Task(id="t", path=task_dir, prompt="p", check="true", repo=task_dir / "repo")
+    ws = create_workspace(task, Arm(name="a", agent=AgentSpec(adapter="mock")), root=tmp_path,
+                          label="t")
+    try:
+        if ws.baseline_commit is None:
+            return
+        (ws.path / "__pycache__").mkdir()
+        (ws.path / "__pycache__" / "a.cpython-313.pyc").write_bytes(b"\0")
+        (ws.path / ".pytest_cache" / "v").mkdir(parents=True)
+        (ws.path / ".pytest_cache" / "v" / "x").write_text("1", encoding="utf-8")
+        (ws.path / "a.py").write_text("x = 2\n", encoding="utf-8")
+        stats = diff_stats(ws, tmp_path / "diff.patch")
+        assert stats is not None and stats[0] == 1
+    finally:
+        destroy_workspace(ws)

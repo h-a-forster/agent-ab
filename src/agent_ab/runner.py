@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import random
 import threading
 import traceback
@@ -21,18 +22,27 @@ from pathlib import Path
 from typing import Literal
 
 from agent_ab.adapters import get_adapter
+from agent_ab.adapters.base import Adapter
 from agent_ab.errors import AdapterError, AgentABError, RunStoreError
 from agent_ab.model import (
     AgentUsage,
     Experiment,
     ProcResult,
+    Task,
     TrialContext,
     TrialRecord,
     TrialSpec,
     trial_seed,
 )
 from agent_ab.proc import build_env, run_process
-from agent_ab.store import RUN_FILE, TRIALS_DIR, RunStore, is_done, utc_now
+from agent_ab.store import (
+    MAX_COST_USD,
+    TRIALS_DIR,
+    RunStore,
+    check_new_run_dir,
+    is_done,
+    utc_now,
+)
 from agent_ab.workspace import (
     Workspace,
     create_workspace,
@@ -139,6 +149,13 @@ def _exception_summary(e: BaseException) -> str:
     return text[:2000]
 
 
+def _note_leak(art: Path | None, ws: Workspace) -> None:
+    # Something still holds files in the workspace; leave a pointer so it can be cleaned up.
+    if art is not None and art.is_dir():
+        with contextlib.suppress(OSError):
+            _write_text(art / "workspace-leaked.txt", str(ws.path) + "\n")
+
+
 def _remove_dir(path: Path) -> None:
     destroy_workspace(Workspace(path=path))  # robust, retrying, never raises
 
@@ -170,13 +187,78 @@ def _check_cancel(cancel: threading.Event, r: ProcResult | None = None) -> None:
         raise _Cancelled
 
 
-def _copy_usage(rec: TrialRecord, usage: AgentUsage) -> None:
-    rec.cost_usd = usage.cost_usd
-    rec.input_tokens = usage.input_tokens
-    rec.output_tokens = usage.output_tokens
-    rec.cache_read_tokens = usage.cache_read_tokens
-    rec.cache_write_tokens = usage.cache_write_tokens
-    rec.turns = usage.turns
+_MAX_COUNT = 10**12  # tokens/turns above this are not plausible for one attempt
+_USAGE_COUNTS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
+                 "turns")  # fmt: skip
+
+
+def _sane_count(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= _MAX_COUNT:
+        return value
+    return None
+
+
+def _sane_cost(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    # Compare before converting: float() of a huge int raises, and NaN fails every comparison.
+    if not 0 <= value <= MAX_COST_USD:
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def _short_repr(value: object) -> str:
+    try:
+        text = repr(value)
+    except Exception:  # e.g. an int too large to print
+        text = f"<unprintable {type(value).__name__}>"
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
+def _copy_usage(rec: TrialRecord, usage: AgentUsage) -> list[str]:
+    """Copy plausible usage values into ``rec``; return a note for each value dropped.
+
+    Usage comes from agent output, which is untrusted: an absurd number would poison the
+    budget and every statistic, while an unknown value merely leaves a gap.
+    """
+    dropped: list[str] = []
+    cost = _sane_cost(usage.cost_usd)
+    if cost is None and usage.cost_usd is not None:
+        dropped.append(f"cost_usd: {_short_repr(usage.cost_usd)}")
+    rec.cost_usd = cost
+    for name in _USAGE_COUNTS:
+        raw = getattr(usage, name)
+        value = _sane_count(raw)
+        if value is None and raw is not None:
+            dropped.append(f"{name}: {_short_repr(raw)}")
+        setattr(rec, name, value)
+    return dropped
+
+
+def _write_usage_warning(art: Path, notes: list[str]) -> None:
+    with (
+        contextlib.suppress(OSError),
+        open(art / "usage_warning.txt", "a", encoding="utf-8", newline="\n") as f,
+    ):
+        f.write("".join(n + "\n" for n in notes))
+
+
+def _parse_usage(adapter: Adapter, ctx: TrialContext, result: ProcResult, art: Path) -> AgentUsage:
+    """Run the adapter's parser, treating any failure as "usage unknown".
+
+    The agent did run, so a parser crash on hostile or unexpected output must not turn the
+    attempt into an infrastructure error (which would be retried and excluded).
+    """
+    try:
+        usage = adapter.parse(ctx, result)
+    except Exception as e:
+        _write_usage_warning(art, [f"usage could not be parsed: {_exception_summary(e)}"])
+        return AgentUsage()
+    if not isinstance(usage, AgentUsage):
+        _write_usage_warning(art, [f"adapter returned {type(usage).__name__}; usage ignored"])
+        return AgentUsage()
+    return usage
 
 
 def _execute(
@@ -234,12 +316,42 @@ def _execute(
     if result.start_error:
         rec.error = f"agent could not start: {result.start_error}"
         return
-    usage = adapter.parse(ctx, result)
-    _copy_usage(rec, usage)
+    usage = _parse_usage(adapter, ctx, result, art)
+    dropped = _copy_usage(rec, usage)
+    if dropped:
+        _write_usage_warning(art, ["implausible usage values dropped:", *dropped])
     if usage.infra_error:
         rec.error = f"infrastructure error: {usage.infra_error}"
         return
 
+    try:
+        _grade(exp, rec, art, ws, task, result, agent_timeout, check_timeout, cancel)
+    except _Cancelled:
+        raise
+    except Exception as e:
+        if cancel.is_set():
+            raise _Cancelled from e
+        # The agent ran; whatever it did to the workspace that breaks grading (deleted .git,
+        # links over check paths, unreadable files) is its outcome, not an infrastructure
+        # problem. Retrying would bill again and excluding would hide sabotage.
+        rec.status, rec.passed = "fail", False
+        rec.error = f"grading failed after the agent ran: {_exception_summary(e)}"
+        with contextlib.suppress(OSError):
+            _write_text(art / "traceback.txt", traceback.format_exc())
+
+
+def _grade(
+    exp: Experiment,
+    rec: TrialRecord,
+    art: Path,
+    ws: Workspace,
+    task: Task,
+    result: ProcResult,
+    agent_timeout: float,
+    check_timeout: float,
+    cancel: threading.Event,
+) -> None:
+    """Diff, install the hidden checks and run them. Fills ``rec`` in place."""
     # Measured before the checks are copied in so they never count as agent changes.
     stats = diff_stats(ws, art / "diff.patch")
     if stats is not None:
@@ -260,6 +372,9 @@ def _execute(
     rec.check_timed_out = check.timed_out
     rec.check_duration_s = round(check.duration_s, 3)
     if check.start_error:
+        # Also how an agent that deleted the workspace ends up; a broken check command is
+        # caught by `validate --tasks` before anything is spent.
+        rec.status, rec.passed = "fail", False
         rec.error = f"check could not start: {check.start_error}"
         return
     if check.timed_out:
@@ -316,8 +431,8 @@ def run_trial(
                 with contextlib.suppress(OSError):
                     _write_text(art / "traceback.txt", traceback.format_exc())
     finally:
-        if ws is not None and (cancelled or not keep):
-            destroy_workspace(ws)
+        if ws is not None and (cancelled or not keep) and not destroy_workspace(ws):
+            _note_leak(art, ws)
     rec.finished_at = utc_now()
     if cancelled:
         rec.status, rec.passed, rec.error = "error", None, "cancelled"
@@ -403,11 +518,17 @@ def run_experiment(
         store = RunStore.open(Path(run_dir))
         store.check_compatible(exp, force=options.force)
         finals = store.final_records()
+        # Records of trials outside the current plan (e.g. arms or tasks filtered out) must
+        # not count as progress for this session.
+        planned_ids = {spec.id for spec in plan}
+        foreign = sorted(tid for tid in finals if tid not in planned_ids)
+        for tid in foreign:
+            del finals[tid]
         prior_cost = store.total_cost()
     else:
         run_dir = Path(run_dir) if run_dir is not None else _unused_run_dir(default_run_dir(exp))
-        if (run_dir / RUN_FILE).exists():
-            raise RunStoreError(f"{run_dir} already contains a run; use --resume to continue it")
+        check_new_run_dir(run_dir)
+        foreign = []
         prior_cost = 0.0
     # Agents run with the workspace as their cwd, so every artifact path handed to them
     # must be absolute or their files land inside the workspace.
@@ -445,6 +566,9 @@ def run_experiment(
     elif store.meta.get("planned_trials") != total:
         store.update_meta(planned_trials=total)
 
+    if foreign:
+        emit("info", message=f"ignoring {len(foreign)} recorded trials that are not in the "
+             f"current plan (e.g. {foreign[0]})")
     if done:
         emit("info", message=f"resuming: {done} of {total} trials already done")
     emit("info", message=f"{len(pending)} trials to run, jobs={jobs}")

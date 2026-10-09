@@ -3,6 +3,13 @@
 Agents are untrusted, long-running and spawn helpers of their own, so every launch gets its own
 process group/session and is killed as a tree. Output goes straight to files to keep memory flat
 and to avoid pipe deadlocks; launch failures are reported in the result instead of raised.
+
+Leftover processes are always killed, including after a normal exit: a background helper the
+agent forgot (a dev server, a watcher) would otherwise hold workspace files open, keep running
+unbilled work and outlive the run. On Windows each launch is placed in a Job Object that is
+terminated when the command finishes and that the OS kills when agent-ab itself dies. On POSIX
+the command's session process group is killed; a descendant that started its own session
+escapes, as does anything a launched process hands to a service manager.
 """
 
 from __future__ import annotations
@@ -26,6 +33,150 @@ IS_WINDOWS = sys.platform == "win32"
 _POLL_S = 0.2  # how often the wait loop checks the deadline and the cancel event
 _KILL_GRACE_S = 5.0  # POSIX: time between SIGTERM and SIGKILL
 _STDIN_JOIN_S = 5.0  # a stuck stdin writer never blocks the caller longer than this
+
+
+class _Job:
+    """A Windows Job Object that kills every process in it when terminated or closed.
+
+    The process is assigned right after ``Popen`` returns, so a child it spawns in the first
+    instant (before the assignment) is not in the job; real agents need far longer than that to
+    start anything, and ``taskkill /T`` still covers that case on timeout and cancel.
+    """
+
+    def __init__(self, handle: int):
+        self._handle: int | None = handle
+
+    @classmethod
+    def create(cls) -> _Job | None:
+        """A new kill-on-close job, or None where jobs are unavailable."""
+        if not IS_WINDOWS:
+            return None
+        try:
+            k32 = _kernel32()
+            handle = k32.CreateJobObjectW(None, None)
+            if not handle:
+                return None
+            info = _JobLimits()
+            info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            ok = k32.SetInformationJobObject(
+                handle, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info),
+                ctypes.sizeof(info),
+            )  # fmt: skip
+            if not ok:
+                k32.CloseHandle(handle)
+                return None
+            return cls(handle)
+        except (OSError, AttributeError, ValueError):
+            return None
+
+    def assign(self, pid: int) -> bool:
+        """Put the process in the job. False (and the job closed) if Windows refuses."""
+        if self._handle is None:
+            return False
+        try:
+            k32 = _kernel32()
+            proc = k32.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid)
+            if not proc:
+                self.close()
+                return False
+            try:
+                ok = bool(k32.AssignProcessToJobObject(self._handle, proc))
+            finally:
+                k32.CloseHandle(proc)
+        except (OSError, AttributeError, ValueError):
+            ok = False
+        if not ok:
+            # e.g. an enclosing job that forbids nesting (Windows before 8): fall back to
+            # taskkill, which needs nothing from us up front.
+            self.close()
+        return ok
+
+    def terminate(self) -> None:
+        """Kill every process still in the job. Never raises."""
+        if self._handle is not None:
+            with contextlib.suppress(OSError, AttributeError, ValueError):
+                _kernel32().TerminateJobObject(self._handle, 1)
+
+    def close(self) -> None:
+        """Release the handle; with kill-on-close this also kills any remaining process."""
+        handle, self._handle = self._handle, None
+        if handle is not None:
+            with contextlib.suppress(OSError, AttributeError, ValueError):
+                _kernel32().CloseHandle(handle)
+
+
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_PROCESS_SET_QUOTA = 0x0100
+_PROCESS_TERMINATE = 0x0001
+
+if IS_WINDOWS:
+    import ctypes
+    from ctypes import wintypes
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_ulonglong) for name in (
+            "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+            "ReadTransferCount", "WriteTransferCount", "OtherTransferCount",
+        )]  # fmt: skip
+
+    class _BasicLimits(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _JobLimits(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimits),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    _k32 = None
+
+    def _kernel32():
+        global _k32
+        if _k32 is None:
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            # Explicit signatures: the default int return type would truncate 64-bit handles.
+            k32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+            k32.CreateJobObjectW.restype = wintypes.HANDLE
+            k32.SetInformationJobObject.argtypes = (
+                wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+            )  # fmt: skip
+            k32.SetInformationJobObject.restype = wintypes.BOOL
+            k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            k32.OpenProcess.restype = wintypes.HANDLE
+            k32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+            k32.AssignProcessToJobObject.restype = wintypes.BOOL
+            k32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+            k32.TerminateJobObject.restype = wintypes.BOOL
+            k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            k32.CloseHandle.restype = wintypes.BOOL
+            _k32 = k32
+        return _k32
+
+
+def _reap_leftovers(proc: subprocess.Popen, job: _Job | None) -> None:
+    """Kill whatever the finished command left running. Never raises."""
+    if IS_WINDOWS:
+        if job is not None:
+            job.terminate()
+        return
+    # The session's group id is the leader's pid and stays valid while any member lives.
+    with contextlib.suppress(OSError):
+        os.killpg(proc.pid, signal.SIGKILL)
 
 
 def _pathext() -> list[str]:
@@ -202,6 +353,7 @@ def run_process(
         return failed(f"cannot open output file: {e}")
 
     writer: threading.Thread | None = None
+    job: _Job | None = None
     try:
         try:
             proc = subprocess.Popen(
@@ -216,6 +368,9 @@ def run_process(
             )
         except (OSError, ValueError, subprocess.SubprocessError) as e:
             return failed(f"{type(e).__name__}: {e}")
+        job = _Job.create()
+        if job is not None and not job.assign(proc.pid):
+            job = None
 
         if stdin_text is not None and proc.stdin is not None:
             writer = threading.Thread(
@@ -240,10 +395,14 @@ def run_process(
                 break
 
         if timed_out or cancelled:
-            kill_tree(proc)
+            if job is not None:
+                job.terminate()  # instant and complete, unlike walking the tree
+            else:
+                kill_tree(proc)
             with contextlib.suppress(subprocess.TimeoutExpired):
                 proc.wait(timeout=10)
         duration = time.monotonic() - start
+        _reap_leftovers(proc, job)
         if writer is not None:
             writer.join(_STDIN_JOIN_S)
         exit_code = None if (timed_out or cancelled) else proc.returncode
@@ -255,5 +414,7 @@ def run_process(
             stderr_path=stderr_path,
         )
     finally:
+        if job is not None:
+            job.close()
         out.close()
         err.close()

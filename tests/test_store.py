@@ -162,3 +162,72 @@ def test_env_values_are_redacted_in_run_json(tmp_path):
     text = (tmp_path / "run" / "run.json").read_text(encoding="utf-8")
     assert "s3cret" not in text
     assert "API_TOKEN" in text
+
+
+def _log(tmp_path: Path) -> Path:
+    return tmp_path / "run" / TRIALS_FILE
+
+
+def test_append_after_truncated_line_moves_fragment_aside(tmp_path):
+    store = RunStore.create(tmp_path / "run", make_exp(tmp_path), planned_trials=2)
+    store.append(rec("t1__a__r0"))
+    full = json.dumps(rec("t1__b__r0").to_dict())
+    with open(_log(tmp_path), "a", encoding="utf-8", newline="\n") as f:
+        f.write(full[: len(full) // 2])  # a crash mid-write
+    reopened = RunStore.open(tmp_path / "run")
+    reopened.append(rec("t1__b__r0", cost=0.25))
+    text = _log(tmp_path).read_text(encoding="utf-8")
+    assert text.endswith("\n") and len(text.splitlines()) == 2
+    got = reopened.records()  # strict reader: nothing glued, nothing mid-file
+    assert [r.trial_id for r in got] == ["t1__a__r0", "t1__b__r0"]
+    (side,) = (tmp_path / "run").glob(TRIALS_FILE + ".damaged-*")
+    assert side.read_text(encoding="utf-8") == full[: len(full) // 2]
+
+
+def test_append_after_valid_line_without_newline_keeps_it(tmp_path):
+    store = RunStore.create(tmp_path / "run", make_exp(tmp_path), planned_trials=2)
+    _log(tmp_path).write_text(json.dumps(rec("t1__a__r0").to_dict()), encoding="utf-8")
+    store.append(rec("t1__b__r0"))
+    assert [r.trial_id for r in store.records()] == ["t1__a__r0", "t1__b__r0"]
+    assert not list((tmp_path / "run").glob(TRIALS_FILE + ".damaged-*"))
+
+
+def test_append_after_garbled_terminated_last_line(tmp_path):
+    store = RunStore.create(tmp_path / "run", make_exp(tmp_path), planned_trials=2)
+    store.append(rec("t1__a__r0"))
+    with open(_log(tmp_path), "a", encoding="utf-8", newline="\n") as f:
+        f.write("{garbage\n\n")
+    assert len(store.records()) == 1  # trailing blank lines keep the damage "last"
+    RunStore.open(tmp_path / "run").append(rec("t1__b__r0"))
+    assert [r.trial_id for r in store.records()] == ["t1__a__r0", "t1__b__r0"]
+
+
+@pytest.mark.parametrize("leftover", [TRIALS_FILE, "trials"])
+def test_create_refuses_leftover_results_without_run_json(tmp_path, leftover):
+    run = tmp_path / "run"
+    run.mkdir()
+    if leftover == TRIALS_FILE:
+        (run / leftover).write_text(json.dumps(rec().to_dict()) + "\n", encoding="utf-8")
+    else:
+        (run / leftover).mkdir()
+    with pytest.raises(RunStoreError, match="no run.json"):
+        RunStore.create(run, make_exp(tmp_path), planned_trials=2)
+    assert not (run / "run.json").exists()
+
+
+def test_create_accepts_unrelated_existing_dir(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "notes.txt").write_text("x", encoding="utf-8")
+    store = RunStore.create(run, make_exp(tmp_path), planned_trials=2)
+    assert store.records() == []
+
+
+def test_total_cost_ignores_absurd_logged_costs(tmp_path):
+    store = RunStore.create(tmp_path / "run", make_exp(tmp_path), planned_trials=3)
+    store.append(rec("t1__a__r0", cost=0.5))
+    with open(_log(tmp_path), "a", encoding="utf-8", newline="\n") as f:
+        for bad in ("1" + "0" * 400, "1e308", "1e308", "-5", "true"):
+            f.write(json.dumps(rec("t1__b__r0").to_dict()).replace('"cost_usd": 0.5',
+                                                                   f'"cost_usd": {bad}') + "\n")
+    assert store.total_cost() == 0.5
