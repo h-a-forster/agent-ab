@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"t1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"first"}}
+{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":100}}
+this line is not json
+{"type":"turn.started"
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"second"}}
+{"type":"turn.completed","usage":{"input_tokens":3000,"cached_input_tokens":2000,"output_tokens":300}}

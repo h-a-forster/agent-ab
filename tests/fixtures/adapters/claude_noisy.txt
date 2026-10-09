@@ -1,0 +1,4 @@
+[warn] plugin cache is stale, refreshing
+Loaded 3 skills
+{"type":"system","subtype":"init","session_id":"abc"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":3,"result":"Done.","total_cost_usd":0.042,"usage":{"input_tokens":10,"cache_creation_input_tokens":200,"cache_read_input_tokens":3000,"output_tokens":150}}

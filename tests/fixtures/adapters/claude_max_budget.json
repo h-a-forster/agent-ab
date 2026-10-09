@@ -1,0 +1,1 @@
+{"type":"result","subtype":"error_max_budget_usd","is_error":true,"num_turns":20,"total_cost_usd":1.0042,"usage":{"input_tokens":90,"cache_creation_input_tokens":30000,"cache_read_input_tokens":800000,"output_tokens":9000}}

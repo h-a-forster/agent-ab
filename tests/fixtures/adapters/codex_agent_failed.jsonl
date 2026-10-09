@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"t3"}
+{"type":"turn.started"}
+{"type":"turn.failed","error":{"message":"model produced an invalid tool call"}}
