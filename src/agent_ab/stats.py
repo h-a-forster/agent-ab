@@ -379,6 +379,27 @@ def _comparison_notes(arm: str, base: str, diffs: Sequence[float], alpha: float)
     return [f"{prefix} " + " ".join(sentences)] if sentences else []
 
 
+def _planned_only(
+    exp_meta: dict, records: list[TrialRecord]
+) -> tuple[list[TrialRecord], int]:
+    """Drop records outside the run's plan, so stray or stale lines can never enter the stats.
+
+    The plan comes from the run's stored config; without one, every record is kept.
+    """
+    config = exp_meta.get("config") or {}
+    task_ids = {t.get("id") for t in config.get("tasks") or [] if isinstance(t, dict)}
+    arm_names = {a.get("name") for a in config.get("arms") or [] if isinstance(a, dict)}
+    repeats = config.get("repeats")
+    if not task_ids or not arm_names:
+        return records, 0
+    kept = [
+        r for r in records
+        if r.task in task_ids and r.arm in arm_names
+        and (not isinstance(repeats, int) or 0 <= r.repeat < repeats)
+    ]
+    return kept, len(records) - len(kept)
+
+
 def analyze(
     exp_meta: dict,
     records: Iterable[TrialRecord],
@@ -394,7 +415,7 @@ def analyze(
     infrastructure error are excluded from rates and costs but counted in ``errors``.
     Deterministic for a given ``seed``.
     """
-    all_records = list(records)
+    all_records, foreign = _planned_only(exp_meta, list(records))
     finals = sorted(_final_attempts(all_records).values(), key=lambda r: r.trial_id)
     arms = _arm_order(exp_meta, finals)
     base = (
@@ -437,6 +458,11 @@ def analyze(
                     task_dur[arm][task] = dur
 
     notes: list[str] = []
+    if foreign:
+        notes.append(
+            f"{foreign} recorded attempt(s) do not belong to this run's tasks, arms or repeats "
+            "and were ignored."
+        )
     summaries: list[ArmSummary] = []
     z_wilson = NormalDist().inv_cdf(1 - alpha / 2)
     for arm in arms:

@@ -450,3 +450,30 @@ def test_analyze_empty_records():
     assert a.comparisons[0].p_value is None
     assert a.arms[0].pass_rate == Interval(None, None, None)
     assert a.total_cost_usd is None
+
+
+def test_records_outside_the_plan_are_ignored():
+    from agent_ab.model import TrialRecord
+    from agent_ab.stats import analyze
+
+    meta = {
+        "experiment": "e", "baseline": "a", "planned_trials": 4,
+        "config": {
+            "arms": [{"name": "a"}, {"name": "b"}],
+            "tasks": [{"id": "t1"}, {"id": "t2"}],
+            "repeats": 1,
+        },
+    }
+
+    def rec(task, arm, repeat=0, status="pass"):
+        return TrialRecord(
+            trial_id=f"{task}__{arm}__r{repeat}", task=task, arm=arm, repeat=repeat,
+            attempt=0, status=status, passed=status == "pass",
+        )
+
+    planned = [rec(t, a) for t in ("t1", "t2") for a in ("a", "b")]
+    stray = [rec("old-task", "a"), rec("t1", "zz"), rec("t1", "a", repeat=5, status="fail")]
+    a = analyze(meta, planned + stray, n_boot=200)
+    assert a.completed_trials == 4
+    assert any("do not belong" in n for n in a.notes)
+    assert {s.arm for s in a.arms} == {"a", "b"}
