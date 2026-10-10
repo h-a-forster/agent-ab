@@ -9,6 +9,7 @@ exclude_tasks = [
     "cli-min-level-flag", "config-validation-errors", "csv-quoted-newlines", "dedupe-quadratic",
     "dst-daily-schedule", "lru-cache-thread-safety", "money-decimal-rounding",
     "pagination-off-by-one", "portable-path-normalize", "semver-precedence",
+    "bughunt-*", "feature-*",  # added after this pilot ran; keeps it to its 20 tasks
 ]
 repeats = 1
 jobs = 4

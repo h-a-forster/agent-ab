@@ -123,7 +123,9 @@ be harder, then ran control-only pilots on Claude Haiku 5.5 (`claude-haiku-5-5`,
   passed 26/30: 16/20 of the hard tasks and 10/10 of the original tasks. It cost $1.51.
 - Three of the four failures traced to underspecified prompts: `feature-uri-resolve`,
   `feature-sql-select` and `feature-rope-buffer`. We clarified those prompts before the main
-  run. `bughunt-textadv` was a genuine miss.
+  run. `bughunt-textadv` was a genuine miss. Even after its clarification, `feature-uri-resolve`
+  failed in all 8 later trials (both arms of the main run and both models), so its spec may
+  still have a gap; as a tie in every pairing it does not bias the effects.
 
 The target baseline of 40-80% was not reached. Haiku 5.5 is near the ceiling of the tasks we
 could write with fully specified prompts.

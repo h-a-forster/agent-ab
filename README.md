@@ -15,14 +15,14 @@ the configurations, it says "no detectable difference".
 
 Runs on Linux, macOS and Windows. Python 3.11+, no runtime dependencies.
 
-Example: [Claude Code with and without tests](docs/results.md), on Haiku and Sonnet. Skipping
-tests cut cost per trial by 21-44%. Ten tasks were too few to measure the effect on pass rate.
+Example: [Claude Code with and without tests](docs/results.md), 50 tasks on Haiku 5.5, plus
+Haiku 5.5 against Sonnet 5.5. See Findings below.
 
 ## Findings
 
 From the [example results](docs/results.md). All runs used Claude Code with Python tasks.
 
-- **Skipping tests barely changed the pass rate.** On Claude Haiku 5.5, 50 tasks x 3 repeats:
+- **No detectable effect of skipping tests on pass rate.** On Claude Haiku 5.5, 50 tasks x 3 repeats:
   95.3% with tests, 92.7% without, a difference of -2.7 pts [-7.3, +1.3]. A drop larger than
   about 7 points is unlikely; a small one is not ruled out. Ceiling effects limit this.
   [Details](docs/results.md#powered-experiment-no-tests-on-claude-haiku-55).
@@ -32,7 +32,8 @@ From the [example results](docs/results.md). All runs used Claude Code with Pyth
   [Details](docs/results.md#manipulation-check).
 - **Sonnet 5.5 cost 3.6 times as much as Haiku 5.5 per trial for no detectable gain.**
   Pass rate was 96.0% vs 94.0% (+2.0 pts [-4.0, +10.0]), cost x3.58 [2.35, 5.55], with one
-  repeat per task. Sonnet took about half the time.
+  repeat per task, so this comparison is underpowered: it cannot rule out a gain of up to 10
+  points for Sonnet. Sonnet took about half the time.
   [Details](docs/results.md#model-as-the-arm-haiku-55-vs-sonnet-55).
 - **Separate runs misled us about cost per pass.** The ten-task pilot suggested Sonnet
   was cheaper per pass, but it compared different model generations in separate runs. The
