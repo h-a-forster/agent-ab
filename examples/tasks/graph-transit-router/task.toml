@@ -1,0 +1,47 @@
+prompt = """
+`transit.earliest_arrival` finds the earliest arrival time but ignores the time it takes to
+change trains, picks arbitrary itineraries among equally early ones, and is not enough for the
+journey planner. Rework it (changes touch `transit/timetable.py`, `transit/router.py`,
+`transit/itinerary.py` and `transit/__init__.py`). Times are integer minutes.
+
+**Timetable**: `Timetable(connections, transfers=None, default_transfer=0)`.
+`transfers` maps a station to the minimum minutes needed to change trips there;
+`default_transfer` applies to other stations. Both must be non-negative integers
+(`ValueError` otherwise). New method `transfer_time(station)`. `Connection` times must be
+ints (bools and floats raise `ValueError`), in addition to the existing checks.
+
+**Rules for a journey**:
+- Boarding the first trip at the origin needs no transfer time: any connection from the origin
+  with `dep >= depart_at`.
+- Staying on the same trip (next connection of that trip starting where the previous one
+  ended, no earlier than it arrived) needs no transfer time, whatever the station's value.
+- Changing to a different trip at a station needs `arrival + transfer_time(station) <=
+  next departure` (equal is fine). This also applies when coming back to the origin.
+- A *leg* is a maximal ride on one trip; the number of legs is the metric (`Itinerary.transfers`
+  is `legs - 1`, but 0 for an empty itinerary).
+
+**`earliest_arrival(tt, origin, dest, depart_at, max_legs=None)`** returns the best itinerary
+by: (1) earliest arrival at `dest`, then (2) fewest legs, then (3) lexicographically smallest
+tuple of trip ids (plain string comparison, leg by leg). Beyond that, ties may be resolved
+arbitrarily. `max_legs` (a positive int, or None) restricts the itinerary to at most that many
+legs - the best itinerary among the allowed ones is returned, possibly arriving later. If
+`dest` cannot be reached (or either station is unknown to the timetable) return `None`. If
+`origin == dest`, return an `Itinerary` with no legs and `departure == arrival == depart_at`
+(even if the station is unknown). `Itinerary.legs` is a tuple of `Leg(trip, src, dst, dep, arr)`
+where `dep`/`arr` are the leg's boarding departure and alighting arrival; `departure` and
+`arrival` are the first leg's `dep` and the last leg's `arr`.
+
+**`earliest_arrivals(tt, origin, depart_at)`** (new, in `router.py`, exported from the
+package): dict mapping every reachable station to its earliest arrival time under the same
+rules; the origin maps to `depart_at`.
+
+**`Itinerary.describe()`** keeps its per-leg line `"HH:MM src -> HH:MM dst [trip]"` (hours are
+not wrapped: 1500 is `25:00`) and now inserts, between consecutive legs, the line
+`"  change at <station>: <n> min"` (two leading spaces; `n` = next leg's `dep` minus previous leg's `arr`).
+
+It must scale: a timetable with 20,000 connections has to be answered in a few seconds (a
+quadratic scan over all pairs of connections is too slow).
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 180
+tags = ["feature", "hard", "multi-file", "performance"]

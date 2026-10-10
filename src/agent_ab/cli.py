@@ -371,27 +371,39 @@ def build_parser() -> argparse.ArgumentParser:
         "a given pass-rate improvement. Optionally base task difficulty on a pilot run.",
     )
     p.add_argument(
-        "run_dir", metavar="RUN_DIR", nargs="?",
+        "run_dir",
+        metavar="RUN_DIR",
+        nargs="?",
         help="pilot run whose baseline arm sets the task difficulty distribution",
     )
     p.add_argument(
-        "--effect", default=power.DEFAULT_EFFECTS, metavar="PTS[,PTS...]",
+        "--effect",
+        default=power.DEFAULT_EFFECTS,
+        metavar="PTS[,PTS...]",
         help=f"improvements to detect, in percentage points (default {power.DEFAULT_EFFECTS})",
     )
     p.add_argument(
-        "--tasks", default=power.DEFAULT_TASKS, metavar="N[,N...]",
+        "--tasks",
+        default=power.DEFAULT_TASKS,
+        metavar="N[,N...]",
         help=f"task counts to simulate (default {power.DEFAULT_TASKS})",
     )
     p.add_argument(
-        "--repeats", default=power.DEFAULT_REPEATS, metavar="R[,R...]",
+        "--repeats",
+        default=power.DEFAULT_REPEATS,
+        metavar="R[,R...]",
         help=f"repeats per task and arm (default {power.DEFAULT_REPEATS})",
     )
     p.add_argument(
-        "--alpha", default=power.DEFAULT_ALPHA, metavar="A",
+        "--alpha",
+        default=power.DEFAULT_ALPHA,
+        metavar="A",
         help=f"significance level (default {power.DEFAULT_ALPHA})",
     )
     p.add_argument(
-        "--sims", default=power.DEFAULT_SIMS, metavar="N",
+        "--sims",
+        default=power.DEFAULT_SIMS,
+        metavar="N",
         help=f"simulated experiments per design (default {power.DEFAULT_SIMS})",
     )
     p.add_argument("--seed", default="0", metavar="S", help="simulation seed (default 0)")
@@ -518,6 +530,7 @@ def _check_phase(
         create_workspace,
         destroy_workspace,
         install_checks,
+        run_check,
         run_command,
     )
 
@@ -547,7 +560,7 @@ def _check_phase(
         install_checks(ws, task)
         timeout = task.check_timeout_s if task.check_timeout_s is not None else exp.check_timeout_s
         out, err = logs / f"{phase}-check.stdout", logs / f"{phase}-check.stderr"
-        r = run_command(
+        r = run_check(
             task.check, ws, timeout_s=timeout, stdout_path=out, stderr_path=err, cancel=cancel
         )
         if r.start_error:
@@ -714,7 +727,8 @@ def _interrupt_on_termination() -> Iterator[None]:
 def _meta_problems(meta: dict) -> list[str]:
     """Fields of run.json that the commands rely on and that are missing or malformed."""
     problems = [
-        key for key in ("experiment", "baseline")
+        key
+        for key in ("experiment", "baseline")
         if not isinstance(meta.get(key), str) or not meta.get(key)
     ]
     planned = meta.get("planned_trials")
@@ -724,8 +738,10 @@ def _meta_problems(meta: dict) -> list[str]:
     if not isinstance(config, dict):
         return [*problems, "config"]
     arms = config.get("arms")
-    if not isinstance(arms, list) or not arms or not all(
-        isinstance(a, dict) and isinstance(a.get("name"), str) for a in arms
+    if (
+        not isinstance(arms, list)
+        or not arms
+        or not all(isinstance(a, dict) and isinstance(a.get("name"), str) for a in arms)
     ):
         problems.append("config.arms")
     tasks = config.get("tasks")
@@ -805,10 +821,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     exp = _load(args)
     if len(exp.arms) < 2:
-        raise ConfigError(
-            f"run needs at least two arms to compare; {exp.name!r} has "
-            f"{len(exp.arms)} ({', '.join(a.name for a in exp.arms)})"
-        )
+        # A one-arm run is a pilot: it measures baseline difficulty (and feeds `power`).
+        _warn(f"only one arm ({exp.arms[0].name}): this run measures, it does not compare")
     if args.repeats is not None and args.repeats != exp.repeats:
         # repeats is part of the experiment's identity, so it must enter the fingerprint.
         exp = dataclasses.replace(exp, repeats=args.repeats)
@@ -857,15 +871,18 @@ def cmd_run(args: argparse.Namespace) -> int:
         with _interrupt_on_termination():
             # A silent dry run first: unusable adapters or run directories fail here, before
             # the header suggests that a run is starting.
-            run_experiment(exp, run_dir, resume=bool(args.resume),
-                           options=options(dry_run=True, progress=None))
+            run_experiment(
+                exp, run_dir, resume=bool(args.resume), options=options(dry_run=True, progress=None)
+            )
             for key, value in header:
                 _err(f"{key:<11}{value}")
             if args.dry_run:
                 _err("dry run: nothing will be created or run")
             _err("")
             summary = run_experiment(
-                exp, run_dir, resume=bool(args.resume),
+                exp,
+                run_dir,
+                resume=bool(args.resume),
                 options=options(dry_run=args.dry_run, progress=_Progress(exp, args.quiet)),
             )
     except KeyboardInterrupt:
@@ -1127,8 +1144,12 @@ def cmd_show(args: argparse.Namespace) -> int:
 def cmd_power(args: argparse.Namespace) -> int:
     try:
         options = power.parse_options(
-            effect=args.effect, tasks=args.tasks, repeats=args.repeats,
-            alpha=args.alpha, sims=args.sims, seed=args.seed,
+            effect=args.effect,
+            tasks=args.tasks,
+            repeats=args.repeats,
+            alpha=args.alpha,
+            sims=args.sims,
+            seed=args.seed,
         )
     except ValueError as e:
         raise UsageError(str(e)) from e
@@ -1147,8 +1168,10 @@ def cmd_power(args: argparse.Namespace) -> int:
 
     def progress(done: int, total: int, row: power.DesignResult) -> None:
         if time.monotonic() - started > 2 and done < total:
-            _err(f"[{done}/{total}] effect +{row.effect:g} pts, tasks {row.tasks}, "
-                 f"repeats {row.repeats}")
+            _err(
+                f"[{done}/{total}] effect +{row.effect:g} pts, tasks {row.tasks}, "
+                f"repeats {row.repeats}"
+            )
 
     plan = power.run_plan(model, options, progress=progress)
     sys.stdout.write(power.render(plan, args.format))

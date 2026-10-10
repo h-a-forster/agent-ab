@@ -1,0 +1,584 @@
+{
+  "agent_versions": {
+    "control": "2.1.296"
+  },
+  "baseline": "control",
+  "config": {
+    "arms": [
+      {
+        "agent": {
+          "adapter": "claude-code",
+          "args": [],
+          "command": null,
+          "effort": null,
+          "env": {},
+          "model": "claude-haiku-5-5",
+          "options": {
+            "max_budget_usd": 1.0,
+            "max_turns": 60,
+            "permission_mode": "bypassPermissions",
+            "setting_sources": "project"
+          }
+        },
+        "description": "Task prompt only; the agent decides whether to write tests.",
+        "name": "control",
+        "overlay": null,
+        "prompt_prefix": "",
+        "prompt_suffix": "",
+        "remove": []
+      }
+    ],
+    "baseline": "control",
+    "budget_usd": 8.0,
+    "check_timeout_s": 300.0,
+    "config": "experiment.toml",
+    "description": "Difficulty pilot: control prompt on the 20 new tasks.",
+    "fingerprint": "d63a2655a43879e7c5eca549e46cc0f3ba3cce6b68c04ec9cd47c599b146a8a8",
+    "jobs": 4,
+    "keep_workspaces": false,
+    "max_retries": 2,
+    "name": "pilot-haiku-5-5",
+    "repeats": 1,
+    "seed": 0,
+    "tasks": [
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/api-config-layers/checks",
+        "id": "api-config-layers",
+        "path": "../../../examples/tasks/api-config-layers",
+        "prompt": "`layercfg` only merges typed dict layers. Operations now wants environment-variable and\n`--set key=value` overrides, list and enumerated settings, error reports that list every\nproblem at once, and a way to ask \"where did this value come from\". Extend the library (it\ntouches `schema.py`, `layers.py`, `config.py`, a new `sources.py`, and the package\n`__init__.py`, which must also export `env_layer` and `args_layer`). Existing behaviour for\ndict layers stays the same.\n\n**Schema** (`Field(type=str, default=None, required=False, choices=None, item=str)`):\n- `type` may now also be `list`, with elements of type `item` (`str`, `int`, `float`, `bool`);\n  a list field's value is always a new list. `choices` (any collection) restricts the\n  (converted) value, or every element of a list, and a violation is an error.\n- `Layer(name, data, coerce=False)`: when `coerce=True` a *string* value is converted using\n  the field type (non-string values in such a layer are validated strictly as usual):\n  `int`: optional sign and digits only after stripping surrounding whitespace (`\"42\"`, `\" -3 \"`;\n  `\"4.5\"`, `\"1e3\"`, `\"\"` are errors); `float`: anything `float()` accepts except nan/inf;\n  `bool`: `true/1/yes/on` and `false/0/no/off`, case-insensitive after stripping, anything else\n  is an error; `str`: unchanged; `list`: split on `,`, strip each element and convert it with\n  `item` (an empty or blank string is the empty list). In a layer with `coerce=False`, a\n  `list` field needs an actual list whose elements are valid for `item` (same strictness as\n  scalars: no bool for int, ints allowed for float).\n- In a `coerce=True` layer, unknown keys are silently ignored (the environment is noisy);\n  in other layers they remain errors. A scalar where the schema has a section, or a section\n  (dict) where it has a field, is an error in every layer.\n\n**Sources** (`layercfg/sources.py`):\n- `env_layer(environ, prefix, name=\"env\")` returns a `coerce=True` layer. Only variables\n  starting with `prefix + \"_\"` count; the rest of the name is lower-cased and split on `__`\n  into the path, so `APP_DB__HOST=x` -> `{\"db\": {\"host\": \"x\"}}` and `APP_LOG_LEVEL=debug` ->\n  `{\"log_level\": \"debug\"}`. Variables whose remainder is empty or has an empty segment\n  (`APP_`, `APP_A____B`) are ignored. If both `APP_DB` and `APP_DB__HOST` are present, the\n  more specific one wins and `APP_DB` is dropped.\n- `args_layer(items, name=\"args\")` takes strings like `\"db.port=5432\"` (split at the first\n  `=`, the value may be empty or contain `=`; path used as given, not lower-cased) and returns\n  a `coerce=True` layer; later items override earlier ones, same clash rule as above. An item\n  without `=` or with an empty path segment raises `ValueError`.\n\n**Errors**: `load()` now collects all problems from all layers and required checks and raises\none `ConfigError` whose `.errors` is a list of `(dotted_path, message)` tuples sorted by path\n(stable for equal paths) and whose `str()` mentions every path. Messages for layer problems\ninclude the layer name. A required field that no layer supplied is reported as\n`(path, \"required\")`-style (any message text, path must be the field).\n\n**Provenance**: `Config.explain(path)` returns `[(layer_name, value), ...]` from lowest to\nhighest precedence for every source that supplied the field, starting with `(\"defaults\",\ndefault)` when the field has a non-None default; `Config.source(path)` is the name of the\nlast entry or `None` if there is none (an optional field with no default that nobody set).\nUnknown paths raise `KeyError` from `get`, `source` and `explain`. A layer contributes at most one\nentry per field. Lists returned by `get`, `as_dict`, `explain`\nmust not alias the schema defaults (mutating a returned list never changes later loads).\n",
+        "repo": "../../../examples/tasks/api-config-layers/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/api-config-layers/solution",
+        "tags": [
+          "feature",
+          "hard",
+          "multi-file"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/api-miniargs-clusters/checks",
+        "id": "api-miniargs-clusters",
+        "path": "../../../examples/tasks/api-miniargs-clusters",
+        "prompt": "`miniargs` is missing the conveniences users expect from a command-line parser. Extend it\n(`miniargs/spec.py`, `miniargs/parser.py`, `miniargs/result.py`), keeping the existing API and\nbehaviour (including `UsageError` messages naming the offending option/argument, and the\n`ns.some_name` / `ns[\"some_name\"]` / `to_dict()` access).\n\n1. **`--name=value`** is accepted for value options (`--output=out.txt`; the value is\n   everything after the first `=`, may be empty or contain more `=`). Using `=` with a flag or\n   count option is a `UsageError`.\n2. **Short clusters**: a token like `-vvx` is a cluster of short options. Letters are\n   processed left to right; flag/count letters take no value; the first value/append letter\n   ends the cluster and takes the rest of the token literally as its value (`-ofile.txt`,\n   `-vo out` takes `out` from the next token, `-o=x` gives the value `=x`), or the next argv\n   token when nothing follows it in the cluster (taken as the value even if it starts with `-`;\n   if there is no next token it is a `UsageError`). An unknown letter is a `UsageError`\n   naming it. The same \"next token is the value even if it starts with a dash\" rule applies to\n   `--name value`.\n3. **New option kinds** (`Option.kind`): `\"count\"` (each occurrence adds 1; default 0;\n   takes no value) and `\"append\"` (value option that may repeat; the result is a list of the\n   converted values in order; when the option does not appear, the value is an empty list, or a *copy* of `default` if one is\n   given, so the declaration is never mutated by parsing; when it appears, the result holds only\n   the values given on the command line, the default is not included). Unknown kinds still raise\n   `ValueError` at declaration. For value options, a repeated option's last occurrence wins.\n4. **`--`** ends option parsing: every later token is a positional, even `-x` or `--`.\n5. **Negative numbers and `-`**: a token that is exactly `-` or matches `-<digits>` /\n   `-<digits>.<digits>` is a positional word (or, as before, the value of a preceding value\n   option), never an option.\n6. **Subcommands**: `Parser(options, positionals, commands=None)` where `commands` is a dict\n   `name -> Parser`. A parser with commands cannot also declare positionals (`ValueError`).\n   The first positional word (after the parser's own options, `--` allowed before it)\n   names the command; everything after it, verbatim, is parsed by that subcommand's parser.\n   So options of the parent after the command name are unknown to the subparser. The result\n   `Namespace` has `.command` (the name, or `None` when the parser has no commands) and `.sub` (the sub-parser's\n   `Namespace`, or `None`); the parent's own option values stay on the parent namespace.\n   A missing command, or an unknown one, is a `UsageError`; the unknown-command message names\n   the bad word and lists the available commands. Required options of the parent are still\n   enforced.\n\nEverything else (type conversion errors, required options, positional binding, `many`\npositionals, unknown options) keeps working as before. Parsing must not mutate the parser.\n",
+        "repo": "../../../examples/tasks/api-miniargs-clusters/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/api-miniargs-clusters/solution",
+        "tags": [
+          "feature",
+          "hard",
+          "multi-file"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 90.0,
+        "checks": "../../../examples/tasks/data-interval-sets/checks",
+        "id": "data-interval-sets",
+        "path": "../../../examples/tasks/data-interval-sets",
+        "prompt": "`ivl` keeps sets of numeric intervals (booking windows, coverage ranges). It has two problems:\n\n1. It is far too slow: building a set from 50,000 intervals, `union`/`intersection`/\n   `difference` of two such sets, and `contains` lookups all take minutes (quadratic list\n   scans), and the report helpers inherit this.\n2. It is wrong about open/closed bounds: `IntervalSet` merges `(1, 2)` and `(2, 3)` even though\n   the point 2 belongs to neither, and several operations mishandle bound types.\n\nFix `ivl/intervalset.py`, `ivl/interval.py` and `ivl/report.py` as needed (public API stays:\n`Interval`, `IntervalSet`, `coverage_ratio`, `largest_gap`).\n\nSemantics (an `Interval(lo, hi, lo_closed=None, hi_closed=None)` has those four fields; a `None` flag defaults to closed for a bounded `lo` and open otherwise, so `Interval(1, 3)` is `[1, 3)`; `lo=None`/`hi=None` mean\nunbounded and that side is never closed; constructing an empty interval, or an unbounded side\nwith an explicit `*_closed=True`, raises `ValueError`; `Interval(2, 2, True, True)` is the single point 2):\n\n- An `IntervalSet` is always normalised: sorted, with no two members overlapping or touching.\n  Two intervals are merged when they overlap, or when the end of one equals the start of the\n  other and at least one of the two bounds is closed (`[1,2)`+`[2,3)` -> `[1,3)`,\n  `[1,2]`+`(2,3)` -> `[1,3)`, but `(1,2)`+`(2,3)` stay separate). Iterating yields the\n  intervals in ascending order; `.intervals` is the same as a tuple; `==` compares the\n  normalised contents; `len()` is the number of members.\n- `IntervalSet(iterable)`, `add(interval)`, `union(other)`, `intersection(other)`,\n  `difference(other)` (points in self and not in other), `complement()` (relative to the whole\n  line) and `contains(x)` return/behave as sets of points. `union`, `intersection`,\n  `difference`, `complement` return new sets and never modify their operands. Intersecting\n  `(1, 3]` with `[3, 5)` gives the point `[3, 3]`; `(1, 3)` with `[3, 5)` gives nothing.\n- `measure()` is the total length (sum of `hi - lo`; points count 0; `float(\"inf\")` if any\n  member is unbounded; `0` for an empty set).\n- `coverage_ratio(s, window)` is `s.intersection(IntervalSet([window])).measure() /\n  window.length()`; it raises `ValueError` if the window has zero or infinite length.\n  `largest_gap(s, window)` returns the longest member of `IntervalSet([window]).difference(s)`\n  (the first one when several tie) or `None` if there is no gap.\n- Performance: the checks build sets from tens of thousands of intervals, call `add` tens of\n  thousands of times in a loop, combine two such sets and do tens of thousands of `contains`\n  lookups. Use sorting, merging sweeps and `bisect`; the checks only need an `O(n log n)`\n  style implementation and have a generous time limit.\n",
+        "repo": "../../../examples/tasks/data-interval-sets/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/data-interval-sets/solution",
+        "tags": [
+          "performance",
+          "bugfix",
+          "multi-file",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/data-json-patch/checks",
+        "id": "data-json-patch",
+        "path": "../../../examples/tasks/data-json-patch",
+        "prompt": "`jpatch` implements JSON Pointer (RFC 6901) and a subset of JSON Patch (RFC 6902) for the\nconfig-sync service, and it has gaps and bugs. Bring `pointer.py`, `patch.py`, `equality.py` and\n`diff.py` up to the behaviour below (public API unchanged: `apply_patch`, `diff`, `json_equal`,\n`parse_pointer`, `resolve`, `escape_token`, `PatchError`, `PointerError`).\n\nPointers\n- A pointer is `\"\"` (whole document) or `/`-separated tokens. `~1` means `/` and `~0` means `~`,\n  decoded in one pass (so `~01` is the key `~1`, not `/`). A `~` followed by anything else (or\n  at the end of a token) raises `PointerError`; so does a non-empty pointer without a leading `/`.\n- Array indexes are strict: `0` or digits without leading zeros / signs / spaces (`01`, `+1`,\n  `-1`, ` 1` are invalid). `resolve(doc, pointer, default=...)` follows dict keys and valid\n  in-range array indexes; `-` never resolves; when something is missing it returns `default` if\n  given, else raises `PointerError`. A malformed pointer always raises `PointerError`.\n\nJSON equality\n- `json_equal(a, b)` compares JSON values recursively: dict key sets must match, lists compare\n  element-wise, numbers compare by value (`1 == 1.0`), but booleans are NOT numbers\n  (`json_equal(True, 1)` and `json_equal(0, False)` are False, also when nested).\n\n`apply_patch(doc, ops)`\n- Returns a new document. It never modifies `doc` or `ops`, and the result shares no mutable\n  object with either (later mutating the result must not change `ops` values or `doc`).\n- If any operation fails, `PatchError` is raised and `.index` is the 0-based index of the first\n  failing operation (`.index` is `None` for a `ops` that is not a list). Missing/invalid\n  `op`, `path`, `value` (required for add/replace/test; `null` counts as present) or `from`\n  (required for move/copy), an unknown op name, an operation that is not an object, and any\n  `PointerError` are all `PatchError`s too.\n- `add`: path `\"\"` replaces the whole document; the parent must exist; in an object it sets the\n  key (replacing an existing one); in an array the token is a strict index `0..len` (inserting;\n  `len` appends) or `-` (append); anything else is an error; the parent must be an object or\n  array.\n- `remove`: the target must exist (array elements after it shift down); removing the root `\"\"`\n  is an error.\n- `replace`: the target must exist (array index `< len`; `-` is invalid); path `\"\"` replaces the\n  whole document.\n- `move`: `from` must exist; the value is removed and then added at `path` (array indexes in\n  `path` refer to the array after the removal); moving a value into its own descendant\n  (`from` is a proper prefix of `path`) is an error; `from == path` is a no-op.\n- `copy`: like `move` but keeps the source and adds an independent deep copy.\n- `test`: `path` must exist and its value must be `json_equal` to `value`, otherwise error.\n\n`diff(a, b)`\n- Returns a list of operations such that `apply_patch(a, diff(a, b))` is `json_equal` to `b`,\n  and `[]` when `json_equal(a, b)`. Pointers must escape keys (`a/b` -> `a~1b`, `m~n` -> `m~0n`).\n- Objects: first `remove` for keys of `a` missing in `b` (in `a`'s key order); then for each key\n  of `b` in `b`'s order: `add` if absent from `a`, otherwise recurse. Arrays: recurse element by\n  element over the common length, then `add` the extra elements of `b` at their final indexes\n  in increasing order, or `remove` the surplus elements of `a` from the highest index down.\n  Anything else that differs (different types, scalars, object vs array, booleans vs numbers)\n  becomes one `replace` at that path (path `\"\"` for the root). Values in the ops are deep\n  copies.\n",
+        "repo": "../../../examples/tasks/data-json-patch/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/data-json-patch/solution",
+        "tags": [
+          "feature",
+          "bugfix",
+          "multi-file",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/data-sessionize/checks",
+        "id": "data-sessionize",
+        "path": "../../../examples/tasks/data-sessionize",
+        "prompt": "The analytics dashboard's `sessions` package gives wrong numbers. Fix and extend\n`sessions/loader.py`, `sessionizer.py` and `report.py` (public API stays; new names are\nlisted below). Event log lines are JSON objects `{\"ts\", \"user\", \"type\", \"value\"}`.\n\nLoading\n- `ts` may be an ISO-8601 string (anything `datetime.fromisoformat` accepts: `Z` or `+02:00`\n  offsets, fractional seconds, date-only, space separator) or a number of epoch seconds (`int`\n  or `float`, not `bool`). Naive ISO strings mean UTC. `Event.ts` is always an aware UTC\n  datetime. Non-finite or out-of-range numbers and unparsable values are errors.\n- `user` must be a non-empty string; `type` is optional (default `\"event\"`) but if present must\n  be a non-empty string; `value` is optional (default 0) but if present must be a finite\n  `int`/`float` (not `bool`, so `NaN`/`Infinity`, strings and `true` are errors). A line that is\n  not a JSON object is an error. Blank lines are skipped but still counted in line numbers\n  (1-based).\n- `load_events(lines)` keeps its behaviour (raises `EventError` with `.line` on the first bad\n  line). New `load_lenient(lines)` returns `(events, errors)` where `errors` is the list of\n  `EventError`s for all bad lines, in order, and `events` the good ones.\n\n`sessionize(events, gap=timedelta(minutes=30), max_duration=None, types=None)`\n- `types` (a collection of type names) keeps only events with those types (`None` = all; an\n  empty collection keeps nothing). Then exact duplicates by `(user, ts, type)` are dropped,\n  keeping the first one in input order.\n- Each user's events are ordered by `ts` (events with equal `ts` keep their input order) and\n  split into sessions: a new session starts when the time since the PREVIOUS event of that user\n  is strictly greater than `gap` (exactly `gap` stays in the session), or when\n  `max_duration` is given and the time since the session's FIRST event is strictly greater than\n  `max_duration`. `gap <= 0` or `max_duration <= 0` raises `ValueError`.\n- `Session.id` is `\"<user>#<n>\"` with `n` counting that user's sessions from 1 in time order.\n  `start`/`end` are the first/last event times and `events` the (ordered) tuple of events.\n  The result is sorted by `(start, user)`.\n\n`daily_report(sessions, utc_offset=timedelta(0))`\n- A session belongs to the local day of its START (`start + utc_offset`), even if it ends after\n  midnight. `utc_offset` must be strictly between -24h and +24h (else `ValueError`).\n  One `DayStats` row per day that has sessions, ascending: `sessions`, distinct `users`,\n  total `events`, `total_seconds` (sum of session durations as float), `avg_events`\n  (events per session, float) and `total_value` (sum of event values as float).\n",
+        "repo": "../../../examples/tasks/data-sessionize/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/data-sessionize/solution",
+        "tags": [
+          "bugfix",
+          "feature",
+          "multi-file",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 180.0,
+        "checks": "../../../examples/tasks/graph-build-plan/checks",
+        "id": "graph-build-plan",
+        "path": "../../../examples/tasks/graph-build-plan",
+        "prompt": "`buildplan` gives *a* valid build order, but CI needs more: deterministic orders, partial\nbuilds, parallel batches, optional dependencies, readable cycle reports, and it has to cope\nwith huge graphs. Extend it, keeping the current API. You will touch `graph.py`, `order.py`,\n`cycles.py`, `spec.py`, `cli.py` and `__init__.py` (export the new functions below).\n\n**Graph**: `add_dep(node, dep, optional=False)`. `deps(node)` keeps returning the *required*\ndependencies only; add `optional_deps(node)` and `all_deps(node)`. Declaring the same\ndependency twice is fine; if it was ever declared required it is required.\n\n**Build set and ordering** `topo_order(graph, targets=None)`:\n- The build set is every node, or, with `targets` (an iterable of names), the targets plus\n  their transitive *required* dependencies. An unknown target raises `GraphError`\n  (`unknown target 'x'`, for the smallest unknown name). A required dependency of a node in\n  the build set that is not a node of the graph raises `GraphError`\n  (`missing dependency 'd' of 'n'`, reporting the smallest `(node, dep)` pair).\n- An optional dependency is an ordering constraint only when it is itself in the build set;\n  otherwise it is ignored (it may even be missing from the graph) and never pulls anything in.\n- The result lists the build set with dependencies before dependents; whenever several nodes\n  are ready, the smallest name goes first (plain string comparison).\n- It must be iterative and fast: a 100,000-node chain must not hit the recursion limit and\n  must finish within a few seconds.\n\n**Cycles**: `CycleError` gets a `.cycle` attribute and its message becomes\n`dependency cycle: a -> b -> a`. Cycles are detected among the build set, counting\noptional edges whose target is in the set. `.cycle` is a list `[n0, n1, ..., n0]` in which\neach node depends on the next: it is a shortest cycle through the smallest-named node that\nlies on any cycle; if several shortest cycles exist, the lexicographically smallest list. A\nself-dependency gives `[\"a\", \"a\"]`. Nodes that merely depend on a cycle are never part of the\nreport. A 50,000-node chain that ends in a 3-node cycle must be reported within a few seconds.\n\n**New functions** (in `order.py`, exported from the package):\n- `levels(graph, targets=None)`: parallel batches as a list of sorted name lists. A node's\n  level is 0 without (active) dependencies, else 1 + the highest level among them. Same\n  errors as `topo_order`.\n- `reverse_deps(graph, node)`: sorted list of all nodes that depend on `node`, directly or\n  transitively, over required and optional edges, excluding `node` itself (also when it is in\n  a cycle). Unknown `node` raises `GraphError`.\n- `affected(graph, changed)`: the changed nodes plus everything that depends on them\n  (required and optional edges alike), in build order with the same tie-breaking; only edges\n  inside this set matter and other nodes are not validated. Unknown changed node raises\n  `GraphError`; a cycle inside the set raises `CycleError`.\n\n**Spec files**: a dependency token written `?name` is optional. Everything else in the\nformat is unchanged (including its errors; `?` alone or `??x` is an invalid name).\n\n**CLI** `main(argv, out, err)`: options `--target NAME` (repeatable, also `--target=NAME`),\n`--levels`, `--affected NAME` (repeatable, also `--affected=NAME`), in any position around the\nsingle SPEC path. Default output is the order, one name per line; with `--levels` one line\nper level `\"<level>: <names separated by single spaces>\"`; `--affected` prints the `affected`\norder, one per line. `--affected` cannot be combined with `--target` or `--levels`. Every\nerror prints `error: <message>` to `err` and returns 2: usage problems (unknown option, missing\noption value, not exactly one SPEC, bad combination), unreadable file, `SpecError` and\n`GraphError` (including cycles, with the new message). Success returns 0.\n",
+        "repo": "../../../examples/tasks/graph-build-plan/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/graph-build-plan/solution",
+        "tags": [
+          "feature",
+          "hard",
+          "multi-file",
+          "performance"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 180.0,
+        "checks": "../../../examples/tasks/graph-transit-router/checks",
+        "id": "graph-transit-router",
+        "path": "../../../examples/tasks/graph-transit-router",
+        "prompt": "`transit.earliest_arrival` finds the earliest arrival time but ignores the time it takes to\nchange trains, picks arbitrary itineraries among equally early ones, and is not enough for the\njourney planner. Rework it (changes touch `transit/timetable.py`, `transit/router.py`,\n`transit/itinerary.py` and `transit/__init__.py`). Times are integer minutes.\n\n**Timetable**: `Timetable(connections, transfers=None, default_transfer=0)`.\n`transfers` maps a station to the minimum minutes needed to change trips there;\n`default_transfer` applies to other stations. Both must be non-negative integers\n(`ValueError` otherwise). New method `transfer_time(station)`. `Connection` times must be\nints (bools and floats raise `ValueError`), in addition to the existing checks.\n\n**Rules for a journey**:\n- Boarding the first trip at the origin needs no transfer time: any connection from the origin\n  with `dep >= depart_at`.\n- Staying on the same trip (next connection of that trip starting where the previous one\n  ended, no earlier than it arrived) needs no transfer time, whatever the station's value.\n- Changing to a different trip at a station needs `arrival + transfer_time(station) <=\n  next departure` (equal is fine). This also applies when coming back to the origin.\n- A *leg* is a maximal ride on one trip; the number of legs is the metric (`Itinerary.transfers`\n  is `legs - 1`, but 0 for an empty itinerary).\n\n**`earliest_arrival(tt, origin, dest, depart_at, max_legs=None)`** returns the best itinerary\nby: (1) earliest arrival at `dest`, then (2) fewest legs, then (3) lexicographically smallest\ntuple of trip ids (plain string comparison, leg by leg). Beyond that, ties may be resolved\narbitrarily. `max_legs` (a positive int, or None) restricts the itinerary to at most that many\nlegs - the best itinerary among the allowed ones is returned, possibly arriving later. If\n`dest` cannot be reached (or either station is unknown to the timetable) return `None`. If\n`origin == dest`, return an `Itinerary` with no legs and `departure == arrival == depart_at`\n(even if the station is unknown). `Itinerary.legs` is a tuple of `Leg(trip, src, dst, dep, arr)`\nwhere `dep`/`arr` are the leg's boarding departure and alighting arrival; `departure` and\n`arrival` are the first leg's `dep` and the last leg's `arr`.\n\n**`earliest_arrivals(tt, origin, depart_at)`** (new, in `router.py`, exported from the\npackage): dict mapping every reachable station to its earliest arrival time under the same\nrules; the origin maps to `depart_at`.\n\n**`Itinerary.describe()`** keeps its per-leg line `\"HH:MM src -> HH:MM dst [trip]\"` (hours are\nnot wrapped: 1500 is `25:00`) and now inserts, between consecutive legs, the line\n`\"  change at <station>: <n> min\"` (two leading spaces; `n` = next leg's `dep` minus previous leg's `arr`).\n\nIt must scale: a timetable with 20,000 connections has to be answered in a few seconds (a\nquadratic scan over all pairs of connections is too slow).\n",
+        "repo": "../../../examples/tasks/graph-transit-router/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/graph-transit-router/solution",
+        "tags": [
+          "feature",
+          "hard",
+          "multi-file",
+          "performance"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 60.0,
+        "checks": "../../../examples/tasks/parse-cron-schedule/checks",
+        "id": "parse-cron-schedule",
+        "path": "../../../examples/tasks/parse-cron-schedule",
+        "prompt": "`cronx` handles only the simplest cron expressions, and `next_after` gives up after a year\nand steps minute by minute. Make it behave like standard (Vixie) cron. Public API stays:\n`CronExpr.parse(text)` with the set attributes `minutes`, `hours`, `days`, `months`,\n`weekdays`; `matches`, `next_after`, `upcoming`; `CronError` (a `ValueError`). Work in\n`cronx/fields.py`, `expr.py` and `schedule.py` as needed.\n\nSyntax. An expression is five whitespace-separated fields `minute hour day-of-month month\nday-of-week` (surrounding whitespace is ignored) or one of the macros `@yearly`/`@annually`\n(`0 0 1 1 *`), `@monthly` (`0 0 1 * *`), `@weekly` (`0 0 * * 0`), `@daily`/`@midnight`\n(`0 0 * * *`), `@hourly` (`0 * * * *`), case-insensitive; any other `@word`, extra text after a\nmacro, or a wrong field count is a `CronError`. A field is a comma-separated list (no empty\nelements) of items:\n- `*`; `N`; `A-B`; each optionally followed by `/S` (positive integer step, digits only,\n  ASCII only, no sign). `*/S` and `A-B/S` take every S-th value starting at the range start;\n  `N/S` means `N` up to the field maximum in steps of S (`5/20` in minutes is 5, 25, 45). A\n  step larger than the range is fine (`*/70` in minutes is just 0).\n- Ranges must not be reversed (`5-3` is an error; there is no wrap-around) and every value must\n  be inside the field's bounds: minute 0-59, hour 0-23, day-of-month 1-31, month 1-12,\n  day-of-week 0-7. Numbers are plain ASCII digits (no sign, no spaces).\n- Names: month fields accept `JAN`..`DEC` and day-of-week fields `SUN`..`SAT` (SUN = 0, SAT = 6),\n  case-insensitive, anywhere a number is allowed (including range ends and with steps:\n  `JAN-MAR`, `mon-fri/2`). Names are not accepted in other fields, and a month name in the\n  day-of-week field (or vice versa) is an error.\n- In day-of-week, `7` also means Sunday: the parsed `weekdays` set contains only 0-6 (`5-7` is\n  `{5, 6, 0}`, `0-7` is all seven days, `1-7/2` is `{1, 3, 5, 0}`).\n- `?` is accepted only as a whole item in the day-of-month and day-of-week fields and means the\n  same as `*` there.\n\nDay matching: a date matches the day fields as follows. If EITHER the day-of-month field or\nthe day-of-week field begins with `*` (`*`, `*/2`, `*,5` ...) or is `?`, both must match\n(the star field accepts everything unless it has a step, e.g. `*/2` in day-of-month means odd\ndays 1, 3, ..., 31). If both fields are restricted, the date matches when EITHER matches\n(`0 0 13 * 5` is the 13th of every month and also every Friday). The month field must always\nmatch. Months do not have clamped days: `31` never matches in a 30-day month and `29 2 *` only in\nleap years.\n\nFunctions\n- `matches(expr, dt)`: seconds and microseconds of `dt` are ignored.\n- `next_after(expr, dt)`: the earliest matching minute `t` with `t > dt` (seconds of the result\n  are 0; for `dt` = 10:00:30 and an expression matching 10:00 the answer is a later minute).\n  The result keeps `dt.tzinfo` (calendar arithmetic on wall-clock fields, no DST handling). It\n  searches calendar years up to `dt.year + 10` (inclusive) and raises `CronError` if nothing\n  matches (e.g. `0 0 30 2 *`). It must not step minute by minute through years: rare schedules\n  such as `0 0 29 2 *` from March 2096 (next hit 2104) have to return quickly.\n- `upcoming(expr, start, count)`: the next `count` matches, each after the previous one;\n  `count == 0` gives `[]`, negative `count` raises `ValueError`.\n",
+        "repo": "../../../examples/tasks/parse-cron-schedule/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/parse-cron-schedule/solution",
+        "tags": [
+          "feature",
+          "multi-file",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/parse-expr-operators/checks",
+        "id": "parse-expr-operators",
+        "path": "../../../examples/tasks/parse-expr-operators",
+        "prompt": "`calc` parses and evaluates arithmetic expressions (`calc.parse`, `calc.evaluate`,\n`calc.eval_expr`, `calc.to_source`, `calc.free_vars`, `calc.node_count`). It only supports\n`+ - * /` and unary `+`/`-`. Extend the whole pipeline (lexer, parser, AST, evaluator, source\nprinter and the analysis helpers) with the operators below. Existing behaviour and the\nexisting AST classes must keep working.\n\nOperators, from lowest to highest precedence:\n\n1. `c ? a : b` (ternary, right-associative: `a ? b : c ? d : e` is `a ? b : (c ? d : e)`;\n   the middle part may be any expression; new AST node `Ternary(cond, then, orelse)`)\n2. `||`   3. `&&`   (both left-associative)\n4. comparisons `< <= > >= == !=` are NON-associative: `1 < 2 < 3` is a `ParseError` whose\n   `pos` is the offset of the second comparison operator. `(1 < 2) < 3` is fine.\n5. `+ -` (left)   6. `* / %` (left)\n7. prefix `- + !` (`!x` is logical not)\n8. `**` power, right-associative: `2 ** 3 ** 2 == 2 ** 9`. Its left operand is a primary\n   (number, name, call or parenthesised expression) and its right operand may be a prefix\n   expression, so `2 ** -1` works, `-2 ** 2` is `-(2 ** 2)` (= -4), `!a ** 2` is `!(a ** 2)`\n   and `2 ** -3 ** 2` is `2 ** (-(3 ** 2))`.\n\nAST: binary operators use `Binary(op, left, right)` with `op` the operator text (`\"%\"`, `\"**\"`,\n`\"<=\"`, `\"&&\"`, ...); `!` is `Unary(\"!\", x)`.\n\nEvaluation: comparisons, `&&`, `||` and `!` produce the ints `1` or `0`; a ternary\ncondition or logical operand counts as true when it is non-zero. `&&`, `||` and the ternary\nare lazy: only the needed operand/branch is evaluated (`x != 0 && 10 / x > 1` must not fail\nfor `x = 0`). `%` follows Python (`-7 % 3 == 2`, `7.5 % 2 == 1.5`); `%` by zero and\n`**` of zero to a negative power raise `EvalError`, as does a `**` whose result would be a\ncomplex number (e.g. `(-8) ** 0.5`). Integer `**` with a non-negative integer exponent stays an\nint.\n\nLexing/parse errors: `ParseError` with `.pos` = offset of the offending token (end of input is\n`len(text)`). A lone `=`, `&` or `|` is a lexing error at its own offset; the two-character\noperators are matched greedily (`**` before `*`, `<=` before `<`, `!=` before `!`).\n\n`to_source(node)` must print with single spaces around every binary operator (including `**`\nand `? :`), no space after prefix operators, `f(a, b)` for calls, and the MINIMUM parentheses\nthat make `parse(to_source(n)) == n` hold for every tree `parse` can produce: e.g. `(1 + 2) * 3`,\n`a - (b - c)` but `a - b - c`, `(2 ** 3) ** 2` but `2 ** 3 ** 2`, `(-a) ** 2` but `-a ** 2` and\n`a ** -b`, `-(a + b)`, `(a < b) == c`, `(a ? b : c) ? d : e` but `a ? b ? c : d : e`.\n\n`free_vars` and `node_count` must handle all the new node kinds (`node_count` counts every\nnode, including those in an unevaluated branch).\n",
+        "repo": "../../../examples/tasks/parse-expr-operators/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/parse-expr-operators/solution",
+        "tags": [
+          "feature",
+          "multi-file",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/parse-ini-interpolation/checks",
+        "id": "parse-ini-interpolation",
+        "path": "../../../examples/tasks/parse-ini-interpolation",
+        "prompt": "`inix` is our small INI reader. Values are currently returned verbatim, but the deploy configs\nnow reference each other (`url = http://${host}:${port}/api`), so please add interpolation.\nTouch only what is needed in `inix/` (the new logic belongs in a new `inix/interpolate.py`;\n`Config` and the writer must use it). Keep the existing public API.\n\nSyntax, inside any value:\n\n- `${key}` is replaced by the value of `key` in the same section as the value being resolved.\n- `${section:key}` refers to another section (split the body at the first `:`).\n- `${name|default}` uses the literal text `default` when the referenced key (or section) does\n  not exist. Split at the first `|`; the name part is stripped of surrounding whitespace\n  (`${ host }` works), the default is used exactly as written (not stripped, not interpolated,\n  may be empty, ends at the first `}`).\n- `$$` is a literal `$`. A `$` followed by anything other than `$` or `{` is a literal `$`.\n- The referenced value is itself interpolated, in the context of the section it lives in\n  (so `[b] x = ${y}` referenced as `${b:x}` from section `a` reads `b`'s `y`). Text that was\n  produced by `$$` or by a referenced value is never scanned again: `$${x}` yields the text\n  `${x}`. Referencing the same key several times (`${a}${a}`) is fine.\n\nErrors: `inix.InterpolationError` (a `ValueError` subclass, exported from `inix`) is raised for\na reference to a missing key/section without a default (the message contains the missing key\nname as written), for an unterminated `${` (no closing `}`), for an empty name (`${}`), and for\nreference cycles including self-reference, even when a default is given (the message contains\nthe word `cycle`). An error inside a referenced value propagates even if a default was given.\n\nAPI changes:\n\n- `Config.get(section, key, fallback=..., raw=False)` returns the interpolated value by default;\n  `raw=True` returns the stored text and never raises `InterpolationError`. `fallback` only\n  covers a missing `section/key` itself, it never hides an `InterpolationError`.\n- `Config.items(section, raw=False)` interpolates every value likewise.\n- `getint`, `getfloat`, `getbool` convert the interpolated value.\n- `inix.writer.dumps(config, resolved=False)`: with `resolved=True` it writes interpolated values\n  (so the output contains no `${}` or `$$`); with the default it still writes the raw text.\n",
+        "repo": "../../../examples/tasks/parse-ini-interpolation/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/parse-ini-interpolation/solution",
+        "tags": [
+          "feature",
+          "multi-file",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/parse-query-nested/checks",
+        "id": "parse-query-nested",
+        "path": "../../../examples/tasks/parse-query-nested",
+        "prompt": "`qs` parses and encodes query strings for the gateway, but it only handles flat keys and has\ndecoding bugs. Make `qs.parse` and `qs.encode` handle nested data the way the web frameworks\nour clients use do. Public API: `parse(query, max_depth=5)`, `encode(data)`, `ParseError`\n(a `ValueError`). Touch `qs/codec.py`, `qs/tree.py`, `qs/parser.py`, `qs/encoder.py` as needed.\n\nDecoding (`codec.unquote_plus` / `quote`)\n- `+` means a space, applied to the raw text BEFORE `%XX` escapes are decoded (so `%2B` is a\n  literal `+`). Runs of `%XX` escapes are UTF-8 bytes: `%C3%A9` is `\u00e9`; invalid UTF-8 becomes\n  U+FFFD (Python's `errors=\"replace\"`). A `%` not followed by two hex digits stays literal\n  (`100%`, `%zz`, `%4`).\n- `quote` percent-encodes the UTF-8 bytes of everything except `A-Za-z0-9-._~`, with upper-case\n  hex (`\u00e9` -> `%C3%A9`, space -> `%20`).\n\nParsing\n- A leading `?` is dropped; the query is split on `&`; empty pairs and pairs with an empty raw\n  key are skipped; each pair splits at the FIRST `=` (no `=` means value `\"\"`).\n- Structure is read from the RAW (not yet decoded) key: a key matching `name[seg][seg]...` (a\n  non-empty `name` without brackets followed by zero or more `[...]` groups with no brackets\n  inside) is nested; anything else (`[a]`, `a[b`, `a[b]c`, `a]`) is one literal key. Each\n  `name`/`seg` is then percent-decoded on its own, so `a%5Bb%5D=1` is the literal key `a[b]`,\n  never nesting. Values are decoded too.\n- `user[name]=x&user[age]=3` -> `{\"user\": {\"name\": \"x\", \"age\": \"3\"}}`; nesting of any shape\n  up to `max_depth` bracket groups (more raises `ParseError`).\n- A key ending in `[]` collects into a list even for a single value: `a[]=1` -> `{\"a\": [\"1\"]}`,\n  `a[b][]=1&a[b][]=2` -> `{\"a\": {\"b\": [\"1\", \"2\"]}}`. `[]` anywhere but at the very end\n  (`a[][b]`, `a[][]`) raises `ParseError`. Numeric segments are ordinary dict keys.\n- A repeated key (with or without `[]`, nested or not) accumulates values in order into a\n  list: `a=1&a=2` -> `[\"1\", \"2\"]`, `a=1&a[]=2` -> `[\"1\", \"2\"]`, `a[]=1&a=2` -> `[\"1\", \"2\"]`,\n  `a[b]=1&a[b]=2` -> `{\"a\": {\"b\": [\"1\", \"2\"]}}`.\n- Conflicts raise `ParseError`: a key that is already a dict being given a plain value or list\n  value (`a[b]=1&a=2`, `a[b]=1&a[]=2`), and a key that already holds a string or list being\n  nested into (`a=1&a[b]=2`, `a[]=1&a[b]=2`).\n- Result dicts keep first-appearance key order. Values are always `str`.\n\nEncoding (`encode(data)`, the inverse of `parse` for such data)\n- `data` must be a dict (`TypeError` otherwise); keys must be non-empty `str` (`TypeError` for\n  non-str, `ValueError` for `\"\"`, at any depth).\n- Nested dicts become `a[b][c]=v`; each key/segment is `quote`d on its own but the structural\n  brackets are literal, so a key containing `[` is written `%5B`. Lists (or tuples) of scalars\n  become one `key[]=v` pair per element, in order; an empty list or empty dict writes nothing;\n  a list element that is a dict/list raises `ValueError`.\n- Scalars: `str` as is, `bool` -> `true`/`false`, `int`/`float` -> `str(v)`, `None` -> empty\n  value; anything else raises `TypeError`. Values are `quote`d. Pairs are joined with `&` in\n  dict order.\n- This changes the old flat list encoding (`b=x&b=z`) to `b[]=x&b[]=z`; update the existing\n  visible test in `tests/test_qs.py` accordingly.\n",
+        "repo": "../../../examples/tasks/parse-query-nested/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/parse-query-nested/solution",
+        "tags": [
+          "feature",
+          "bugfix",
+          "multi-file",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/sched-interval-bounds/checks",
+        "id": "sched-interval-bounds",
+        "path": "../../../examples/tasks/sched-interval-bounds",
+        "prompt": "The `ivl` package (`ivl/model.py`, `ivl/ops.py`, `ivl/text.py`) only knows half-open intervals\n`[lo, hi)`. The booking scheduler now needs intervals whose ends can be open or closed\nindependently, e.g. a closed slot `[9, 10]` or a point-in-time `[5, 5]`. Please add that,\nkeeping the existing public API and the default of `[lo, hi)`.\n\n- `Interval(lo, hi, lo_closed=True, hi_closed=False)` (frozen dataclass; the flags take part in\n  equality). It must contain at least one point: `lo < hi`, or `lo == hi` with both ends closed\n  (a single point `[5, 5]`). Anything else raises `ValueError`.\n- `contains(p)` honours the flags. `overlaps(other)` is true when the two intervals share at\n  least one point (`[1, 2)` and `[2, 3)` do not overlap; `[1, 2]` and `[2, 3)` do).\n- `intersect(a, b)` returns the common part with the correct flags (when both lower bounds are\n  equal the result is closed only if both are closed; same for upper bounds), or `None`.\n- `subtract(a, b)` returns the 0, 1 or 2 pieces of `a` not covered by `b`, sorted, with\n  flipped flags at the cut: `[0, 10) - [3, 5)` is `[0, 3)` and `[5, 10)`, while\n  `[0, 10) - (3, 5]` is `[0, 3]` and `(5, 10)`. Subtracting the point `[5, 5]` from `[0, 10)`\n  gives `[0, 5)` and `(5, 10)`.\n- `merge(intervals)` returns the union as a sorted list of disjoint intervals. Intervals are\n  joined when they overlap or leave no gap between them: `[1, 2)` + `[2, 3)` join, `[1, 2]` +\n  `(2, 3)` join, but `[1, 2)` + `(2, 3)` stay separate because the point 2 is not covered.\n  Sort order: by lower end, a closed lower end before an open one at the same value.\n- `gaps(intervals, window)` is the part of `window` not covered, as sorted pieces with the\n  correct flags (e.g. gaps of `[2, 4]` in `[0, 10)` are `[0, 2)` and `(4, 10)`).\n- `total_length(intervals)` is the measure of the union (open or closed ends make no\n  difference; points have length 0).\n- `str(interval)` and `format_interval` print `[1, 5)`, `(1, 5]`, `[3, 3]` etc. (bracket for\n  closed, parenthesis for open, `\", \"` between the values). `parse()` accepts the four bracket\n  combinations, still tolerates whitespace around tokens and keeps ints as ints and decimals\n  as floats; invalid text or an empty interval raises `ValueError`.\n",
+        "repo": "../../../examples/tasks/sched-interval-bounds/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/sched-interval-bounds/solution",
+        "tags": [
+          "feature",
+          "hard",
+          "multi-file"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/sched-recurrence-rules/checks",
+        "id": "sched-recurrence-rules",
+        "path": "../../../examples/tasks/sched-recurrence-rules",
+        "prompt": "The `recur` package (`recur/rule.py`, `recur/parse.py`, `recur/expand.py`) only supports DAILY\nand WEEKLY rules, one weekday per week, no exclusions. The calendar service needs more. Extend\nit, keeping the existing public API (`Rule`, `parse_rule`, `format_rule`, `occurrences`,\n`between`).\n\nRule fields: add `byday` (a tuple of weekday numbers, Monday=0 .. Sunday=6) and `exdates` (a\nfrozenset of `datetime.date`), both empty by default, after the existing fields.\n\nText form (`parse_rule` / `format_rule`):\n- New `FREQ` values `MONTHLY` and `YEARLY`.\n- `BYDAY=MO,WE` (codes MO TU WE TH FR SA SU, case-insensitive) parses to a sorted,\n  de-duplicated tuple. A bad code, or BYDAY with a FREQ other than WEEKLY, is a `ValueError`\n  (the `Rule` constructor enforces this too).\n- `EXDATE=2024-01-05,2024-01-12` (comma-separated ISO dates); a bad date is a `ValueError`.\n- Existing error rules stay (empty text, missing FREQ, duplicate or unknown keys, empty\n  segments, COUNT with UNTIL, ...). Keys and FREQ remain case-insensitive.\n- `format_rule` emits, in this order, skipping what is default: `FREQ`, `INTERVAL` (only if\n  not 1), `BYDAY` (two-letter codes in weekday order), `COUNT`, `UNTIL`, `EXDATE` (ascending\n  ISO dates). `format_rule(parse_rule(s))` for a canonical `s` gives back `s`.\n\nExpansion (`occurrences(rule, start)`, still a lazy generator that must work for unbounded\nrules, and `between`, inclusive on both ends):\n- WEEKLY with `byday`: weeks run Monday to Sunday and `INTERVAL` counts weeks starting from\n  the week that contains `start`. Within a week the days come in ascending order. Dates in\n  that first week that are before `start` are skipped (they are not occurrences and do not\n  count towards COUNT). `start` itself is only an occurrence if its weekday is in `byday`.\n  Without `byday` the weekday of `start` is used, as today.\n- MONTHLY: every `INTERVAL` months on the day-of-month of `start`; when a month is too short\n  the date is clamped to that month's last day. Each month is computed from `start`'s day, not\n  from the previously clamped one (start Jan 31: Jan 31, Feb 29/28, Mar 31, Apr 30, ...).\n- YEARLY: every `INTERVAL` years on `start`'s month and day; Feb 29 is clamped to Feb 28 in\n  non-leap years (and is Feb 29 again in leap years).\n- `COUNT` limits the number of generated occurrences *before* `exdates` are removed, so an\n  excluded date still uses up one of the COUNT slots. `UNTIL` is inclusive. `exdates` that\n  are not occurrences have no effect.\n- Expansion simply ends instead of raising if dates would go beyond `date.max`.\n",
+        "repo": "../../../examples/tasks/sched-recurrence-rules/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/sched-recurrence-rules/solution",
+        "tags": [
+          "feature",
+          "hard",
+          "multi-file"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/sched-working-hours/checks",
+        "id": "sched-working-hours",
+        "path": "../../../examples/tasks/sched-working-hours",
+        "prompt": "`bizhours` computes SLA deadlines in working time, but `WorkCalendar` only models one\ndaily window on a set of weekdays. Support real calendars, keeping the existing API\n(`WorkCalendar(open, close, workdays)` positional/keyword form, `is_working`, `next_open`,\n`add_working_minutes`, `working_minutes_between`). All datetimes are naive; passing a\ntimezone-aware datetime to any of these functions raises `ValueError`.\n\n`WorkCalendar` gets three new keyword-only arguments (changes in `bizhours/calendar.py`, and\n`add.py` / `elapsed.py` must use them):\n\n- `windows`: a mapping `weekday (Mon=0..Sun=6) -> list of (open, close) time pairs`, e.g. a\n  lunch break `{0: [(time(9), time(12)), (time(13), time(17))], ...}`. When given it replaces\n  `open`/`close`/`workdays`. Windows are half-open `[open, close)`. Windows of one day may be\n  given in any order; touching windows (`12:00-13:00` after `9:00-12:00`) behave as one\n  window; overlapping windows, a window with `open >= close`, or a weekday outside 0..6 raise\n  `ValueError`. Weekdays with an empty list (or absent) are non-working. A calendar with no\n  working time at all raises `ValueError`.\n- `holidays`: an iterable of `datetime.date`; there is no working time on those dates.\n- `observe_weekends` (default False): when True, a holiday that falls on a Saturday is\n  observed on the preceding Friday and one on a Sunday on the following Monday (the Saturday /\n  Sunday itself is then not a special case: it simply keeps its normal windows).\n\nBehaviour of the functions:\n\n- `is_working(dt)`: `dt` lies inside a window of a non-holiday date. `next_open(dt)`: `dt`\n  itself if it is working time, otherwise the next moment working time starts (a `dt` exactly\n  at a window's close moves on to the next window).\n- `add_working_minutes(cal, start, minutes)`: `minutes` is a number >= 0 (otherwise\n  `ValueError`). With 0 it returns `start` unchanged. Otherwise counting starts at\n  `cal.next_open(start)` and the result is the moment when that much working time has been\n  used up; if it ends exactly at the close of a window, the result is that close time (not the\n  next opening). It spans lunch breaks, weekends and holidays, and must handle hundreds of\n  thousands of minutes quickly.\n- `working_minutes_between(cal, a, b)`: the working time in `[a, b)` as a float number of\n  minutes (seconds count fractionally); negative, with the same magnitude, if `b < a`.\n",
+        "repo": "../../../examples/tasks/sched-working-hours/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/sched-working-hours/solution",
+        "tags": [
+          "feature",
+          "hard",
+          "multi-file"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/state-hierarchical-machine/checks",
+        "id": "state-hierarchical-machine",
+        "path": "../../../examples/tasks/state-hierarchical-machine",
+        "prompt": "Our `hsm` machines are flat. The firmware simulator needs hierarchical (nested) states.\nExtend `hsm` (mainly `hsm/states.py` and `hsm/machine.py`) keeping the current flat behaviour and\npublic API (`Machine`, `Transition`, `send`, `state`, `is_in`, `configuration`, the callback\nconventions in the README).\n\nHierarchy:\n- State names are dotted paths: `\"on.playing\"` is a child of `\"on\"`. Every parent must be\n  declared in `states` too (else `ValueError`); duplicates are still an error.\n- `Machine(..., initials=None)` gets a new keyword argument: a dict mapping each composite state\n  (one that has children) to the full name of its default child, e.g. `{\"on\": \"on.stopped\"}`. A\n  composite state without an entry, or an entry that is not a direct child of that composite,\n  raises `ValueError`.\n- `machine.state` is always a leaf state (full dotted name). Entering a composite state (as\n  `initial` or as a transition target) continues into its default child, recursively, until a\n  leaf. `configuration()` returns the active chain from the outermost state to the leaf, e.g.\n  `[\"on\", \"on.playing\"]`; `is_in(name)` is true for the leaf and each of its ancestors.\n- Construction runs the `on_enter` callbacks of the whole initial chain, outermost first, with\n  an empty payload.\n\nEvent handling in `send(event, **payload)`:\n- Look for a transition for the event starting at the active leaf, then its parent, and so on\n  outward; at each state, try that state's transitions for the event in declaration order and\n  take the first whose guard passes (or has none). So inner states override outer ones, and a\n  failing guard falls through to the next candidate. If none fires, return False and change\n  nothing.\n- `target=None` is still an internal transition: only the action runs, no exit/enter\n  callbacks, the state is unchanged (also when it is declared on an ancestor of the leaf).\n- Any other transition is external. Let L be the deepest state that is a *proper* ancestor\n  of both the transition's `source` and its `target` (L may not exist, meaning the top level).\n  Order of events: `on_exit` callbacks for every active state from the leaf outward up to and\n  including the child of L that is on the path (so for a transition declared on an ancestor\n  A, all of the leaf's chain up to A and beyond to the child of L is exited, innermost first);\n  then the `action`; then `on_enter` callbacks from just below L inward to the target, and\n  then down the target's default-child chain to the new leaf. A self-transition (target ==\n  source) therefore exits and re-enters that state (and, for a composite, its active descendants and default\n  chain). A transition from a parent to its own child, or from a child to its parent, is\n  external as well, using the same rule for L.\n- Callbacks, guards and actions all receive the payload dict, as before.\n",
+        "repo": "../../../examples/tasks/state-hierarchical-machine/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/state-hierarchical-machine/solution",
+        "tags": [
+          "feature",
+          "hard",
+          "multi-file"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/state-ttl-cache-tags/checks",
+        "id": "state-ttl-cache-tags",
+        "path": "../../../examples/tasks/state-ttl-cache-tags",
+        "prompt": "`ttlstore.TTLCache` is too basic for the pricing service. Extend it (changes are needed in\n`ttlstore/cache.py`, `ttlstore/entry.py` and `ttlstore/stats.py`), keeping the existing API\nand behaviour for existing uses. The clock is the injected zero-argument callable; the\nchecks drive it manually.\n\nExpiry: an entry expires at `set_time + ttl`; it is expired when `now >= expires_at`\n(boundary inclusive). \"Live\" means not expired.\n\n1. `set(key, value, ttl=None, tags=())`: `ttl` overrides the cache default for this entry\n   (must be a positive number, else `ValueError`; `math.inf` means it never expires; the\n   constructor's `ttl` is validated the same way). `tags` is an iterable of hashable tags.\n   Setting an existing key replaces value, ttl, tags and expiry and makes it most recently\n   used.\n   Every `set()` first removes all expired entries (each counted once in `expirations`), then,\n   if the key is not present and the cache holds `capacity` entries, evicts the least recently\n   used one (`evictions`). Replacing an existing key never evicts.\n2. `TTLCache(capacity, ttl, clock=..., sliding=False)`: with `sliding=True` every successful\n   `get()` restarts the entry's expiry from now using that entry's own ttl.\n3. Read-only queries never remove entries and never change statistics or recency:\n   `len(cache)` and `key in cache` count only live entries; `keys()` lists live keys, least to\n   most recently used; `peek(key, default=None)` returns a live value without touching\n   recency or expiry; `ttl_remaining(key)` returns the seconds left (`math.inf` for a\n   never-expiring entry) or `None` if the key is absent or expired.\n4. `get(key, default=None)`: a live hit counts as a hit and makes the entry most recently\n   used; absent keys count as a miss; an expired entry is removed, counted once in\n   `expirations` and also counts as a miss.\n5. `touch(key, ttl=None)`: for a live entry, restarts its expiry from now (with the new `ttl`\n   if given, which then becomes the entry's ttl) and returns True, without changing recency\n   or hit/miss counters; for an absent key returns False; an expired entry is removed, counted\n   in `expirations`, and gives False. An invalid `ttl` raises `ValueError`.\n6. `delete(key)`: True if a live entry was removed (no statistics change); False otherwise\n   (an expired entry is still removed, and counted in `expirations`).\n7. `purge()` removes all expired entries, counts them in `expirations`, returns how many.\n8. `invalidate_tag(tag)` removes every entry that has the tag. It returns the number of\n   *live* entries removed, which are counted in the new `invalidations` statistic; expired\n   entries with the tag are removed too but counted in `expirations` instead.\n9. `Stats` gains a fifth field `invalidations` (default 0, after `expirations`).\n",
+        "repo": "../../../examples/tasks/state-ttl-cache-tags/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/state-ttl-cache-tags/solution",
+        "tags": [
+          "feature",
+          "hard",
+          "multi-file"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/state-undo-history/checks",
+        "id": "state-undo-history",
+        "path": "../../../examples/tasks/state-undo-history",
+        "prompt": "The editor's `editdoc.History` records every command as its own undo step, never forgets, and\ncannot group edits. Improve it (changes in `editdoc/commands.py` and `editdoc/history.py`)\nwhile keeping the existing API (`execute`, `undo`, `redo`, `can_undo`, `can_redo`,\n`mark_saved`, `is_dirty`, the `Insert`/`Delete` commands, `Document`).\n\n1. **No-ops**: `execute()` of an `Insert` with empty text or a `Delete` of length 0 does\n   nothing at all (not recorded, redo stack kept, nothing else changes). If applying a command\n   raises (e.g. `IndexError`), the exception propagates and history and document are unchanged.\n2. **Typing coalescing**: a command is merged into the previous undo step (so one `undo()`\n   reverts both) when the previous step is the latest one, came from a single plain `execute()`\n   (not a transaction), and:\n   - both are `Insert`s, the new one starts exactly where the previous one ends\n     (`new.pos == prev.pos + len(prev.text)`), the new text contains no `\"\\n\"` and the previous\n     text does not end with `\"\\n\"`;\n   - both are `Delete`s and either `new.pos == prev.pos` (forward delete) or\n     `new.pos + new.length == prev.pos` (backspace). The merged delete must still restore the\n     exact removed text on undo.\n   Different command types never merge. Merging never happens right after any `undo()` /\n   `redo()` call (even a failed one on an empty stack), after `mark_saved()`, after\n   `history.break_coalescing()` (new method), or after a transaction. A merged execute still\n   clears the redo stack.\n3. **Transactions**: `with history.transaction():` groups every command executed inside it\n   into one undo step (no coalescing inside, and the step never merges with neighbours).\n   The document changes immediately. Transactions may be nested: inner ones simply join the\n   outermost. If an exception escapes the outermost `with` block, every command executed in\n   it is reverted in reverse order, nothing is recorded, the redo stack is left as it was and\n   the exception propagates; an inner block that raises does not roll back by itself (only\n   the outermost does, and only if the exception escapes it). A transaction without effective\n   commands records nothing and keeps the redo stack. A committed transaction clears the redo\n   stack. Calling `undo()`, `redo()` or `mark_saved()` inside a transaction raises\n   `RuntimeError`.\n4. **Limit**: `History(doc, limit=None)`: with a positive int the history keeps at most\n   `limit` undo steps (a merged step or a whole transaction counts as one), dropping the oldest;\n   anything else but `None` raises `ValueError`. New undo depth information: properties\n   `undo_depth` and `redo_depth`.\n5. **Dirty tracking** (`is_dirty`) is about history points, not text: it is False initially\n   and right after `mark_saved()`, becomes True after any change, and is False again whenever\n   undo/redo returns to exactly the point where `mark_saved()` was called. A saved point that\n   can no longer be reached is permanently dirty until the next `mark_saved()`: that happens\n   when a new command is recorded after undoing past it (the redo stack is discarded), or\n   when the limit drops steps so that it is gone. The point right after a dropped step still\n   exists: with `limit=2`, saving after the first of three commands and then executing two more\n   means that undoing twice returns to the saved point, so `is_dirty` is False there.\n   Saving at the very beginning of the history and then dropping steps makes that point\n   unreachable.\n",
+        "repo": "../../../examples/tasks/state-undo-history/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/state-undo-history/solution",
+        "tags": [
+          "feature",
+          "hard",
+          "multi-file"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/text-template-engine/checks",
+        "id": "text-template-engine",
+        "path": "../../../examples/tasks/text-template-engine",
+        "prompt": "`tplr` renders our notification emails, and templates now need more than it offers. Extend the\nengine (lexer, expression language, filters, parser and renderer; keep `Template(source).render(**ctx)`,\n`render(source, **ctx)` and the three exception classes). Everything below must work; existing\ntemplates must keep rendering as before.\n\nLexing\n- A tag ends at the first closing delimiter (`}}`, `%}`, `#}`) that is not inside a quoted\n  string, so `{{ x|default(\"}}\") }}` works. Quotes are `\"` or `'`; a backslash inside a string\n  escapes the next character. Comments (`{# ... #}`) end at the first `#}`. An unterminated\n  `{{`, `{%` or `{#` raises `TemplateSyntaxError` whose `line` is the line where it starts.\n- Whitespace control: a `-` directly after the opening delimiter (`{{-`, `{%-`, `{#-`) removes\n  all whitespace (spaces, tabs, newlines) at the end of the text just before the tag; a `-`\n  directly before the closing delimiter (`-}}`, `-%}`, `-#}`) removes whitespace at the start of\n  the text just after it. Only adjacent literal text is affected. `line` numbers still refer to\n  the original source.\n\nExpressions (used by `{{ }}`, `{% if %}`, `{% elif %}` and `{% for ... in %}`)\n- Operands: variable paths (`user.name`, `items.0`; missing anything -> `None`, which prints as\n  an empty string), string literals (`\"a\"`/`'a'` with escapes `\\n`, `\\t`, and `\\x` -> `x` for\n  any other `x`), integers, floats (`-3`, `2.5`), and `true`, `false`, `none`.\n- Filters: `operand|name` or `operand|name(arg, ...)` with literal arguments, chainable\n  (`x|trim|upper`), binding tighter than anything else. Filters: `upper lower title trim`\n  (a `None` input counts as `\"\"`), `length` (`None` -> 0), `join` (optional separator argument,\n  default `\", \"`; `None` -> `\"\"`), `default(v)` (returns `v` when the input is `None` or `\"\"`,\n  otherwise the input, so `0` and `false` are kept), `truncate(n)` (text of at most `n`\n  characters: unchanged if it fits, else the first `n-3` characters + `\"...\"`, with `n-3`\n  floored at 0), `replace(old, new)`, `first`, `last` (first/last element, `None` when empty or\n  `None`). Wrong argument counts and unknown filters are a `TemplateSyntaxError` (at parse\n  time, with the tag's line); an exception inside a filter is a `TemplateRenderError`.\n- Operators from lowest to highest precedence: `or`; `and`; `not`; one comparison\n  (`== != < <= > >= in` or `not in`); parentheses group. Chained comparisons (`a < b < c`) are a\n  `TemplateSyntaxError`. `and`, `or`, `not` and comparisons yield `True`/`False` (printed as such\n  by `{{ }}`). A comparison that raises `TypeError` in Python (e.g. `none < 3`, `5 in 3`) is\n  `False`; `x in none` is `False` and `x not in none` is `True`.\n- Empty or malformed expressions raise `TemplateSyntaxError`.\n\nBlocks\n- `{% if %}`, any number of `{% elif %}`, optional `{% else %}`, `{% endif %}`.\n- `{% for x in seq %}` / `{% for k, v in seq %}` (names separated by commas, each item is\n  unpacked; a wrong number of values or a non-iterable item raises `TemplateRenderError`),\n  optional `{% else %}` rendered when the sequence is empty or `None`, `{% endfor %}`.\n  Strings iterate characters and dicts iterate keys; any other non-iterable value (except\n  `None`) raises `TemplateRenderError`.\n- Inside a loop `loop.index` (from 1), `loop.index0`, `loop.first`, `loop.last` and\n  `loop.length` are available; in nested loops `loop` is the innermost one. Loop variables\n  disappear after the loop and do not overwrite outer variables permanently.\n- Syntax errors (`TemplateSyntaxError`, `.line` = line of the offending tag): unknown tag,\n  `elif`/`else`/`endif`/`endfor` that do not match the innermost open block (including `elif`\n  after `else` and a second `else`), and a block still open at the end of the template (line of\n  its opening tag, innermost open block first).\n",
+        "repo": "../../../examples/tasks/text-template-engine/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/text-template-engine/solution",
+        "tags": [
+          "feature",
+          "multi-file",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/text-unified-patch/checks",
+        "id": "text-unified-patch",
+        "path": "../../../examples/tasks/text-unified-patch",
+        "prompt": "`udiff` applies unified diffs to in-memory files (`apply_patch(files, patch_text)`), but it\nonly handles patches that match line numbers exactly and assume every line ends in a newline,\nand it trusts malformed input. Make it behave like a careful `patch(1)`. Public API:\n`apply_patch(files, patch_text, strip=1, reverse=False)`, `parse_patch(text)`, `PatchError`\n(attributes `message`, `line`, `file`, `hunk`). Work in `udiff/models.py`, `parser.py`,\n`matcher.py` and `api.py` as needed. The existing visible tests must keep passing\n(`Hunk.lines` stays a list of `(tag, text)` pairs).\n\nLines and the \"no newline\" marker\n- File text is split on `\"\\n\"` only (`\"\\r\"` is ordinary content). Lines are compared\n  including their terminator: a line is `\"\\n\"`-terminated unless it is the last line of a text\n  that does not end in `\"\\n\"`. In a patch, a line starting with `\\` (`\\ No newline at end of\n  file`) means the immediately preceding hunk line has NO terminator (for a context line, on\n  both sides; for `-` only the old side; for `+` only the new side). So replacing a last line\n  `foo` (no newline) by `foo\\n` is `-foo`, marker, `+foo`. A marker does not count towards the\n  hunk's line counts; a marker with no preceding hunk line is a parse error.\n\nParsing (`parse_patch`)\n- File headers are `--- OLD` followed directly by `+++ NEW`; anything after a TAB in a path\n  and trailing whitespace is dropped; other lines between hunks (`diff --git`, `index ...`,\n  junk) are ignored. A hunk header is `@@ -a[,b] +c[,d] @@` (a missing count means 1). A hunk\n  is read by count: context lines (` `) use one of both counts, `-` one old, `+` one new. A\n  completely empty line inside a hunk is an empty context line. A hunk ends as soon as both\n  counts are used up (a following marker still belongs to it). Errors raise `PatchError` with\n  `.line` = 1-based patch line: a hunk header before any file header (that header's line); a\n  line inside a hunk that does not start with ` `, `+`, `-` (that line; this also covers a hunk\n  that is cut short by the next `@@` or `diff`/`index` line); a hunk cut short by the end of the patch\n  (the hunk header's line); a context/`-` line when the old count is already used up, or a\n  context/`+` line when the new count is already used up, while the other count is still open\n  (that line).\n\nApplying (`apply_patch`)\n- Returns a new dict (the input is never modified); on any error nothing is returned, the\n  error is a `PatchError` with `.file` (the path as keyed in `files`, after stripping) and\n  `.hunk` (1-based) when a hunk does not apply. Paths are stripped of `strip` leading\n  components (`a/x.txt` -> `x.txt`; a path with `<= strip` components keeps only its last\n  component; `/dev/null` is never stripped). Patches in the text are applied in order, each\n  seeing the results of the previous ones.\n- Hunk position: the nominal 0-based start of a hunk is `old_start - 1`, or `old_start` when\n  its old count is 0. Each hunk is searched at `nominal + drift`, where `drift` is\n  `found - nominal` of the previous hunk of the same file (0 for the first). Candidate\n  positions are those `q` with `end_of_previous_hunk <= q <= len(lines) - len(old_block)`,\n  tried in order of increasing `|q - (nominal + drift)|`, the smaller `q` first on ties; the\n  first one where the whole old block (context + `-` lines, with terminators) equals the file\n  lines wins. A hunk with an empty old block therefore goes to the candidate closest to its\n  expected position. No match -> `PatchError`.\n- `--- /dev/null` creates a file (error if it already exists); `+++ /dev/null` deletes one\n  (error if the lines left after applying are not empty); a file that does not exist cannot be\n  modified (error). If old and new names differ (after stripping) the file is renamed: its\n  content is read from the old name, written to the new name, the old name is removed, and\n  it is an error if the new name already exists. A patch with no hunks just renames.\n- `reverse=True` applies the inverse patch: old/new swapped in names and hunks, `+`/`-` swapped,\n  and the file patches processed in reverse order (so a created file is deleted, etc.).\n",
+        "repo": "../../../examples/tasks/text-unified-patch/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/text-unified-patch/solution",
+        "tags": [
+          "feature",
+          "multi-file",
+          "hard"
+        ],
+        "timeout_s": null
+      },
+      {
+        "check": [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "checks",
+          "-t",
+          "."
+        ],
+        "check_timeout_s": 120.0,
+        "checks": "../../../examples/tasks/text-wrap-display-width/checks",
+        "id": "text-wrap-display-width",
+        "path": "../../../examples/tasks/text-wrap-display-width",
+        "prompt": "`wrapkit` lays out terminal text (help screens, tables), but it measures text with `len()`.\nThat breaks for coloured output (ANSI colour codes count as characters), CJK text (wide\ncharacters take two columns) and combining accents. Fix the library so everything works in\nterms of display width. The public API stays: `display_width`, `strip_ansi`, `wrap`,\n`render_table`, `truncate`.\n\nDisplay width:\n\n- Only SGR escape sequences (`ESC [ digits-and-semicolons m`, e.g. `\\x1b[1;31m`, `\\x1b[0m`) are\n  recognised as ANSI; they take 0 columns.\n- Other characters: category `Mn`, `Me`, `Cc` or `Cf` (combining marks, controls, zero-width\n  space/joiner) take 0 columns; `unicodedata.east_asian_width` of `W` or `F` takes 2; anything\n  else takes 1.\n\n`wrap(text, width)`:\n\n- `width < 1` raises `ValueError`. Paragraphs are separated by `\"\\n\"`; a paragraph with no\n  words yields one `\"\"` line. Words are separated by runs of whitespace (`str.split()` rules)\n  and rejoined with one space. A word is placed on the current line if\n  `current + 1 + word_width <= width` (display widths); otherwise a new line starts.\n- A word wider than `width` starts on a new line (the current line is flushed if it has\n  content) and is broken into chunks by display columns. A break happens only right before a\n  visible (width > 0) character, never inside a wide character (a wide character that does not\n  fit moves to the next line; if `width` is 1, a wide character sits alone on its line).\n  Zero-width characters stay with the character before them. The last chunk can continue to\n  collect following words. ANSI sequences are emitted in place, so a sequence directly before\n  the character that causes a break stays at the end of the previous line.\n- Styles carry across lines: track the SGR sequences seen so far over all lines in order\n  (`\\x1b[0m` and `\\x1b[m` clear the list, any other SGR sequence is appended). Every non-empty\n  line starts with the sequences still open from before it, and every non-empty line that\n  ends with a non-empty open list gets `\\x1b[0m` appended. `\"\"` lines are left alone.\n  Text without ANSI must wrap exactly as before.\n\n`render_table(rows, widths, aligns=\"\")`:\n\n- Each cell is wrapped to its column width with `wrap`, rows are as tall as their tallest\n  cell, each cell line is padded with spaces to the column's display width according to\n  `aligns` (one char per column: `l` left (default), `r` right, `c` centre with\n  `pad // 2` spaces on the left), cells are joined with `\" | \"`, and trailing spaces\n  (only spaces) are removed from every line. Lines are joined with `\"\\n\"`. A row with fewer\n  cells than `widths` is padded with empty cells; more cells raises `ValueError`.\n\n`truncate(text, width, placeholder=\"...\")`:\n\n- If `display_width(text) <= width` return it unchanged. Otherwise keep the longest prefix of\n  visible characters whose width fits in `width - display_width(placeholder)` (never splitting\n  a wide character; zero-width characters directly after the kept prefix are kept too), keep\n  every ANSI sequence that appears before the first dropped visible character and drop all\n  later text and sequences, then if any style is open (by the same rule as in `wrap`) append `\\x1b[0m`, and finally append the placeholder. `ValueError` if the placeholder alone\n  is wider than `width`.\n",
+        "repo": "../../../examples/tasks/text-wrap-display-width/repo",
+        "setup": null,
+        "solution": "../../../examples/tasks/text-wrap-display-width/solution",
+        "tags": [
+          "bugfix",
+          "multi-file",
+          "hard"
+        ],
+        "timeout_s": null
+      }
+    ],
+    "timeout_is_failure": true,
+    "timeout_s": 900.0,
+    "workspace_root": null
+  },
+  "created_at": "2026-10-10T11:29:28Z",
+  "experiment": "pilot-haiku-5-5",
+  "fingerprint": "d63a2655a43879e7c5eca549e46cc0f3ba3cce6b68c04ec9cd47c599b146a8a8",
+  "fingerprint_scheme": 2,
+  "planned_trials": 20,
+  "schema": 1,
+  "seed": 0,
+  "tool": "agent-ab",
+  "version": "0.1.0"
+}

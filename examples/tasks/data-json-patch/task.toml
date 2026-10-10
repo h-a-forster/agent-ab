@@ -1,0 +1,56 @@
+prompt = """
+`jpatch` implements JSON Pointer (RFC 6901) and a subset of JSON Patch (RFC 6902) for the
+config-sync service, and it has gaps and bugs. Bring `pointer.py`, `patch.py`, `equality.py` and
+`diff.py` up to the behaviour below (public API unchanged: `apply_patch`, `diff`, `json_equal`,
+`parse_pointer`, `resolve`, `escape_token`, `PatchError`, `PointerError`).
+
+Pointers
+- A pointer is `""` (whole document) or `/`-separated tokens. `~1` means `/` and `~0` means `~`,
+  decoded in one pass (so `~01` is the key `~1`, not `/`). A `~` followed by anything else (or
+  at the end of a token) raises `PointerError`; so does a non-empty pointer without a leading `/`.
+- Array indexes are strict: `0` or digits without leading zeros / signs / spaces (`01`, `+1`,
+  `-1`, ` 1` are invalid). `resolve(doc, pointer, default=...)` follows dict keys and valid
+  in-range array indexes; `-` never resolves; when something is missing it returns `default` if
+  given, else raises `PointerError`. A malformed pointer always raises `PointerError`.
+
+JSON equality
+- `json_equal(a, b)` compares JSON values recursively: dict key sets must match, lists compare
+  element-wise, numbers compare by value (`1 == 1.0`), but booleans are NOT numbers
+  (`json_equal(True, 1)` and `json_equal(0, False)` are False, also when nested).
+
+`apply_patch(doc, ops)`
+- Returns a new document. It never modifies `doc` or `ops`, and the result shares no mutable
+  object with either (later mutating the result must not change `ops` values or `doc`).
+- If any operation fails, `PatchError` is raised and `.index` is the 0-based index of the first
+  failing operation (`.index` is `None` for a `ops` that is not a list). Missing/invalid
+  `op`, `path`, `value` (required for add/replace/test; `null` counts as present) or `from`
+  (required for move/copy), an unknown op name, an operation that is not an object, and any
+  `PointerError` are all `PatchError`s too.
+- `add`: path `""` replaces the whole document; the parent must exist; in an object it sets the
+  key (replacing an existing one); in an array the token is a strict index `0..len` (inserting;
+  `len` appends) or `-` (append); anything else is an error; the parent must be an object or
+  array.
+- `remove`: the target must exist (array elements after it shift down); removing the root `""`
+  is an error.
+- `replace`: the target must exist (array index `< len`; `-` is invalid); path `""` replaces the
+  whole document.
+- `move`: `from` must exist; the value is removed and then added at `path` (array indexes in
+  `path` refer to the array after the removal); moving a value into its own descendant
+  (`from` is a proper prefix of `path`) is an error; `from == path` is a no-op.
+- `copy`: like `move` but keeps the source and adds an independent deep copy.
+- `test`: `path` must exist and its value must be `json_equal` to `value`, otherwise error.
+
+`diff(a, b)`
+- Returns a list of operations such that `apply_patch(a, diff(a, b))` is `json_equal` to `b`,
+  and `[]` when `json_equal(a, b)`. Pointers must escape keys (`a/b` -> `a~1b`, `m~n` -> `m~0n`).
+- Objects: first `remove` for keys of `a` missing in `b` (in `a`'s key order); then for each key
+  of `b` in `b`'s order: `add` if absent from `a`, otherwise recurse. Arrays: recurse element by
+  element over the common length, then `add` the extra elements of `b` at their final indexes
+  in increasing order, or `remove` the surplus elements of `a` from the highest index down.
+  Anything else that differs (different types, scalars, object vs array, booleans vs numbers)
+  becomes one `replace` at that path (path `""` for the root). Values in the ops are deep
+  copies.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "bugfix", "multi-file", "hard"]

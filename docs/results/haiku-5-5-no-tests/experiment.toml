@@ -1,0 +1,38 @@
+# Powered follow-up to the 10-task pilot (docs/results.md): control vs. no-tests on all 50
+# example tasks with Claude Haiku 5.5, pinned by model ID. Sized with
+#   agent-ab power docs/results/pilot2-haiku-5-5 --effect=-10,-15,-20 --tasks 30,40,50 --repeats 1,2,3
+# which gave 97% power for a 20-point drop at 50 tasks x 3 repeats (76% at 30 x 3).
+
+name = "haiku-5-5-no-tests"
+description = "Control vs. an instruction not to write or run tests, 50 tasks, Claude Haiku 5.5."
+
+tasks = ["../../../examples/tasks/*"]
+repeats = 3
+jobs = 6
+seed = 0
+budget_usd = 25.0
+timeout_s = 1800
+check_timeout_s = 300
+max_retries = 2
+baseline = "control"
+
+[agent]
+adapter = "claude-code"
+model = "claude-haiku-5-5"
+
+[agent.options]
+permission_mode = "bypassPermissions"
+setting_sources = "project"
+max_budget_usd = 1.0
+max_turns = 100
+# capture_init and strict_mcp_config are on by default.
+
+[[arms]]
+name = "control"
+description = "Task prompt only; the agent decides whether to write tests."
+
+[[arms]]
+name = "no-tests"
+description = "Same prompt plus an instruction not to write or run tests."
+prompt_suffix = """Do not write new tests and do not run the test suite. Implement the change \
+directly, then stop."""

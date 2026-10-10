@@ -1,0 +1,51 @@
+prompt = """
+The `warehouse` package (catalog, lot-based stock, reservations, pricing, shipping, orders)
+has several reported bugs. Find and fix their causes; README.md documents the intended
+behaviour. Keep all other existing behaviour unchanged.
+
+Example data: `A100` Widget 10.00 (0.5 kg, taxable, tiers 10+ units 5%, 50+ units 10%) with
+lots `L1` 10 units expiring day 30, `L2` 20 units expiring day 20, `L3` 5 units that never
+expire (received before the others); `B200` Gadget 25.50 (2 kg) with lot `L4` of 4 units.
+
+1. Lots that never expire are used first. `stock.lots_for("A100")` returns `L3, L2, L1`; the
+   order must be `L2, L1, L3` (lots without an expiry date come after all lots that expire).
+   `plan`, `place` and every FEFO decision are affected (e.g. `plan("A100", 25, now=5)` should be
+   `[("L2", 20), ("L1", 5)]`, it takes from `L3`).
+
+2. Orders can oversell when a SKU appears on more than one line. `place([("B200", 3), ("B200", 3)],
+   now=1)` with only 4 units on hand succeeds and drives lot `L4` negative (or fails
+   half way); it must raise `InsufficientStock` and change nothing, and `[("B200", 2), ("B200", 2)]`
+   must succeed with two allocations. Multi-lot SKUs are affected too: lines
+   `[("A100", 15), ("A100", 15)]` must give `L2` 15 + 5 and `L1` 10, never the same units twice.
+   `Stock.plan(sku, qty, now, taken)` must honour its `taken` argument.
+
+3. Quantity tiers start one unit too late. Buying exactly 10 widgets gets no discount: the line
+   should be gross 100.00, discount 5.00, net 95.00, tax 9.50; likewise exactly 50 units earn
+   the 10% tier (`tier_percent`, `price_line`, `place`).
+
+4. Rounding is banker's rounding instead of half away from zero. `round_cents("0.025")`
+   returns `0.02` (should be `0.03`) and `round_cents("0.005")` returns `0.00` (should be `0.01`).
+   It shows up in discounts (0.50 at 5% -> 0.03), tax (0.25 at 10% -> 0.03), `surcharge`,
+   `percent_of` and refunds.
+
+5. Shipping brackets exclude their upper limit. A parcel of exactly 1 kg costs 9.50 (should be
+   5.00), exactly 5 kg costs 18.00 (should be 9.50), exactly 20 kg costs 19.20 (should be
+   18.00). An order of 10 widgets (5.0 kg) therefore pays the wrong shipping.
+
+6. Expired reservations still block stock. After `stock.book.reserve("B200", 3, expires_at=10)`,
+   `stock.available("B200", 10)` and later days still report only 1 unit available (should be
+   4) until somebody calls `purge`. Placing orders, `plan` and `stock_levels` are affected;
+   at `now = 9` the reservation must still hold.
+
+7. Cancelling an order puts units back into the wrong lot. After
+   `place([("A100", 25)], now=5)` (20 from `L2`, 5 from `L1`) and `cancel`, `L2` stays at 0 and
+   `L1` receives all 25 units instead of the original lots getting their units back. Fix it
+   for orders with several lines / SKUs as well.
+
+Hidden checks cover each symptom, close variants through the related APIs named above, and a
+broad regression suite of the current correct behaviour. Run the visible tests with
+`python -m unittest discover -s tests -t .`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "multi-file", "bughunt"]

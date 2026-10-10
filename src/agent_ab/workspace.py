@@ -72,6 +72,7 @@ _CACHE_EXCLUDES = tuple(
     for name in ("__pycache__/**", "*.pyc", ".pytest_cache/**", ".mypy_cache/**", ".ruff_cache/**")
 )
 
+
 def _sanitize_label(label: str) -> str:
     clean = re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("-.")
     return clean[:60] or "ws"
@@ -394,11 +395,28 @@ def diff_stats(ws: Workspace, patch_path: Path) -> tuple[int, int, int] | None:
 def install_checks(ws: Workspace, task: Task) -> None:
     """Copy the task's hidden ``checks/`` over the workspace root, overwriting agent files.
 
-    Anything the agent left at a check path (file, directory, symlink, junction) is replaced
-    without following links. Raises ``WorkspaceError`` if the workspace cannot take the files.
+    First, every top-level entry of ``checks/`` that is absent from the pristine ``repo/`` is
+    removed from the workspace (links are unlinked, never followed), so files the agent planted
+    in check-only paths (say ``checks/test_x.py``) cannot run with the checks. Entries that also
+    exist in ``repo/`` keep the merge behaviour: directories merge, files overwrite. Anything the
+    agent left at a check path (file, directory, symlink, junction) is replaced without
+    following links. Raises ``WorkspaceError`` if the workspace cannot take the files.
     """
-    if task.checks is not None:
-        _copy_into(Path(task.checks), ws.path, "checks")
+    if task.checks is None:
+        return
+    checks = Path(task.checks)
+    if not checks.is_dir():
+        raise WorkspaceError(f"checks directory not found: {checks}")
+    try:
+        for entry in os.scandir(checks):
+            if entry.name in _EXCLUDED_NAMES:
+                continue
+            if task.repo is not None and os.path.lexists(Path(task.repo) / entry.name):
+                continue
+            _remove_path(ws.path / entry.name)
+    except OSError as e:
+        raise WorkspaceError(f"clearing check paths in the workspace failed: {e}") from e
+    _copy_into(checks, ws.path, "checks")
 
 
 def apply_solution(ws: Workspace, task: Task) -> None:
@@ -480,5 +498,31 @@ def run_command(
         timeout_s=timeout_s,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
+        cancel=cancel,
+    )
+
+
+# PYTHONSAFEPATH (Python 3.11+, same as -P) stops `-m` and script runs from putting the workspace
+# first on sys.path, where an agent-written `unittest/` package would shadow the stdlib.
+CHECK_ENV = {"PYTHONSAFEPATH": "1"}
+
+
+def run_check(
+    cmd: Command,
+    ws: Workspace,
+    *,
+    timeout_s: float | None,
+    stdout_path: Path,
+    stderr_path: Path,
+    cancel: threading.Event | None = None,
+) -> ProcResult:
+    """Run a task's check command in the workspace with the hardened ``CHECK_ENV``."""
+    return run_command(
+        cmd,
+        ws,
+        timeout_s=timeout_s,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        env=CHECK_ENV,
         cancel=cancel,
     )

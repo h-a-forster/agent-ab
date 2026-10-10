@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_ab import __version__
-from agent_ab.config import experiment_to_dict
+from agent_ab.config import FINGERPRINT_SCHEME, experiment_to_dict
 from agent_ab.errors import RunStoreError
 from agent_ab.model import SCHEMA_VERSION, Experiment, TrialRecord
 
@@ -61,8 +61,9 @@ class RunStore:
             "version": __version__,
             "experiment": exp.name,
             "fingerprint": exp.fingerprint,
+            "fingerprint_scheme": FINGERPRINT_SCHEME,
             "created_at": utc_now(),
-            "config": _redact_env(experiment_to_dict(exp)),
+            "config": _redact_env(experiment_to_dict(exp, store.run_dir)),
             "planned_trials": planned_trials,
             "seed": exp.seed,
             "baseline": exp.baseline,
@@ -105,6 +106,13 @@ class RunStore:
                 f"run belongs to experiment {self.meta.get('experiment')!r}, not {exp.name!r}"
             )
         if self.meta.get("fingerprint") != exp.fingerprint and not force:
+            if self.meta.get("fingerprint_scheme", 1) != FINGERPRINT_SCHEME:
+                raise RunStoreError(
+                    "this run was started by an older agent-ab whose fingerprint depended on the "
+                    "checkout location, so it cannot be compared with the current experiment. "
+                    "Pass --force to resume anyway if you know the experiment is unchanged, "
+                    "or start a new run."
+                )
             raise RunStoreError(
                 "the experiment (config, tasks or overlays) changed since this run started; "
                 "mixing trials would bias the comparison. Start a new run, or pass --force "
@@ -275,8 +283,11 @@ def _redact_env(value: Any) -> Any:
     """
     if isinstance(value, dict):
         return {
-            k: ({name: "<redacted>" for name in v} if k == "env" and isinstance(v, dict)
-                else _redact_env(v))
+            k: (
+                {name: "<redacted>" for name in v}
+                if k == "env" and isinstance(v, dict)
+                else _redact_env(v)
+            )
             for k, v in value.items()
         }
     if isinstance(value, list):

@@ -1,0 +1,48 @@
+prompt = """
+`calc` parses and evaluates arithmetic expressions (`calc.parse`, `calc.evaluate`,
+`calc.eval_expr`, `calc.to_source`, `calc.free_vars`, `calc.node_count`). It only supports
+`+ - * /` and unary `+`/`-`. Extend the whole pipeline (lexer, parser, AST, evaluator, source
+printer and the analysis helpers) with the operators below. Existing behaviour and the
+existing AST classes must keep working.
+
+Operators, from lowest to highest precedence:
+
+1. `c ? a : b` (ternary, right-associative: `a ? b : c ? d : e` is `a ? b : (c ? d : e)`;
+   the middle part may be any expression; new AST node `Ternary(cond, then, orelse)`)
+2. `||`   3. `&&`   (both left-associative)
+4. comparisons `< <= > >= == !=` are NON-associative: `1 < 2 < 3` is a `ParseError` whose
+   `pos` is the offset of the second comparison operator. `(1 < 2) < 3` is fine.
+5. `+ -` (left)   6. `* / %` (left)
+7. prefix `- + !` (`!x` is logical not)
+8. `**` power, right-associative: `2 ** 3 ** 2 == 2 ** 9`. Its left operand is a primary
+   (number, name, call or parenthesised expression) and its right operand may be a prefix
+   expression, so `2 ** -1` works, `-2 ** 2` is `-(2 ** 2)` (= -4), `!a ** 2` is `!(a ** 2)`
+   and `2 ** -3 ** 2` is `2 ** (-(3 ** 2))`.
+
+AST: binary operators use `Binary(op, left, right)` with `op` the operator text (`"%"`, `"**"`,
+`"<="`, `"&&"`, ...); `!` is `Unary("!", x)`.
+
+Evaluation: comparisons, `&&`, `||` and `!` produce the ints `1` or `0`; a ternary
+condition or logical operand counts as true when it is non-zero. `&&`, `||` and the ternary
+are lazy: only the needed operand/branch is evaluated (`x != 0 && 10 / x > 1` must not fail
+for `x = 0`). `%` follows Python (`-7 % 3 == 2`, `7.5 % 2 == 1.5`); `%` by zero and
+`**` of zero to a negative power raise `EvalError`, as does a `**` whose result would be a
+complex number (e.g. `(-8) ** 0.5`). Integer `**` with a non-negative integer exponent stays an
+int.
+
+Lexing/parse errors: `ParseError` with `.pos` = offset of the offending token (end of input is
+`len(text)`). A lone `=`, `&` or `|` is a lexing error at its own offset; the two-character
+operators are matched greedily (`**` before `*`, `<=` before `<`, `!=` before `!`).
+
+`to_source(node)` must print with single spaces around every binary operator (including `**`
+and `? :`), no space after prefix operators, `f(a, b)` for calls, and the MINIMUM parentheses
+that make `parse(to_source(n)) == n` hold for every tree `parse` can produce: e.g. `(1 + 2) * 3`,
+`a - (b - c)` but `a - b - c`, `(2 ** 3) ** 2` but `2 ** 3 ** 2`, `(-a) ** 2` but `-a ** 2` and
+`a ** -b`, `-(a + b)`, `(a < b) == c`, `(a ? b : c) ? d : e` but `a ? b ? c : d : e`.
+
+`free_vars` and `node_count` must handle all the new node kinds (`node_count` counts every
+node, including those in an unevaluated branch).
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "multi-file", "hard"]

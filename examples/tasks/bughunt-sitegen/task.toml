@@ -1,0 +1,50 @@
+prompt = """
+`sitegen` (a static site generator working on in-memory files) has several reported bugs.
+Find and fix their causes; README.md documents the intended behaviour. Keep all other existing
+behaviour unchanged.
+
+1. Front matter values that contain a colon are cut. `title: Hello: World` parses as the
+   key `title: Hello` with value `World`, so the page loses its title (it must be the title
+   `Hello: World`).
+   Same for `subtitle: A: B: C`, URLs with ports (`url: http://x.org:8080/a`), times (`09:30`)
+   and quoted values such as `q: "a: b"`.
+
+2. Permalinks with `{month}` are not zero padded. For a post dated 2024-03-05 and the pattern
+   `/blog/{year}/{month}/{day}/{slug}/` the URL is `/blog/2024/3/05/alpha/`, expected
+   `/blog/2024/03/05/alpha/` (this also changes the output file paths in `Site.build()`).
+
+3. The blog index loses posts. With 7 posts and `per_page=3`, `paginate` returns 2 pages and the
+   7th post is never listed; it must return 3 pages (`ceil(n / per_page)`, at least one).
+   `Site.build()` with 5 posts and `per_page: 2` writes only `blog/index.html` and
+   `blog/page/2/index.html`, so the oldest post is missing.
+
+4. Posts with the same date are listed in the wrong order. Three posts dated 2024-03-05 titled
+   `Zebra`, `Alpha`, `mango` appear as Zebra, mango, Alpha on the blog index, but must appear
+   as Alpha, mango, Zebra (title A to Z, case-insensitive), while newer dates still come first.
+   The tag pages, feed, `by_section`, `by_year` and neighbour lookups are affected too.
+
+5. Drafts leak into the feed and the sitemap. A page with `draft: true` is correctly missing
+   from the rendered pages, the blog index and the tag pages, but its title shows up as an
+   `<item>` in `feed.xml` (even as the newest one) and its URL is listed in `sitemap.xml`.
+   With `include_drafts` set they should appear in both.
+
+6. Relative links containing `.` or `..` segments are not resolved. In `docs/guide/setup.md`,
+   `[about](../../about.md)`, `[docs](../index.md#top)`, `[intro](./intro.md)` and
+   `[x](x/../intro.md)` stay as written and are reported in `site.broken_links`; they should
+   become the target pages' URLs (`/about/`, `/docs/#top`, ...). `resolve_source` must collapse
+   the segments; links that really do not exist are still reported as broken.
+
+7. Template loops leak their variables. `render_string("{% for page in pages %}{{ page }},
+   {% endfor %}{{ page }}", {"page": "outer", "pages": [1, 2]})` ends with `2` instead of
+   `outer` (the loop variable overwrites the outer one and stays defined after the loop). The
+   same happens with a layout that loops over `pages` using the variable name `page`: the footer
+   shows another page's title. In nested loops `loop.index` of the outer loop is wrong
+   after the inner loop ran.
+
+Hidden checks cover each symptom, close variants through the related code paths named above,
+and a broad regression suite of the current correct behaviour. Run the visible tests with
+`python -m unittest discover -s tests -t .`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "multi-file", "bughunt"]

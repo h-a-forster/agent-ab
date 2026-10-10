@@ -1,0 +1,43 @@
+# Second difficulty pilot (control arm, one repeat) on Claude Haiku 5.5, after the first
+# pilot (../pilot-haiku-5-5) passed all 20 of its tasks. Covers the 20 bughunt-/feature-
+# tasks written for it and the 10 original example tasks.
+
+name = "pilot2-haiku-5-5"
+description = "Difficulty pilot: control prompt on the 20 hard tasks and the 10 original tasks."
+
+tasks = [
+    "../../../examples/tasks/bughunt-*",
+    "../../../examples/tasks/feature-*",
+    "../../../examples/tasks/cli-min-level-flag",
+    "../../../examples/tasks/config-validation-errors",
+    "../../../examples/tasks/csv-quoted-newlines",
+    "../../../examples/tasks/dedupe-quadratic",
+    "../../../examples/tasks/dst-daily-schedule",
+    "../../../examples/tasks/lru-cache-thread-safety",
+    "../../../examples/tasks/money-decimal-rounding",
+    "../../../examples/tasks/pagination-off-by-one",
+    "../../../examples/tasks/portable-path-normalize",
+    "../../../examples/tasks/semver-precedence",
+]
+repeats = 1
+jobs = 4
+seed = 0
+budget_usd = 8.0
+timeout_s = 1800
+check_timeout_s = 300
+max_retries = 2
+baseline = "control"
+
+[agent]
+adapter = "claude-code"
+model = "claude-haiku-5-5"
+
+[agent.options]
+permission_mode = "bypassPermissions"
+setting_sources = "project"
+max_budget_usd = 1.0
+max_turns = 100
+
+[[arms]]
+name = "control"
+description = "Task prompt only; the agent decides whether to write tests."

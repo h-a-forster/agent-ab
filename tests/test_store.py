@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -27,8 +28,14 @@ def make_exp(tmp_path: Path, fingerprint: str = "abc", name: str = "exp") -> Exp
 def rec(tid: str = "t1__a__r0", attempt: int = 0, status: str = "pass", cost=0.5) -> TrialRecord:
     task, arm, rep = tid.split("__")
     return TrialRecord(
-        trial_id=tid, task=task, arm=arm, repeat=int(rep[1:]), attempt=attempt,
-        status=status, passed=status == "pass", cost_usd=cost,
+        trial_id=tid,
+        task=task,
+        arm=arm,
+        repeat=int(rep[1:]),
+        attempt=attempt,
+        status=status,
+        passed=status == "pass",
+        cost_usd=cost,
     )
 
 
@@ -74,6 +81,27 @@ def test_check_compatible(tmp_path):
     store.check_compatible(make_exp(tmp_path, fingerprint="zzz"), force=True)
     with pytest.raises(RunStoreError, match="belongs to experiment"):
         store.check_compatible(make_exp(tmp_path, name="other"))
+
+
+def test_old_style_fingerprint_gets_a_clear_message(tmp_path):
+    store = RunStore.create(tmp_path / "run", make_exp(tmp_path), 1)
+    del store.meta["fingerprint_scheme"]
+    with pytest.raises(RunStoreError, match="older agent-ab"):
+        store.check_compatible(make_exp(tmp_path, fingerprint="zzz"))
+    store.check_compatible(make_exp(tmp_path, fingerprint="zzz"), force=True)
+
+
+def test_run_json_has_no_absolute_paths(tmp_path):
+    outside = tmp_path / "shared" / "tasks" / "t1"
+    outside.mkdir(parents=True)
+    exp = make_exp(tmp_path / "exp")
+    exp = replace(exp, tasks=(replace(exp.tasks[0], path=outside),))
+    RunStore.create(tmp_path / "exp" / "results" / "run", exp, 1)
+    text = (tmp_path / "exp" / "results" / "run" / "run.json").read_text(encoding="utf-8")
+    assert str(tmp_path) not in text
+    meta = json.loads(text)
+    assert meta["config"]["tasks"][0]["path"] == "../../../shared/tasks/t1"
+    assert meta["config"]["config"] == "../../experiment.toml"
 
 
 def test_append_and_final_records(tmp_path):
@@ -228,6 +256,10 @@ def test_total_cost_ignores_absurd_logged_costs(tmp_path):
     store.append(rec("t1__a__r0", cost=0.5))
     with open(_log(tmp_path), "a", encoding="utf-8", newline="\n") as f:
         for bad in ("1" + "0" * 400, "1e308", "1e308", "-5", "true"):
-            f.write(json.dumps(rec("t1__b__r0").to_dict()).replace('"cost_usd": 0.5',
-                                                                   f'"cost_usd": {bad}') + "\n")
+            f.write(
+                json.dumps(rec("t1__b__r0").to_dict()).replace(
+                    '"cost_usd": 0.5', f'"cost_usd": {bad}'
+                )
+                + "\n"
+            )
     assert store.total_cost() == 0.5

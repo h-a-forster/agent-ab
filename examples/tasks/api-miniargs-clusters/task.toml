@@ -1,0 +1,44 @@
+prompt = """
+`miniargs` is missing the conveniences users expect from a command-line parser. Extend it
+(`miniargs/spec.py`, `miniargs/parser.py`, `miniargs/result.py`), keeping the existing API and
+behaviour (including `UsageError` messages naming the offending option/argument, and the
+`ns.some_name` / `ns["some_name"]` / `to_dict()` access).
+
+1. **`--name=value`** is accepted for value options (`--output=out.txt`; the value is
+   everything after the first `=`, may be empty or contain more `=`). Using `=` with a flag or
+   count option is a `UsageError`.
+2. **Short clusters**: a token like `-vvx` is a cluster of short options. Letters are
+   processed left to right; flag/count letters take no value; the first value/append letter
+   ends the cluster and takes the rest of the token literally as its value (`-ofile.txt`,
+   `-vo out` takes `out` from the next token, `-o=x` gives the value `=x`), or the next argv
+   token when nothing follows it in the cluster (taken as the value even if it starts with `-`;
+   if there is no next token it is a `UsageError`). An unknown letter is a `UsageError`
+   naming it. The same "next token is the value even if it starts with a dash" rule applies to
+   `--name value`.
+3. **New option kinds** (`Option.kind`): `"count"` (each occurrence adds 1; default 0;
+   takes no value) and `"append"` (value option that may repeat; the result is a list of the
+   converted values in order; when the option does not appear, the value is an empty list, or a *copy* of `default` if one is
+   given, so the declaration is never mutated by parsing; when it appears, the result holds only
+   the values given on the command line, the default is not included). Unknown kinds still raise
+   `ValueError` at declaration. For value options, a repeated option's last occurrence wins.
+4. **`--`** ends option parsing: every later token is a positional, even `-x` or `--`.
+5. **Negative numbers and `-`**: a token that is exactly `-` or matches `-<digits>` /
+   `-<digits>.<digits>` is a positional word (or, as before, the value of a preceding value
+   option), never an option.
+6. **Subcommands**: `Parser(options, positionals, commands=None)` where `commands` is a dict
+   `name -> Parser`. A parser with commands cannot also declare positionals (`ValueError`).
+   The first positional word (after the parser's own options, `--` allowed before it)
+   names the command; everything after it, verbatim, is parsed by that subcommand's parser.
+   So options of the parent after the command name are unknown to the subparser. The result
+   `Namespace` has `.command` (the name, or `None` when the parser has no commands) and `.sub` (the sub-parser's
+   `Namespace`, or `None`); the parent's own option values stay on the parent namespace.
+   A missing command, or an unknown one, is a `UsageError`; the unknown-command message names
+   the bad word and lists the available commands. Required options of the parent are still
+   enforced.
+
+Everything else (type conversion errors, required options, positional binding, `many`
+positionals, unknown options) keeps working as before. Parsing must not mutate the parser.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file"]

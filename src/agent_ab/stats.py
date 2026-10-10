@@ -15,7 +15,15 @@ import random
 from collections.abc import Callable, Iterable, Sequence
 from statistics import NormalDist, fmean
 
-from .model import Analysis, ArmSummary, Comparison, Interval, TaskCell, TrialRecord
+from .model import (
+    Analysis,
+    ArmEnvironment,
+    ArmSummary,
+    Comparison,
+    Interval,
+    TaskCell,
+    TrialRecord,
+)
 
 __all__ = [
     "analyze",
@@ -353,6 +361,117 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
+def _model_matches(requested: str, used: str) -> bool:
+    """Whether a used model ID plausibly is the requested one (aliases like "haiku" resolve)."""
+    req, got = requested.lower(), used.lower()
+    return req == got or req in got or got in req
+
+
+def _environments(
+    exp_meta: dict, finals: Sequence[TrialRecord], arms: Sequence[str]
+) -> tuple[list[ArmEnvironment], list[str]]:
+    """Models, CLI versions and start-up summaries per arm, with caveats.
+
+    Empty when no final record carries any of them, so runs from before these fields
+    existed produce exactly the report they always did.
+    """
+    requested: dict[str, str | None] = {}
+    for cfg in (exp_meta.get("config") or {}).get("arms") or []:
+        if isinstance(cfg, dict) and isinstance(cfg.get("name"), str):
+            model = (cfg.get("agent") or {}).get("model")
+            requested[cfg["name"]] = model if isinstance(model, str) else None
+
+    envs: list[ArmEnvironment] = []
+    for arm in arms:
+        models: set[str] = set()
+        versions: set[str] = set()
+        sets: dict[str, set[str]] = {k: set() for k in ("tools", "mcp", "plugins", "skills")}
+        init_trials = 0
+        for rec in (r for r in finals if r.arm == arm):
+            init = rec.agent_init if isinstance(rec.agent_init, dict) else None
+            used = [m for m in rec.models or [] if isinstance(m, str)]
+            if not used and init and isinstance(init.get("model"), str):
+                used = [init["model"]]
+            models.update(used)
+            if isinstance(rec.agent_version, str):
+                versions.add(rec.agent_version)
+            if init is None:
+                continue
+            init_trials += 1
+            for key, field_name in (
+                ("tools", "tools"),
+                ("plugins", "plugins"),
+                ("skills", "skills"),
+            ):
+                values = init.get(field_name)
+                if isinstance(values, list):
+                    sets[key].update(v for v in values if isinstance(v, str))
+            for server in init.get("mcp_servers") or []:
+                if isinstance(server, dict) and isinstance(server.get("name"), str):
+                    sets["mcp"].add(server["name"])
+        if models or versions or init_trials:
+            envs.append(
+                ArmEnvironment(
+                    arm=arm,
+                    requested_model=requested.get(arm),
+                    models=sorted(models),
+                    versions=sorted(versions),
+                    init_trials=init_trials,
+                    tools=sorted(sets["tools"]),
+                    mcp_servers=sorted(sets["mcp"]),
+                    plugins=sorted(sets["plugins"]),
+                    skills=sorted(sets["skills"]),
+                )
+            )
+    if not envs:
+        return [], []
+
+    notes: list[str] = []
+    for e in envs:
+        if len(e.models) > 1:
+            notes.append(f"Arm {e.arm} used more than one model: {', '.join(e.models)}.")
+        req = e.requested_model
+        if req and e.models and not any(_model_matches(req, m) for m in e.models):
+            notes.append(
+                f"Arm {e.arm} requested model {req} but ran {', '.join(e.models)}; check that "
+                "this is the model you meant to test."
+            )
+        if len(e.versions) > 1:
+            notes.append(
+                f"Arm {e.arm} ran under more than one agent version: {', '.join(e.versions)}."
+            )
+    with_versions = [e for e in envs if e.versions]
+    if len({tuple(e.versions) for e in with_versions}) > 1:
+        notes.append(
+            "Arms ran under different agent versions ("
+            + "; ".join(f"{e.arm}: {', '.join(e.versions)}" for e in with_versions)
+            + "), which is a confound unless intended."
+        )
+    with_init = [e for e in envs if e.init_trials]
+    if len(with_init) > 1:
+        ref = with_init[0]
+        for label, attr in (
+            ("tools", "tools"),
+            ("MCP servers", "mcp_servers"),
+            ("plugins", "plugins"),
+        ):
+            diffs = []
+            for e in with_init[1:]:
+                extra = sorted(set(getattr(e, attr)) - set(getattr(ref, attr)))
+                missing = sorted(set(getattr(ref, attr)) - set(getattr(e, attr)))
+                if extra or missing:
+                    parts = ([f"adds {_short_list(extra, 3)}"] if extra else []) + (
+                        [f"lacks {_short_list(missing, 3)}"] if missing else []
+                    )
+                    diffs.append(f"{e.arm} {' and '.join(parts)}")
+            if diffs:
+                notes.append(
+                    f"Arms differ in {label} (compared with {ref.arm}): {'; '.join(diffs)}. "
+                    "That is a confound unless the difference is what you are testing."
+                )
+    return envs, notes
+
+
 def _comparison_notes(arm: str, base: str, diffs: Sequence[float], alpha: float) -> list[str]:
     """Caveats on a pass-rate comparison that depend on the number and spread of paired tasks."""
     n = len(diffs)
@@ -379,9 +498,7 @@ def _comparison_notes(arm: str, base: str, diffs: Sequence[float], alpha: float)
     return [f"{prefix} " + " ".join(sentences)] if sentences else []
 
 
-def _planned_only(
-    exp_meta: dict, records: list[TrialRecord]
-) -> tuple[list[TrialRecord], int]:
+def _planned_only(exp_meta: dict, records: list[TrialRecord]) -> tuple[list[TrialRecord], int]:
     """Drop records outside the run's plan, so stray or stale lines can never enter the stats.
 
     The plan comes from the run's stored config; without one, every record is kept.
@@ -393,8 +510,10 @@ def _planned_only(
     if not task_ids or not arm_names:
         return records, 0
     kept = [
-        r for r in records
-        if r.task in task_ids and r.arm in arm_names
+        r
+        for r in records
+        if r.task in task_ids
+        and r.arm in arm_names
         and (not isinstance(repeats, int) or 0 <= r.repeat < repeats)
     ]
     return kept, len(records) - len(kept)
@@ -625,6 +744,9 @@ def analyze(
             f"{max(trial_counts)}; pass fractions based on fewer trials are noisier."
         )
 
+    environment, environment_notes = _environments(exp_meta, finals, arms)
+    notes.extend(environment_notes)
+
     return Analysis(
         experiment=str(exp_meta.get("experiment", "")),
         baseline=base,
@@ -638,4 +760,5 @@ def analyze(
         error_trials=errors,
         total_cost_usd=math.fsum(spent) if spent else None,
         notes=notes,
+        environment=environment,
     )

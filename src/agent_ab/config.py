@@ -40,9 +40,23 @@ _IGNORED_SUFFIXES = (".pyc",)
 
 _EXPERIMENT_KEYS = frozenset(
     {
-        "name", "description", "tasks", "exclude_tasks", "repeats", "jobs", "seed", "budget_usd",
-        "timeout_s", "check_timeout_s", "max_retries", "timeout_is_failure", "baseline",
-        "keep_workspaces", "workspace_root", "agent", "arms",
+        "name",
+        "description",
+        "tasks",
+        "exclude_tasks",
+        "repeats",
+        "jobs",
+        "seed",
+        "budget_usd",
+        "timeout_s",
+        "check_timeout_s",
+        "max_retries",
+        "timeout_is_failure",
+        "baseline",
+        "keep_workspaces",
+        "workspace_root",
+        "agent",
+        "arms",
     }
 )
 _AGENT_KEYS = frozenset({"adapter", "model", "effort", "args", "env", "command", "options"})
@@ -56,7 +70,12 @@ _TASK_KEYS = frozenset(
 # Settings that may legitimately change between sessions of one run, so they stay out of the
 # fingerprint. Arm descriptions are prose and do not affect behaviour either.
 _VOLATILE_KEYS = (
-    "jobs", "keep_workspaces", "workspace_root", "budget_usd", "description", "fingerprint",
+    "jobs",
+    "keep_workspaces",
+    "workspace_root",
+    "budget_usd",
+    "description",
+    "fingerprint",
     "config",
 )
 
@@ -605,8 +624,9 @@ def load_experiment(
             raise t.wrong_type(key, "a table", raw)
         arm = _load_arm(t.child(raw, key), root, defaults, t.where("agent.adapter"))
         if arm.name in seen:
-            raise t.error(f"duplicate arm name {arm.name!r} (also arms[{seen[arm.name]}])",
-                          f"{key}.name")
+            raise t.error(
+                f"duplicate arm name {arm.name!r} (also arms[{seen[arm.name]}])", f"{key}.name"
+            )
         seen[arm.name] = i
         arms.append(arm)
 
@@ -672,12 +692,37 @@ def _command_json(cmd: Command | None) -> str | list[str] | None:
     return list(cmd)
 
 
-def experiment_to_dict(exp: Experiment) -> dict:
-    """JSON-safe view of the resolved experiment (paths relative to ``exp.root`` when inside it)."""
-    root = exp.root
+def portable_path(path: Path, base: Path) -> str:
+    """``path`` relative to ``base`` in POSIX form, with ``..`` segments where needed.
+
+    Never returns an absolute path under the home directory: where no relative form exists
+    (another Windows drive) that prefix is redacted to ``~``.
+    """
+    try:
+        return Path(os.path.relpath(path, base)).as_posix()
+    except ValueError:  # no common drive
+        pass
+    try:
+        return "~/" + path.relative_to(Path.home()).as_posix()
+    except (ValueError, RuntimeError):
+        return path.as_posix()
+
+
+# Bumped when the fingerprint recipe changes; stored in run.json so that an older run's
+# fingerprint is reported as a format change rather than as an edited experiment.
+FINGERPRINT_SCHEME = 2
+
+
+def experiment_to_dict(exp: Experiment, base: Path | None = None) -> dict:
+    """JSON-safe view of the resolved experiment.
+
+    Paths are written relative to ``base`` (default ``exp.root``) in POSIX form, so they never
+    expose the absolute location of a checkout or home directory.
+    """
+    base = exp.root if base is None else base
 
     def rel(p: Path | None) -> str | None:
-        return None if p is None else _rel(p, root)
+        return None if p is None else portable_path(p, base)
 
     return {
         "name": exp.name,
@@ -766,17 +811,25 @@ def compute_fingerprint(exp: Experiment) -> str:
     """sha256 identifying everything that affects results: config plus task/overlay file bytes.
 
     Settings that may change between sessions of one run (jobs, budget, workspace handling,
-    descriptions) are excluded, so a resumed run can adjust them.
+    descriptions) are excluded, so a resumed run can adjust them. Paths are excluded too, so
+    the fingerprint is the same wherever the experiment is checked out.
     """
     data = experiment_to_dict(exp)
     for key in _VOLATILE_KEYS:
         data.pop(key, None)
+    # Paths depend on where the checkout lives; file contents are hashed below instead,
+    # keyed by task id and arm name.
     for arm in data["arms"]:
         arm.pop("description", None)
+        arm.pop("overlay", None)
+    for task in data["tasks"]:
+        for key in ("path", "repo", "checks", "solution"):
+            task.pop(key, None)
     data["files"] = {
         "tasks": {t.id: _tree_digest(t.path) for t in exp.tasks},
         "overlays": {a.name: _tree_digest(a.overlay) for a in exp.arms if a.overlay is not None},
     }
-    blob = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-                      allow_nan=False)
+    blob = json.dumps(
+        data, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    )
     return hashlib.sha256(blob.encode("ascii")).hexdigest()

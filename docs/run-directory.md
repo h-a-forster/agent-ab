@@ -17,6 +17,7 @@ Each `agent-ab run` writes one run directory. The default is
     setup.stdout, setup.stderr      if the task has setup
     check.stdout, check.stderr
     diff.patch             the agent's changes (git diff against the starting snapshot)
+    init.json              the agent's scrubbed init event (claude-code, capture_init)
     usage.json             usage written by the agent (command and mock adapters)
     record.json            this attempt's record
     workspace.txt          kept workspace path (keep_workspaces only)
@@ -37,10 +38,12 @@ attempts count from 0.
 | `tool`, `version` | `"agent-ab"` and the version that created the run. |
 | `experiment` | Experiment name. |
 | `fingerprint` | See [configuration.md](configuration.md#fingerprint). |
+| `fingerprint_scheme` | Version of the fingerprint recipe (currently `2`). A mismatch on resume is reported as a format change rather than an edited experiment; runs without it use scheme `1`. |
 | `created_at` | ISO-8601 UTC. |
 | `config` | Resolved configuration. `env` values are replaced by `"<redacted>"`; names are kept. |
 | `planned_trials` | Number of planned trials. |
 | `seed`, `baseline` | Experiment seed and baseline arm. |
+| `agent_versions` | Object mapping arm name to the agent CLI version probed at the start of the session (`<executable> --version`). Absent when no adapter could tell; refreshed on resume. |
 
 ## `trials.jsonl`
 
@@ -71,6 +74,10 @@ anywhere else is an error.
 | `error` | string or null | Error or diagnostic text. |
 | `started_at`, `finished_at` | string or null | ISO-8601 UTC. |
 | `artifacts` | string or null | Attempt directory, relative, with forward slashes. |
+| `concurrency` | integer or null | Number of trials in flight when this attempt started, itself included. Useful when judging whether load affected durations. |
+| `models` | array of strings or null | Model IDs the agent reported using, sorted (claude-code: keys of `modelUsage`). |
+| `agent_version` | string or null | Agent CLI version: the one the agent reported during the trial if it did, else the per-arm probe. |
+| `agent_init` | object or null | Compact summary of the agent's init event: `model`, `claude_code_version`, `permission_mode`, `api_key_source`, and names of `tools`, `mcp_servers`, `plugins`, `skills`, `agents`. |
 | `schema` | integer | Record schema version (`1`). |
 
 `null` means unknown, never zero. Statistics skip unknown values.

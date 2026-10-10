@@ -1,0 +1,50 @@
+prompt = """
+The editor's `editdoc.History` records every command as its own undo step, never forgets, and
+cannot group edits. Improve it (changes in `editdoc/commands.py` and `editdoc/history.py`)
+while keeping the existing API (`execute`, `undo`, `redo`, `can_undo`, `can_redo`,
+`mark_saved`, `is_dirty`, the `Insert`/`Delete` commands, `Document`).
+
+1. **No-ops**: `execute()` of an `Insert` with empty text or a `Delete` of length 0 does
+   nothing at all (not recorded, redo stack kept, nothing else changes). If applying a command
+   raises (e.g. `IndexError`), the exception propagates and history and document are unchanged.
+2. **Typing coalescing**: a command is merged into the previous undo step (so one `undo()`
+   reverts both) when the previous step is the latest one, came from a single plain `execute()`
+   (not a transaction), and:
+   - both are `Insert`s, the new one starts exactly where the previous one ends
+     (`new.pos == prev.pos + len(prev.text)`), the new text contains no `"\\n"` and the previous
+     text does not end with `"\\n"`;
+   - both are `Delete`s and either `new.pos == prev.pos` (forward delete) or
+     `new.pos + new.length == prev.pos` (backspace). The merged delete must still restore the
+     exact removed text on undo.
+   Different command types never merge. Merging never happens right after any `undo()` /
+   `redo()` call (even a failed one on an empty stack), after `mark_saved()`, after
+   `history.break_coalescing()` (new method), or after a transaction. A merged execute still
+   clears the redo stack.
+3. **Transactions**: `with history.transaction():` groups every command executed inside it
+   into one undo step (no coalescing inside, and the step never merges with neighbours).
+   The document changes immediately. Transactions may be nested: inner ones simply join the
+   outermost. If an exception escapes the outermost `with` block, every command executed in
+   it is reverted in reverse order, nothing is recorded, the redo stack is left as it was and
+   the exception propagates; an inner block that raises does not roll back by itself (only
+   the outermost does, and only if the exception escapes it). A transaction without effective
+   commands records nothing and keeps the redo stack. A committed transaction clears the redo
+   stack. Calling `undo()`, `redo()` or `mark_saved()` inside a transaction raises
+   `RuntimeError`.
+4. **Limit**: `History(doc, limit=None)`: with a positive int the history keeps at most
+   `limit` undo steps (a merged step or a whole transaction counts as one), dropping the oldest;
+   anything else but `None` raises `ValueError`. New undo depth information: properties
+   `undo_depth` and `redo_depth`.
+5. **Dirty tracking** (`is_dirty`) is about history points, not text: it is False initially
+   and right after `mark_saved()`, becomes True after any change, and is False again whenever
+   undo/redo returns to exactly the point where `mark_saved()` was called. A saved point that
+   can no longer be reached is permanently dirty until the next `mark_saved()`: that happens
+   when a new command is recorded after undoing past it (the redo stack is discarded), or
+   when the limit drops steps so that it is gone. The point right after a dropped step still
+   exists: with `limit=2`, saving after the first of three commands and then executing two more
+   means that undoing twice returns to the saved point, so `is_dirty` is False there.
+   Saving at the very beginning of the history and then dropping steps makes that point
+   unreachable.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file"]

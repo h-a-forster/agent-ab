@@ -1,0 +1,47 @@
+prompt = """
+`layout.format_paragraph` fills lines greedily, which gives ragged paragraphs. Add an optimal
+line breaker and the options around it (changes touch `layout/paragraph.py`, `layout/align.py`,
+a new module for the breaker, and `layout/__init__.py`). All widths are `len()` of the text.
+
+New signature: `format_paragraph(text, width, align="left", indent=0, first_indent=None,
+method="greedy")` returning a list of lines (and `format_text(text, width, **kwargs)` passing the
+same options through to every paragraph). `indent` spaces start every line except the first,
+which starts with `first_indent` spaces (default: `indent`); both must satisfy `0 <= x < width`
+and `width >= 1`, `method` must be `"greedy"` or `"optimal"`, `align` one of `left`, `right`,
+`center`, `justify`; anything else is a `ValueError` (for text that has at least one line). The available width of the first line is `width -
+first_indent`, of the other lines `width - indent`. Text is split into words with `str.split()`.
+`method="greedy"` keeps today's behaviour (a word fills the current line if it fits, never
+breaks inside a word), except that it now honours `first_indent` too. Existing functions
+(`wrap`, `justify_words`, `align_line`, ...) keep working.
+
+**`method="optimal"`** breaks the paragraph so that the total badness is minimal.
+- *Boxes*: every word is cut after each `-` that has an ASCII-alphanumeric character on both
+  sides (`state-of-the-art` -> `state-`, `of-`, `the-`, `art`; `a--b`, `-x`, `x-` are not cut). The
+  hyphen stays at the end of its piece. Consecutive boxes of one word are joined without a
+  space; boxes of different words are separated by one space. A line is a run of consecutive
+  boxes; its natural length is the sum of the box lengths plus one per space between them.
+  A line may end after any box.
+- *Feasible lines*: natural length <= the available width of that line, or a line consisting
+  of one single box (which may then be too wide).
+- *Cost*: the last line costs 0. Any other line costs `(available - natural) ** 2`, except a
+  single over-wide box which costs 0. Minimise the sum of the costs over all layouts made of
+  feasible lines. Among layouts with the same minimal cost choose the one whose sequence of line
+  lengths (counted in boxes) is lexicographically LARGEST (longest first line first, then
+  longest second line, ...).
+- It must handle a paragraph of 40,000 words (width 72) in a few seconds: a line only has to
+  consider as many boxes as can fit.
+
+**Alignment** (both methods; the line text excludes the indentation, `avail` is that line's
+available width, and no line ever has trailing spaces):
+- `left`: the natural text. `right`: `avail - len` spaces (none if negative) before the text.
+  `center`: `(avail - len) // 2` spaces before the text (none if negative).
+- `justify`: every line except the last is stretched to exactly `avail` columns (if it is
+  not already that wide): the extra spaces `e = avail - natural` are shared over the *space*
+  gaps between words (joins after a hyphen inside a word are not gaps): each gap gets `e //
+  gaps` extra and the first `e % gaps` gaps (from the left) one more. A line without a space gap
+  (one box, or one hyphenated word) is left as is; the last line is left-aligned.
+  This is the rule the existing `justify_words` already uses.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file", "differential", "algorithm", "performance"]

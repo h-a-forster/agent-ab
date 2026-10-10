@@ -1,0 +1,59 @@
+prompt = """
+`miniql`, our small SQL-like query engine over lists of dicts, has several reported bugs. Find
+and fix their causes. The intended semantics are described in README.md. Keep all other
+existing behaviour unchanged.
+
+Use this table for the examples (`db.query(sql)` returns a list of dicts):
+
+    emp(id, name, dept, salary, bonus, city)
+    1 Alice eng   100 10   Paris
+    2 Bob   eng    90 NULL London
+    3 Carol ops    80 5    Paris
+    4 dave  ops    80 NULL Berlin
+    5 Eve   sales  70 20   NULL
+    6 Frank eng    90 7    London
+    7 Gina  sales  70 NULL Paris
+
+1. Mixed AND / OR is grouped wrongly. `SELECT id FROM emp WHERE dept = 'sales' OR dept = 'eng'
+   AND salary > 90` returns `[1]` but should return `[1, 5, 7]` (AND binds tighter than OR).
+   The same expression written in HAVING or inside a CASE condition is affected too.
+
+2. NOT IN with a NULL in the list returns rows. `SELECT id FROM emp WHERE salary NOT IN (100,
+   NULL)` should return no rows (the test is unknown for every row that does not match),
+   but returns ids 2-7. `NOT (salary IN (90, NULL))` and a NULL coming from a column inside the
+   list (`WHERE 5 NOT IN (bonus, 1)`) behave the same wrong way.
+
+3. Descending order scrambles ties. `SELECT id FROM emp ORDER BY salary DESC` returns
+   `[1, 6, 2, 4, 3, 7, 5]` but should return `[1, 2, 6, 3, 4, 5, 7]` (equal salaries keep
+   their original relative order). With several keys the same thing happens
+   (`ORDER BY dept DESC, salary DESC`, `ORDER BY dept, salary DESC`), with NULLs
+   (`ORDER BY bonus DESC`) and after GROUP BY (`ORDER BY COUNT(*) DESC`).
+
+4. `LIMIT` with `OFFSET` returns too few rows. `SELECT id FROM emp ORDER BY id LIMIT 3 OFFSET
+   2` returns `[3]` but should return `[3, 4, 5]`. Also check DISTINCT / GROUP BY queries.
+
+5. LIKE treats regex characters in the pattern as special. Given a table `files(id, name)` with
+   names `a.c`, `abc`, `a+b`, `aab`, `x[1]`, `x1`, `f(1)`, `f1`: `name LIKE 'a.c'` returns both
+   `a.c` and `abc` (should be only `a.c`); `LIKE 'a+b'` returns `aab`; `LIKE 'x[1]'` returns
+   `x1`; `LIKE 'f(1)'` fails or returns `f1`. `NOT LIKE` is affected the same way.
+
+6. Results share row dicts with the table. `rows = db.query("SELECT * FROM emp");
+   rows[0]["salary"] = 0` changes salary of employee 1 in later queries (also for
+   `SELECT * ... ORDER BY/LIMIT/DISTINCT` variants). Also, after `row = {...all
+   columns...}; db.insert("emp", row)`, changing `row` afterwards changes the stored data
+   (same for `insert_many`).
+
+7. ORDER BY ignores a SELECT-list alias that has the same name as a column.
+   `SELECT id, salary * -1 AS salary FROM emp ORDER BY salary` should sort by the negated
+   value (`[1, 2, 6, 3, 4, 5, 7]`) but sorts by the original column. `SELECT UPPER(name) AS name
+   FROM emp ORDER BY name` and grouped queries such as `SELECT dept, COUNT(*) AS salary FROM
+   emp GROUP BY dept ORDER BY salary, dept` are affected too. WHERE and GROUP BY must keep
+   using the column.
+
+Hidden checks cover each symptom, close variants through the related query paths named
+above, and a broad regression suite of the current correct behaviour. Run the visible tests
+with `python -m unittest discover -s tests -t .`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "multi-file", "bughunt"]

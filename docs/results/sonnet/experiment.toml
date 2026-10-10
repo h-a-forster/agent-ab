@@ -5,7 +5,19 @@
 name = "claude-sonnet-no-tests"
 description = "Control vs. an instruction not to write or run tests."
 
-tasks = ["../../../examples/tasks/*"]
+# The ten original example tasks, listed by name: examples/tasks/ later gained more tasks.
+tasks = [
+    "../../../examples/tasks/cli-min-level-flag",
+    "../../../examples/tasks/config-validation-errors",
+    "../../../examples/tasks/csv-quoted-newlines",
+    "../../../examples/tasks/dedupe-quadratic",
+    "../../../examples/tasks/dst-daily-schedule",
+    "../../../examples/tasks/lru-cache-thread-safety",
+    "../../../examples/tasks/money-decimal-rounding",
+    "../../../examples/tasks/pagination-off-by-one",
+    "../../../examples/tasks/portable-path-normalize",
+    "../../../examples/tasks/semver-precedence",
+]
 repeats = 3
 jobs = 4
 seed = 0

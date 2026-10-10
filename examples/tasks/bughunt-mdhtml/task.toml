@@ -1,0 +1,49 @@
+prompt = """
+`mdhtml` (a small markdown-to-HTML renderer) has several reported rendering bugs. Find and fix
+their causes; README.md documents the intended behaviour. Keep all other existing behaviour
+unchanged.
+
+1. Heading ids leak between documents. `render("# Intro")` returns `<h1 id="intro">Intro</h1>`
+   the first time, but calling it again (or `render_document`) gives `id="intro-1"`, then
+   `intro-2`, and so on. Each document must start fresh (duplicates inside one document still
+   get `intro`, `intro-1`, `intro-2`), and independent `Slugger()` objects must not share state.
+
+2. The table of contents links to the wrong heading when titles repeat. For
+   `# Intro\\n## Intro\\n## Details\\n# Intro`, the headings get ids `intro`, `intro-1`, `details`,
+   `intro-2`, but `Document.toc()` links all three "Intro" entries to `#intro`. The TOC must use
+   the headings' real ids (`outline` and the depth limits keep working).
+
+3. Markup is applied inside code spans. `` `a*b*c` `` renders `<code>a<em>b</em>c</code>` and
+   `` `__init__` `` renders `<code><strong>init</strong></code>`; the contents of code spans
+   must stay literal. It happens in paragraphs, headings, table cells, list items and block
+   quotes alike, and also inside link text (`` [`a_b_c`](u) ``). Backslash escapes are
+   affected by the same root cause: `\\*not em\\*` renders `<em>not em</em>` instead of the
+   literal `*not em*`.
+
+4. Attribute values are not escaped properly. `[x](http://a.com/?q="1"&b=2)` renders
+   `<a href="http://a.com/?q="1"&amp;b=2">`: the double quotes break the attribute (they must
+   become `&quot;`). Image `src` and `alt` (`![say "hi"](u.png)`) and autolinks
+   (`<http://a.com/?q="x">`) have the same problem.
+
+5. Some loose lists render as tight. `- a\\n\\n- b\\n- c` and `- a\\n- b\\n\\n- c` should both render
+   all three items wrapped in `<p>` (a blank line between *any* two items makes the whole
+   list loose); today the result depends on which gap holds the blank line. Nested lists decide
+   independently, and ordered lists are affected too.
+
+6. Escaped pipes break tables. In `| A | B |\\n|---|---|\\n| a \\\\| b | c |` the second row should
+   be `<td>a | b</td><td>c</td>` (README: `\\|` is a literal pipe), but the cell is cut at the
+   pipe. It also fails in the header row (the whole table is then not recognised) and in
+   tables written without outer pipes.
+
+7. Fenced code blocks close too early. A four-backtick fence that contains a three-backtick
+   line, e.g. "````\\n```\\ncode\\n```\\n````", ends at the inner "```" and leaves garbage after the
+   block. The closing fence must use the same character and be at least as long as the opening
+   one, in top level, block quote and list item contexts, and for `~~~~` fences too.
+
+Hidden checks cover each symptom, close variants through the related code paths, and a
+broad regression suite of the current correct behaviour. Run the visible tests with
+`python -m unittest discover -s tests -t .`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "multi-file", "bughunt"]

@@ -1,0 +1,39 @@
+prompt = """
+`bizhours` computes SLA deadlines in working time, but `WorkCalendar` only models one
+daily window on a set of weekdays. Support real calendars, keeping the existing API
+(`WorkCalendar(open, close, workdays)` positional/keyword form, `is_working`, `next_open`,
+`add_working_minutes`, `working_minutes_between`). All datetimes are naive; passing a
+timezone-aware datetime to any of these functions raises `ValueError`.
+
+`WorkCalendar` gets three new keyword-only arguments (changes in `bizhours/calendar.py`, and
+`add.py` / `elapsed.py` must use them):
+
+- `windows`: a mapping `weekday (Mon=0..Sun=6) -> list of (open, close) time pairs`, e.g. a
+  lunch break `{0: [(time(9), time(12)), (time(13), time(17))], ...}`. When given it replaces
+  `open`/`close`/`workdays`. Windows are half-open `[open, close)`. Windows of one day may be
+  given in any order; touching windows (`12:00-13:00` after `9:00-12:00`) behave as one
+  window; overlapping windows, a window with `open >= close`, or a weekday outside 0..6 raise
+  `ValueError`. Weekdays with an empty list (or absent) are non-working. A calendar with no
+  working time at all raises `ValueError`.
+- `holidays`: an iterable of `datetime.date`; there is no working time on those dates.
+- `observe_weekends` (default False): when True, a holiday that falls on a Saturday is
+  observed on the preceding Friday and one on a Sunday on the following Monday (the Saturday /
+  Sunday itself is then not a special case: it simply keeps its normal windows).
+
+Behaviour of the functions:
+
+- `is_working(dt)`: `dt` lies inside a window of a non-holiday date. `next_open(dt)`: `dt`
+  itself if it is working time, otherwise the next moment working time starts (a `dt` exactly
+  at a window's close moves on to the next window).
+- `add_working_minutes(cal, start, minutes)`: `minutes` is a number >= 0 (otherwise
+  `ValueError`). With 0 it returns `start` unchanged. Otherwise counting starts at
+  `cal.next_open(start)` and the result is the moment when that much working time has been
+  used up; if it ends exactly at the close of a window, the result is that close time (not the
+  next opening). It spans lunch breaks, weekends and holidays, and must handle hundreds of
+  thousands of minutes quickly.
+- `working_minutes_between(cal, a, b)`: the working time in `[a, b)` as a float number of
+  minutes (seconds count fractionally); negative, with the same magnitude, if `b < a`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file"]

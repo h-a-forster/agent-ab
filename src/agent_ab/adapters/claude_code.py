@@ -1,13 +1,21 @@
-"""Adapter for Claude Code in print mode (``claude -p --output-format json``)."""
+"""Adapter for Claude Code in print mode (``claude -p --output-format stream-json``)."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from collections.abc import Mapping
 from typing import Any
 
-from agent_ab.adapters.base import Adapter, batch_argv_issue, check_batch_argv, read_text
+from agent_ab.adapters.base import (
+    Adapter,
+    batch_argv_issue,
+    check_batch_argv,
+    probe_version,
+    read_head,
+    read_text,
+)
 from agent_ab.adapters.command import _check_bool, _is_number, _resolve
 from agent_ab.model import AgentInvocation, AgentSpec, AgentUsage, ProcResult, TrialContext
 
@@ -36,7 +44,25 @@ _AGENT_SUBTYPES = frozenset({"error_max_turns", "error_max_budget_usd"})
 _INFRA_STATUSES = frozenset({401, 403, 404, 408, 429})
 
 _STDOUT_LIMIT = 16 * 1024 * 1024
+_HEAD_LIMIT = 1024 * 1024  # the init event is the first few events; stdout is read from the front
 _TAIL = 500
+INIT_FILE = "init.json"
+_MAX_MODELS = 20
+_MAX_LIST = 500
+_MAX_TEXT = 200
+
+# Fields of the init event that identify this machine or session rather than the setup.
+_INIT_DROP = frozenset(
+    {
+        "cwd",
+        "session_id",
+        "uuid",
+        "scratchpad_path",
+        "messaging_socket_path",
+        "startup_timing",
+    }
+)
+_ABSOLUTE_PATH = re.compile(r"^(?:/|~[/\\]|\\\\|[A-Za-z]:[/\\])")
 
 
 def _looks_like_infra(text: str) -> bool:
@@ -105,6 +131,87 @@ def _format_number(v: float | int) -> str:
     return f"{v:.6f}".rstrip("0").rstrip(".")
 
 
+def _models(v: Any) -> list[str] | None:
+    """Sorted model IDs from the result's ``modelUsage`` object (keys are model IDs)."""
+    if not isinstance(v, Mapping):
+        return None
+    found = sorted({k[:_MAX_TEXT] for k in v if isinstance(k, str) and k})
+    return found[:_MAX_MODELS] or None
+
+
+def find_init(text: str) -> dict[str, Any] | None:
+    """The ``system``/``init`` event of a stream-json transcript, or None."""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{") or '"init"' not in line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if (
+            isinstance(event, dict)
+            and event.get("type") == "system"
+            and event.get("subtype") == "init"
+        ):
+            return event
+    return None
+
+
+def _is_path(v: Any) -> bool:
+    return isinstance(v, str) and _ABSOLUTE_PATH.match(v) is not None
+
+
+def scrub_init(value: Any) -> Any:
+    """Copy of an init event without session identifiers, local paths and timings."""
+    if isinstance(value, dict):
+        return {
+            k: scrub_init(v) for k, v in value.items() if k not in _INIT_DROP and not _is_path(v)
+        }
+    if isinstance(value, list):
+        return [scrub_init(v) for v in value if not _is_path(v)]
+    return value
+
+
+def _names(items: Any) -> list[str]:
+    """Names from a list of strings or ``{"name": ...}`` objects, sorted and bounded."""
+    if not isinstance(items, list):
+        return []
+    names = {
+        (i if isinstance(i, str) else i.get("name") if isinstance(i, Mapping) else None)
+        for i in items
+    }
+    return sorted(n[:_MAX_TEXT] for n in names if isinstance(n, str) and n)[:_MAX_LIST]
+
+
+def summarise_init(event: Mapping[str, Any]) -> dict[str, Any]:
+    """The compact, comparable part of an init event, as stored on the trial record."""
+    out: dict[str, Any] = {}
+    for key, source in (
+        ("model", "model"),
+        ("claude_code_version", "claude_code_version"),
+        ("permission_mode", "permissionMode"),
+        ("api_key_source", "apiKeySource"),
+    ):
+        v = event.get(source)
+        if isinstance(v, str) and v:
+            out[key] = v[:_MAX_TEXT]
+    out["tools"] = _names(event.get("tools"))
+    servers = event.get("mcp_servers")
+    out["mcp_servers"] = []
+    if isinstance(servers, list):
+        for item in servers:
+            if isinstance(item, Mapping) and isinstance(item.get("name"), str):
+                entry = {"name": item["name"][:_MAX_TEXT]}
+                if isinstance(item.get("status"), str):
+                    entry["status"] = item["status"][:_MAX_TEXT]
+                out["mcp_servers"].append(entry)
+        out["mcp_servers"] = sorted(out["mcp_servers"], key=lambda e: e["name"])[:_MAX_LIST]
+    for key in ("plugins", "skills", "agents"):
+        out[key] = _names(event.get(key))
+    return out
+
+
 def parse_result_text(stdout: str, stderr: str, exit_code: int | None) -> AgentUsage:
     """Map Claude Code's JSON result (possibly preceded by log lines) onto ``AgentUsage``."""
     usage = AgentUsage()
@@ -123,6 +230,7 @@ def parse_result_text(stdout: str, stderr: str, exit_code: int | None) -> AgentU
     if _is_number(cost) and cost >= 0:
         usage.cost_usd = float(cost)
     usage.turns = _int(obj.get("num_turns"))
+    usage.models = _models(obj.get("modelUsage"))
     tokens = obj.get("usage")
     if isinstance(tokens, Mapping):
         usage.input_tokens = _int(tokens.get("input_tokens"))
@@ -150,7 +258,12 @@ def parse_result_text(stdout: str, stderr: str, exit_code: int | None) -> AgentU
 
 
 class ClaudeCodeAdapter(Adapter):
-    """Runs ``claude -p --output-format json`` with the prompt on stdin."""
+    """Runs ``claude -p`` with the prompt on stdin.
+
+    By default the output is ``stream-json``, whose first events include the init event
+    (model, tools, MCP servers, plugins); its last line is the same result object that
+    ``--output-format json`` prints.
+    """
 
     name = "claude-code"
     option_keys = frozenset(
@@ -163,6 +276,8 @@ class ClaudeCodeAdapter(Adapter):
             "bare",
             "setting_sources",
             "append_system_prompt",
+            "capture_init",
+            "strict_mcp_config",
         }
     )
 
@@ -201,6 +316,8 @@ class ClaudeCodeAdapter(Adapter):
                 )
         if "append_system_prompt" in o and not isinstance(o["append_system_prompt"], str):
             problems.append("option 'append_system_prompt' must be a string")
+        problems += _check_bool(o, "capture_init")
+        problems += _check_bool(o, "strict_mcp_config")
         return problems
 
     def check_available(self, spec: AgentSpec) -> str | None:
@@ -215,13 +332,15 @@ class ClaudeCodeAdapter(Adapter):
         issue = batch_argv_issue(self._argv(spec, resolved, None))
         return f"claude-code: {issue}" if issue else None
 
+    def version(self, spec: AgentSpec) -> str | None:
+        return probe_version(spec, "claude")  # prints e.g. "2.1.296 (Claude Code)"
+
     def _argv(self, spec: AgentSpec, exe: str, system_prompt_file: str | None) -> list[str]:
         o = spec.options
-        argv = [
-            exe,
-            "-p",
-            "--output-format",
-            "json",
+        argv = [exe, "-p", "--output-format"]
+        # stream-json needs --verbose; it is what exposes the init event.
+        argv += ["stream-json", "--verbose"] if o.get("capture_init", True) else ["json"]
+        argv += [
             "--no-session-persistence",
             "--permission-mode",
             o.get("permission_mode", "bypassPermissions"),
@@ -242,6 +361,9 @@ class ClaudeCodeAdapter(Adapter):
             argv.append("--bare")
         if o.get("setting_sources") is not None:
             argv += ["--setting-sources", o["setting_sources"]]
+        if o.get("strict_mcp_config", True):
+            # Without --mcp-config this means no MCP servers, not even the user's own.
+            argv.append("--strict-mcp-config")
         if system_prompt_file is not None:
             argv += ["--append-system-prompt-file", system_prompt_file]
         argv += list(spec.args)
@@ -270,6 +392,24 @@ class ClaudeCodeAdapter(Adapter):
         stderr = read_text(result.stderr_path, 64 * 1024)
         exit_code = None if result.timed_out else result.exit_code
         try:
-            return parse_result_text(stdout, stderr, exit_code)
+            usage = parse_result_text(stdout, stderr, exit_code)
         except Exception as e:  # noqa: BLE001 - parse must never raise
             return AgentUsage(infra_error=f"could not parse claude output: {e}")
+        if ctx.spec.options.get("capture_init", True):
+            # Best effort: a missing init event leaves the fields unknown.
+            with contextlib.suppress(Exception):
+                self._capture_init(ctx, result, usage)
+        return usage
+
+    @staticmethod
+    def _capture_init(ctx: TrialContext, result: ProcResult, usage: AgentUsage) -> None:
+        # Read from the front: stdout is tail-limited above, and a long run would push the
+        # init event out of the tail.
+        event = find_init(read_head(result.stdout_path, _HEAD_LIMIT))
+        if event is None:
+            return
+        ctx.artifacts.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(scrub_init(event), indent=2, ensure_ascii=False) + "\n"
+        (ctx.artifacts / INIT_FILE).write_text(text, encoding="utf-8", newline="\n")
+        usage.agent_init = summarise_init(scrub_init(event))
+        usage.agent_version = usage.agent_init.get("claude_code_version")

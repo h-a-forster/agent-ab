@@ -1,0 +1,1178 @@
+{
+  "analysis": {
+    "alpha": 0.05,
+    "arms": [
+      {
+        "arm": "haiku",
+        "cost_per_pass_usd": 0.04097163446808511,
+        "errors": 0,
+        "mean_cost_usd": {
+          "estimate": 0.03851333640000001,
+          "high": 0.06542934714,
+          "low": 0.02228814148
+        },
+        "mean_duration_s": {
+          "estimate": 121.56022000000002,
+          "high": 155.1603435,
+          "low": 94.0488815
+        },
+        "mean_input_tokens": 22.48,
+        "mean_output_tokens": 26158.4,
+        "mean_turns": 14.32,
+        "pass_rate": {
+          "estimate": 0.94,
+          "high": 1.0,
+          "low": 0.86
+        },
+        "pass_rate_wilson": {
+          "estimate": 0.94,
+          "high": 0.979385029651026,
+          "low": 0.8378290831116182
+        },
+        "passes": 47,
+        "tasks": 50,
+        "total_cost_usd": 1.9256668200000002,
+        "trials": 50
+      },
+      {
+        "arm": "sonnet",
+        "cost_per_pass_usd": 0.1436971,
+        "errors": 0,
+        "mean_cost_usd": {
+          "estimate": 0.137949216,
+          "high": 0.16485741755,
+          "low": 0.11478486185
+        },
+        "mean_duration_s": {
+          "estimate": 59.81004,
+          "high": 80.52056149999999,
+          "low": 42.3048505
+        },
+        "mean_input_tokens": 9.8,
+        "mean_output_tokens": 5749.76,
+        "mean_turns": 5.02,
+        "pass_rate": {
+          "estimate": 0.96,
+          "high": 1.0,
+          "low": 0.9
+        },
+        "pass_rate_wilson": {
+          "estimate": 0.96,
+          "high": 0.9889611156723801,
+          "low": 0.8653990931249298
+        },
+        "passes": 48,
+        "tasks": 50,
+        "total_cost_usd": 6.8974608,
+        "trials": 50
+      }
+    ],
+    "baseline": "haiku",
+    "cells": [
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.02532203,
+        "mean_duration_s": 110.737,
+        "passes": 1,
+        "task": "api-config-layers",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.14698060000000002,
+        "mean_duration_s": 52.44,
+        "passes": 1,
+        "task": "api-config-layers",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.026400369999999992,
+        "mean_duration_s": 106.489,
+        "passes": 1,
+        "task": "api-miniargs-clusters",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1021994,
+        "mean_duration_s": 32.074,
+        "passes": 1,
+        "task": "api-miniargs-clusters",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.01981188,
+        "mean_duration_s": 69.631,
+        "passes": 1,
+        "task": "bughunt-depres",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.14276640000000002,
+        "mean_duration_s": 32.008,
+        "passes": 1,
+        "task": "bughunt-depres",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.021049759999999997,
+        "mean_duration_s": 66.906,
+        "passes": 1,
+        "task": "bughunt-inventory",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.09946870000000001,
+        "mean_duration_s": 14.789,
+        "passes": 1,
+        "task": "bughunt-inventory",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.023473680000000004,
+        "mean_duration_s": 78.665,
+        "passes": 1,
+        "task": "bughunt-ledger",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1057826,
+        "mean_duration_s": 21.229,
+        "passes": 1,
+        "task": "bughunt-ledger",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.01694537,
+        "mean_duration_s": 46.833,
+        "passes": 1,
+        "task": "bughunt-logpipe",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0927807,
+        "mean_duration_s": 18.539,
+        "passes": 1,
+        "task": "bughunt-logpipe",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.03201239,
+        "mean_duration_s": 114.012,
+        "passes": 1,
+        "task": "bughunt-mdhtml",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1305541,
+        "mean_duration_s": 32.614,
+        "passes": 1,
+        "task": "bughunt-mdhtml",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.024973290000000002,
+        "mean_duration_s": 85.988,
+        "passes": 1,
+        "task": "bughunt-miniql",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1097167,
+        "mean_duration_s": 23.651,
+        "passes": 1,
+        "task": "bughunt-miniql",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.018785810000000003,
+        "mean_duration_s": 60.104,
+        "passes": 1,
+        "task": "bughunt-ratelimit",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.09750349999999999,
+        "mean_duration_s": 15.185,
+        "passes": 1,
+        "task": "bughunt-ratelimit",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.02024275,
+        "mean_duration_s": 73.483,
+        "passes": 1,
+        "task": "bughunt-sheet",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.11909240000000001,
+        "mean_duration_s": 23.413,
+        "passes": 1,
+        "task": "bughunt-sheet",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.01961569,
+        "mean_duration_s": 59.111,
+        "passes": 1,
+        "task": "bughunt-sitegen",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1115305,
+        "mean_duration_s": 19.741,
+        "passes": 1,
+        "task": "bughunt-sitegen",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.042213940000000005,
+        "mean_duration_s": 137.796,
+        "passes": 1,
+        "task": "bughunt-textadv",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.10189210000000001,
+        "mean_duration_s": 16.536,
+        "passes": 1,
+        "task": "bughunt-textadv",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.008807859999999999,
+        "mean_duration_s": 28.162,
+        "passes": 1,
+        "task": "cli-min-level-flag",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0905386,
+        "mean_duration_s": 23.702,
+        "passes": 1,
+        "task": "cli-min-level-flag",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.013478069999999998,
+        "mean_duration_s": 57.712,
+        "passes": 1,
+        "task": "config-validation-errors",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.06945119999999999,
+        "mean_duration_s": 21.346,
+        "passes": 1,
+        "task": "config-validation-errors",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.012830959999999999,
+        "mean_duration_s": 55.535,
+        "passes": 1,
+        "task": "csv-quoted-newlines",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.09364059999999999,
+        "mean_duration_s": 27.854,
+        "passes": 1,
+        "task": "csv-quoted-newlines",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.03591605999999999,
+        "mean_duration_s": 245.428,
+        "passes": 0,
+        "task": "data-interval-sets",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.11269439999999997,
+        "mean_duration_s": 40.018,
+        "passes": 1,
+        "task": "data-interval-sets",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.016569709999999998,
+        "mean_duration_s": 71.67,
+        "passes": 1,
+        "task": "data-json-patch",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.11470839999999999,
+        "mean_duration_s": 37.178,
+        "passes": 1,
+        "task": "data-json-patch",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.01562099,
+        "mean_duration_s": 57.441,
+        "passes": 1,
+        "task": "data-sessionize",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1008565,
+        "mean_duration_s": 29.557,
+        "passes": 1,
+        "task": "data-sessionize",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.008729790000000001,
+        "mean_duration_s": 34.722,
+        "passes": 1,
+        "task": "dedupe-quadratic",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0602532,
+        "mean_duration_s": 18.64,
+        "passes": 1,
+        "task": "dedupe-quadratic",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.006744280000000001,
+        "mean_duration_s": 24.296,
+        "passes": 1,
+        "task": "dst-daily-schedule",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0595306,
+        "mean_duration_s": 16.19,
+        "passes": 1,
+        "task": "dst-daily-schedule",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.04187567,
+        "mean_duration_s": 186.49,
+        "passes": 1,
+        "task": "feature-decimal-context",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.2611979,
+        "mean_duration_s": 209.485,
+        "passes": 1,
+        "task": "feature-decimal-context",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.02919192,
+        "mean_duration_s": 132.658,
+        "passes": 1,
+        "task": "feature-diff3-merge",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1852626,
+        "mean_duration_s": 182.076,
+        "passes": 1,
+        "task": "feature-diff3-merge",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.028732429999999996,
+        "mean_duration_s": 136.614,
+        "passes": 1,
+        "task": "feature-md-emphasis",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1661166,
+        "mean_duration_s": 65.797,
+        "passes": 1,
+        "task": "feature-md-emphasis",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.18416566999999998,
+        "mean_duration_s": 401.867,
+        "passes": 1,
+        "task": "feature-minire",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.4070239,
+        "mean_duration_s": 156.877,
+        "passes": 0,
+        "task": "feature-minire",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.022184950000000002,
+        "mean_duration_s": 104.342,
+        "passes": 1,
+        "task": "feature-paragraph-layout",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.09654859999999998,
+        "mean_duration_s": 35.516,
+        "passes": 1,
+        "task": "feature-paragraph-layout",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.02643903,
+        "mean_duration_s": 137.355,
+        "passes": 1,
+        "task": "feature-rga-text-crdt",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.13436340000000002,
+        "mean_duration_s": 49.926,
+        "passes": 1,
+        "task": "feature-rga-text-crdt",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.02896434,
+        "mean_duration_s": 136.96,
+        "passes": 1,
+        "task": "feature-rope-buffer",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.24309899999999998,
+        "mean_duration_s": 212.357,
+        "passes": 1,
+        "task": "feature-rope-buffer",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.6032104700000002,
+        "mean_duration_s": 689.414,
+        "passes": 1,
+        "task": "feature-sql-select",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.46217139999999995,
+        "mean_duration_s": 299.431,
+        "passes": 1,
+        "task": "feature-sql-select",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.050782,
+        "mean_duration_s": 266.386,
+        "passes": 1,
+        "task": "feature-toml-config",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.378015,
+        "mean_duration_s": 275.498,
+        "passes": 1,
+        "task": "feature-toml-config",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.03501919,
+        "mean_duration_s": 150.993,
+        "passes": 0,
+        "task": "feature-uri-resolve",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1659573,
+        "mean_duration_s": 63.097,
+        "passes": 0,
+        "task": "feature-uri-resolve",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.04467856999999999,
+        "mean_duration_s": 319.064,
+        "passes": 1,
+        "task": "graph-build-plan",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1611617,
+        "mean_duration_s": 58.339,
+        "passes": 1,
+        "task": "graph-build-plan",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.03858439999999999,
+        "mean_duration_s": 189.114,
+        "passes": 1,
+        "task": "graph-transit-router",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.2541023,
+        "mean_duration_s": 119.898,
+        "passes": 1,
+        "task": "graph-transit-router",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.01512783,
+        "mean_duration_s": 68.337,
+        "passes": 1,
+        "task": "lru-cache-thread-safety",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.12014459999999999,
+        "mean_duration_s": 155.334,
+        "passes": 1,
+        "task": "lru-cache-thread-safety",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.01130488,
+        "mean_duration_s": 46.389,
+        "passes": 1,
+        "task": "money-decimal-rounding",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1105693,
+        "mean_duration_s": 33.957,
+        "passes": 1,
+        "task": "money-decimal-rounding",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.00408371,
+        "mean_duration_s": 13.085,
+        "passes": 1,
+        "task": "pagination-off-by-one",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0409472,
+        "mean_duration_s": 9.932,
+        "passes": 1,
+        "task": "pagination-off-by-one",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.02216261,
+        "mean_duration_s": 101.704,
+        "passes": 1,
+        "task": "parse-cron-schedule",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1086377,
+        "mean_duration_s": 36.267,
+        "passes": 1,
+        "task": "parse-cron-schedule",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.03653142000000001,
+        "mean_duration_s": 146.151,
+        "passes": 1,
+        "task": "parse-expr-operators",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.13556249999999997,
+        "mean_duration_s": 45.738,
+        "passes": 1,
+        "task": "parse-expr-operators",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.01762497,
+        "mean_duration_s": 71.419,
+        "passes": 1,
+        "task": "parse-ini-interpolation",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.08707300000000001,
+        "mean_duration_s": 26.7,
+        "passes": 1,
+        "task": "parse-ini-interpolation",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.01317426,
+        "mean_duration_s": 58.395,
+        "passes": 1,
+        "task": "parse-query-nested",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0976066,
+        "mean_duration_s": 32.159,
+        "passes": 1,
+        "task": "parse-query-nested",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.00789852,
+        "mean_duration_s": 30.159,
+        "passes": 1,
+        "task": "portable-path-normalize",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0532122,
+        "mean_duration_s": 15.154,
+        "passes": 1,
+        "task": "portable-path-normalize",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.022708350000000002,
+        "mean_duration_s": 95.325,
+        "passes": 1,
+        "task": "sched-interval-bounds",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0910666,
+        "mean_duration_s": 27.651,
+        "passes": 1,
+        "task": "sched-interval-bounds",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.017847500000000002,
+        "mean_duration_s": 70.608,
+        "passes": 1,
+        "task": "sched-recurrence-rules",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0926119,
+        "mean_duration_s": 28.349,
+        "passes": 1,
+        "task": "sched-recurrence-rules",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.02592696,
+        "mean_duration_s": 135.957,
+        "passes": 1,
+        "task": "sched-working-hours",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0871059,
+        "mean_duration_s": 29.307,
+        "passes": 1,
+        "task": "sched-working-hours",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.009344650000000001,
+        "mean_duration_s": 42.086,
+        "passes": 1,
+        "task": "semver-precedence",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.07066810000000001,
+        "mean_duration_s": 21.805,
+        "passes": 1,
+        "task": "semver-precedence",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.01555499,
+        "mean_duration_s": 66.73,
+        "passes": 1,
+        "task": "state-hierarchical-machine",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0832635,
+        "mean_duration_s": 24.753,
+        "passes": 1,
+        "task": "state-hierarchical-machine",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.01032577,
+        "mean_duration_s": 41.573,
+        "passes": 1,
+        "task": "state-ttl-cache-tags",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.07280410000000001,
+        "mean_duration_s": 20.426,
+        "passes": 1,
+        "task": "state-ttl-cache-tags",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.04424401,
+        "mean_duration_s": 189.657,
+        "passes": 1,
+        "task": "state-undo-history",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0910083,
+        "mean_duration_s": 33.218,
+        "passes": 1,
+        "task": "state-undo-history",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.05029635,
+        "mean_duration_s": 208.542,
+        "passes": 0,
+        "task": "text-template-engine",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.3647531,
+        "mean_duration_s": 127.01,
+        "passes": 1,
+        "task": "text-template-engine",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.038388149999999996,
+        "mean_duration_s": 168.067,
+        "passes": 1,
+        "task": "text-unified-patch",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.1216625,
+        "mean_duration_s": 40.974,
+        "passes": 1,
+        "task": "text-unified-patch",
+        "trials": 1
+      },
+      {
+        "arm": "haiku",
+        "errors": 0,
+        "mean_cost_usd": 0.019748570000000003,
+        "mean_duration_s": 87.849,
+        "passes": 1,
+        "task": "text-wrap-display-width",
+        "trials": 1
+      },
+      {
+        "arm": "sonnet",
+        "errors": 0,
+        "mean_cost_usd": 0.0918028,
+        "mean_duration_s": 36.767,
+        "passes": 1,
+        "task": "text-wrap-display-width",
+        "trials": 1
+      }
+    ],
+    "comparisons": [
+      {
+        "arm": "sonnet",
+        "baseline": "haiku",
+        "cost_ratio": {
+          "estimate": 3.5818557646436466,
+          "high": 5.553207735577149,
+          "low": 2.3480839089217347
+        },
+        "duration_ratio": {
+          "estimate": 0.49201984004306665,
+          "high": 0.6138410524037962,
+          "low": 0.3891021132727784
+        },
+        "p_value": 1.0,
+        "p_value_adjusted": 1.0,
+        "paired_tasks": 50,
+        "pass_rate_diff": {
+          "estimate": 0.02,
+          "high": 0.1,
+          "low": -0.04
+        },
+        "tasks_better": 2,
+        "tasks_tied": 47,
+        "tasks_worse": 1,
+        "verdict": "no detectable difference"
+      }
+    ],
+    "completed_trials": 100,
+    "environment": [
+      {
+        "arm": "haiku",
+        "init_trials": 50,
+        "mcp_servers": [],
+        "models": [
+          "claude-haiku-5-5"
+        ],
+        "plugins": [
+          "cc-plugin-agents-md",
+          "cc-plugin-plugin-authoring",
+          "cc-plugin-telemetry"
+        ],
+        "requested_model": "claude-haiku-5-5",
+        "skills": [
+          "artifact-capabilities",
+          "artifact-diagramming",
+          "batch",
+          "claude-api",
+          "code-review",
+          "dataviz",
+          "debug",
+          "deep-research",
+          "design",
+          "design-sync",
+          "doctor",
+          "fewer-permission-prompts",
+          "loop",
+          "plugin-authoring",
+          "run",
+          "run-skill-generator",
+          "simplify",
+          "slides",
+          "update-config",
+          "verify",
+          "workflow-authoring"
+        ],
+        "tools": [
+          "Artifact",
+          "ArtifactComments",
+          "ArtifactData",
+          "Bash",
+          "CronCreate",
+          "CronDelete",
+          "CronList",
+          "DesignSync",
+          "Edit",
+          "EnterWorktree",
+          "ExitWorktree",
+          "ListAgents",
+          "ListConnectors",
+          "ListPlugins",
+          "ListSkills",
+          "Monitor",
+          "NotebookEdit",
+          "PushNotification",
+          "Read",
+          "ReadNotifications",
+          "ReportFindings",
+          "ScheduleWakeup",
+          "SearchMcpRegistry",
+          "SearchPlugins",
+          "SearchSkills",
+          "SendMessage",
+          "SendUserFile",
+          "ShowOnboardingRolePicker",
+          "Skill",
+          "SuggestConnectors",
+          "SuggestPluginInstall",
+          "SuggestSkills",
+          "Task",
+          "TaskStop",
+          "ToolSearch",
+          "WebFetch",
+          "WebSearch",
+          "Workflow",
+          "Write"
+        ],
+        "versions": [
+          "2.1.296"
+        ]
+      },
+      {
+        "arm": "sonnet",
+        "init_trials": 50,
+        "mcp_servers": [],
+        "models": [
+          "claude-haiku-5-5",
+          "claude-sonnet-5-5"
+        ],
+        "plugins": [
+          "cc-plugin-agents-md",
+          "cc-plugin-plugin-authoring",
+          "cc-plugin-telemetry"
+        ],
+        "requested_model": "claude-sonnet-5-5",
+        "skills": [
+          "artifact-capabilities",
+          "artifact-diagramming",
+          "batch",
+          "claude-api",
+          "code-review",
+          "dataviz",
+          "debug",
+          "deep-research",
+          "design",
+          "design-sync",
+          "doctor",
+          "fewer-permission-prompts",
+          "loop",
+          "plugin-authoring",
+          "run",
+          "run-skill-generator",
+          "simplify",
+          "slides",
+          "update-config",
+          "verify",
+          "workflow-authoring"
+        ],
+        "tools": [
+          "Artifact",
+          "ArtifactComments",
+          "ArtifactData",
+          "Bash",
+          "CronCreate",
+          "CronDelete",
+          "CronList",
+          "DesignSync",
+          "Edit",
+          "EnterWorktree",
+          "ExitWorktree",
+          "ListAgents",
+          "ListConnectors",
+          "ListPlugins",
+          "ListSkills",
+          "Monitor",
+          "NotebookEdit",
+          "PushNotification",
+          "Read",
+          "ReadNotifications",
+          "ReportFindings",
+          "ScheduleWakeup",
+          "SearchMcpRegistry",
+          "SearchPlugins",
+          "SearchSkills",
+          "SendMessage",
+          "SendUserFile",
+          "ShowOnboardingRolePicker",
+          "Skill",
+          "SuggestConnectors",
+          "SuggestPluginInstall",
+          "SuggestSkills",
+          "Task",
+          "TaskStop",
+          "ToolSearch",
+          "WebFetch",
+          "WebSearch",
+          "Workflow",
+          "Write"
+        ],
+        "versions": [
+          "2.1.296"
+        ]
+      }
+    ],
+    "error_trials": 0,
+    "experiment": "haiku-vs-sonnet-5-5",
+    "flaky_tasks": [],
+    "notes": [
+      "Arm sonnet used more than one model: claude-haiku-5-5, claude-sonnet-5-5."
+    ],
+    "planned_trials": 100,
+    "total_cost_usd": 8.82312762
+  },
+  "schema": 1,
+  "tool": "agent-ab"
+}

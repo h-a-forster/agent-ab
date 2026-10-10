@@ -1,0 +1,35 @@
+# Pilot for the 20 harder tasks: control arm only, one repeat, to check that the
+# baseline pass rate on Claude Haiku 5.5 sits in a useful range (roughly 40-80%).
+
+name = "pilot-haiku-5-5"
+description = "Difficulty pilot: control prompt on the 20 new tasks."
+
+tasks = ["../../../examples/tasks/*"]
+exclude_tasks = [
+    "cli-min-level-flag", "config-validation-errors", "csv-quoted-newlines", "dedupe-quadratic",
+    "dst-daily-schedule", "lru-cache-thread-safety", "money-decimal-rounding",
+    "pagination-off-by-one", "portable-path-normalize", "semver-precedence",
+    "bughunt-*", "feature-*",  # added after this pilot ran; keeps it to its 20 tasks
+]
+repeats = 1
+jobs = 4
+seed = 0
+budget_usd = 8.0
+timeout_s = 900
+check_timeout_s = 300
+max_retries = 2
+baseline = "control"
+
+[agent]
+adapter = "claude-code"
+model = "claude-haiku-5-5"
+
+[agent.options]
+permission_mode = "bypassPermissions"
+setting_sources = "project"
+max_budget_usd = 1.0
+max_turns = 60
+
+[[arms]]
+name = "control"
+description = "Task prompt only; the agent decides whether to write tests."

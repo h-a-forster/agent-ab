@@ -8,8 +8,13 @@ from agent_ab.scaffold import ScaffoldError, init_project, scaffold_files
 
 def test_scaffold_files_layout():
     files = scaffold_files()
-    for rel in ("experiment.toml", "experiment.claude-code.toml", "arms/with-guide/AGENTS.md",
-                ".gitignore", "README.md"):
+    for rel in (
+        "experiment.toml",
+        "experiment.claude-code.toml",
+        "arms/with-guide/AGENTS.md",
+        ".gitignore",
+        "README.md",
+    ):
         assert rel in files
     tasks = {rel.split("/")[1] for rel in files if rel.startswith("tasks/")}
     assert len(tasks) == 4
@@ -44,9 +49,7 @@ def test_task_check_command_is_portable(tmp_path):
     init_project(tmp_path)
     demo = load_experiment(tmp_path / "experiment.toml")
     for task in demo.tasks:
-        assert task.check == (
-            "{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."
-        )
+        assert task.check == ("{python}", "-m", "unittest", "discover", "-s", "checks", "-t", ".")
         assert task.solution is not None and task.checks is not None
 
 

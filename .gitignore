@@ -10,3 +10,5 @@ build/
 htmlcov/
 tmp/
 runs/
+# Per-trial artifacts of committed result runs (large; summarised in trials.jsonl)
+docs/results/*/trials/

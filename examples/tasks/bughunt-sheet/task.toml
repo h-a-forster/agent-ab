@@ -1,0 +1,46 @@
+prompt = """
+`sheetcalc` (a small spreadsheet formula engine) has several reported bugs. Find and fix their
+causes; README.md documents the intended behaviour. Keep all other existing behaviour
+unchanged.
+
+1. Column letters go wrong at multiples of 26. `index_to_col(26)` returns `"A@"` (should be
+   `"Z"`), `index_to_col(52)` returns `"B@"` (should be `"AZ"`), and 702 / 18278 are wrong too.
+   Everything that builds cell names from numbers is affected: `expand_range("Y1", "AB1")`
+   skips or garbles `Z1`, ranges / copies / `render_grid` / `dump_csv` / `load_csv` that cross
+   column Z.
+
+2. `&` binds as tightly as `+` and `-`. `="a"&1+2` gives `#VALUE!` (should be `"a3"`),
+   `=1+2&3+4` gives the number 37 instead of the text `"37"`, `="x"&2*3` gives `#VALUE!` (should
+   be `"x6"`). The README lists the precedence levels.
+
+3. Ranges whose corners are written in reverse order are empty. With A1=1, B1=2, A2=3, B2=4,
+   `=SUM(B2:A1)` gives 0 instead of 10; `COUNT`, `AVERAGE`, `MAX`, `CONCAT` ... on `B2:A1` or
+   `A2:B1` or `A3:A1` are affected, `expand_range("B2", "A1")` returns `[]`, and the
+   formula does not recalculate when one of those cells changes.
+
+4. `ROUND` uses banker's rounding on binary floats. `=ROUND(2.5)` gives 2 (should be 3),
+   `=ROUND(-2.5)` gives -2 (should be -3), `=ROUND(0.125,2)` gives 0.12 (0.13), `=ROUND(2.675,2)` gives
+   2.67 (2.68), `=ROUND(1250,-2)` gives 1200 (1300).
+
+5. Stale values after an edit. With A1=1, B1 `=A1+1`, C1 `=B1*2`, D1 `=C1+10`: after reading D1
+   (14) and setting A1 to 5, D1 still shows 14 (only B1 is refreshed; it should be 22). The
+   same happens through ranges (`B1 =SUM(A1:A3)`, `C1 =B1*2`, ...), after replacing a
+   middle formula by a constant, and after clearing a middle cell.
+
+6. `IF` evaluates both branches. `=IF(TRUE,1,1/0)` gives `#DIV/0!` instead of 1;
+   `=IF(A1=0,0,10/A1)` with A1=0 gives `#DIV/0!` instead of 0; `=IF(FALSE,1/0,2)`,
+   `=IF(TRUE,"ok",SQRT(-4))`, nested `IF`s and `IF` used inside other functions are affected.
+   An error in the *selected* branch (or in the condition) must still be the result.
+
+7. Copying formulas mishandles mixed `$` references. With `B1` = `=A$1*2`, `copy("B1","B3")`
+   should give `=A$1*2` but gives `=A$3*2`; with `B1` = `=$A1*2`, `copy("B1","B3")` should give
+   `=$A3*2` but gives `=$A1*2`. Ranges (`=SUM($A1:B$2)`) and `fill_down` behave the same wrong way;
+   `A1` and `$A$1` forms are fine.
+
+Hidden checks cover each symptom, close variants through the related code paths named above,
+and a broad regression suite of the current correct behaviour. Run the visible tests with
+`python -m unittest discover -s tests -t .`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "multi-file", "bughunt"]
