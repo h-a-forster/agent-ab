@@ -208,6 +208,7 @@ class TrialRecord:
     started_at: str | None = None  # ISO-8601 UTC
     finished_at: str | None = None
     artifacts: str | None = None  # run-dir-relative path, forward slashes
+    concurrency: int | None = None  # trials in flight when this attempt started, itself included
     schema: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:

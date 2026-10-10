@@ -50,6 +50,7 @@ from agent_ab.workspace import (
     diff_stats,
     install_checks,
     rebaseline,
+    run_check,
     run_command,
 )
 
@@ -106,18 +107,21 @@ class _Cancelled(Exception):
 
 
 def plan_trials(exp: Experiment) -> list[TrialSpec]:
-    """Every (task, arm, repeat) cell, shuffled deterministically by the experiment seed.
+    """Every (task, arm, repeat) cell, in a deterministic order derived from the experiment seed.
 
-    Shuffling spreads arms over time so drift (provider load, rate limits, caches) does not
-    line up with one arm.
+    The (task, repeat) blocks are shuffled so drift (provider load, rate limits) does not line
+    up with a task. Within a block the arms sit next to each other, in an order drawn per block
+    so no arm systematically goes first. Adjacent arms see similar conditions, which keeps cost
+    and time ratios from being confounded by cache warmth and load drift.
     """
-    plan = [
-        TrialSpec(task=task, arm=arm, repeat=r)
-        for task in exp.tasks
-        for arm in exp.arms
-        for r in range(exp.repeats)
-    ]
-    random.Random(exp.seed).shuffle(plan)
+    rng = random.Random(exp.seed)
+    blocks = [(task, r) for task in exp.tasks for r in range(exp.repeats)]
+    rng.shuffle(blocks)
+    plan: list[TrialSpec] = []
+    for task, r in blocks:
+        arms = list(exp.arms)
+        rng.shuffle(arms)
+        plan.extend(TrialSpec(task=task, arm=arm, repeat=r) for arm in arms)
     return plan
 
 
@@ -365,7 +369,7 @@ def _grade(
         return
 
     install_checks(ws, task)
-    check = run_command(
+    check = run_check(
         task.check, ws, timeout_s=check_timeout,
         stdout_path=art / "check.stdout", stderr_path=art / "check.stderr", cancel=cancel,
     )  # fmt: skip
@@ -395,6 +399,7 @@ def run_trial(
     cancel: threading.Event,
     *,
     keep_workspaces: bool | None = None,
+    concurrency: int | None = None,
 ) -> TrialRecord:
     """Run one attempt of one trial and return its record. Never raises.
 
@@ -402,11 +407,12 @@ def run_trial(
     log; the scheduler does that. If ``cancel`` is set mid-attempt the attempt folder is
     removed and the returned record has status ``error`` and error ``"cancelled"``; such a
     record must not be stored. ``keep_workspaces`` defaults to the experiment's setting.
+    ``concurrency`` (trials in flight, this one included) is recorded as given.
     """
     keep = exp.keep_workspaces if keep_workspaces is None else keep_workspaces
     rec = TrialRecord(
         trial_id=spec.id, task=spec.task.id, arm=spec.arm.name, repeat=spec.repeat,
-        attempt=attempt, status="error", started_at=utc_now(),
+        attempt=attempt, status="error", started_at=utc_now(), concurrency=concurrency,
     )  # fmt: skip
     art: Path | None = None
     ws: Workspace | None = None
@@ -569,8 +575,11 @@ def run_experiment(
         store.update_meta(planned_trials=total)
 
     if foreign:
-        emit("info", message=f"ignoring {len(foreign)} recorded trials that are not in the "
-             f"current plan (e.g. {foreign[0]})")
+        emit(
+            "info",
+            message=f"ignoring {len(foreign)} recorded trials that are not in the "
+            f"current plan (e.g. {foreign[0]})",
+        )
     if done:
         emit("info", message=f"resuming: {done} of {total} trials already done")
     emit("info", message=f"{len(pending)} trials to run, jobs={jobs}")
@@ -597,8 +606,13 @@ def run_experiment(
         spent += rec.cost_usd or 0.0
         if rec.status == "error" and attempt < exp.max_retries:
             pending.append((spec, attempt + 1))
-            emit("retry", trial_id=spec.id, attempt=attempt, record=rec,
-                 message=f"retrying after: {rec.error}")
+            emit(
+                "retry",
+                trial_id=spec.id,
+                attempt=attempt,
+                record=rec,
+                message=f"retrying after: {rec.error}",
+            )
             return
         final_status[spec.id] = rec.status
         done += 1
@@ -619,13 +633,24 @@ def run_experiment(
             while pending and len(running) < jobs and not budget_exhausted:
                 if budget is not None and spent >= budget:
                     budget_exhausted = True
-                    emit("budget", message=f"budget ${budget:g} reached (spent ${spent:.2f}); "
-                         "not starting more trials")
+                    emit(
+                        "budget",
+                        message=f"budget ${budget:g} reached (spent ${spent:.2f}); "
+                        "not starting more trials",
+                    )
                     break
                 spec, attempt = pending.popleft()
                 emit("start", trial_id=spec.id, attempt=attempt)
-                fut = pool.submit(run_trial, exp, spec, attempt, store, cancel,
-                                  keep_workspaces=keep)
+                fut = pool.submit(
+                    run_trial,
+                    exp,
+                    spec,
+                    attempt,
+                    store,
+                    cancel,
+                    keep_workspaces=keep,
+                    concurrency=len(running) + 1,
+                )
                 running[fut] = (spec, attempt)
             if not running:
                 break

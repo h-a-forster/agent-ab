@@ -413,15 +413,17 @@ def _make_link(link: Path, target: Path) -> None:
     if IS_WINDOWS:
         import subprocess
 
-        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
-                       check=True, capture_output=True)
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True
+        )
     else:
         os.symlink(target, link, target_is_directory=True)
 
 
 def _git_tree(path: Path) -> list[tuple[str, int]]:
-    return sorted((p.relative_to(path).as_posix(), p.stat().st_size)
-                  for p in path.rglob("*") if p.is_file())
+    return sorted(
+        (p.relative_to(path).as_posix(), p.stat().st_size) for p in path.rglob("*") if p.is_file()
+    )
 
 
 @needs_git
@@ -532,8 +534,9 @@ def test_diff_ignores_interpreter_caches(tmp_path):
     (task_dir / "repo").mkdir(parents=True)
     (task_dir / "repo" / "a.py").write_text("x = 1\n", encoding="utf-8")
     task = Task(id="t", path=task_dir, prompt="p", check="true", repo=task_dir / "repo")
-    ws = create_workspace(task, Arm(name="a", agent=AgentSpec(adapter="mock")), root=tmp_path,
-                          label="t")
+    ws = create_workspace(
+        task, Arm(name="a", agent=AgentSpec(adapter="mock")), root=tmp_path, label="t"
+    )
     try:
         if ws.baseline_commit is None:
             return
@@ -556,8 +559,9 @@ def test_rebaseline_excludes_setup_output_from_the_diff(tmp_path):
     (task_dir / "repo").mkdir(parents=True)
     (task_dir / "repo" / "a.py").write_text("x = 1\n", encoding="utf-8")
     task = Task(id="t", path=task_dir, prompt="p", check="true", repo=task_dir / "repo")
-    ws = create_workspace(task, Arm(name="a", agent=AgentSpec(adapter="mock")), root=tmp_path,
-                          label="t")
+    ws = create_workspace(
+        task, Arm(name="a", agent=AgentSpec(adapter="mock")), root=tmp_path, label="t"
+    )
     try:
         if ws.baseline_commit is None:
             return
@@ -568,3 +572,41 @@ def test_rebaseline_excludes_setup_output_from_the_diff(tmp_path):
         assert diff_stats(ws, tmp_path / "d2.patch")[0] == 1
     finally:
         destroy_workspace(ws)
+
+
+def test_install_checks_removes_planted_files_in_check_only_paths(tmp_path, root, repo_task):
+    _write(repo_task.checks / "checks" / "test_real.py", "real\n")
+    _write(repo_task.checks / "main.py", "check version\n")  # also in repo/: merged
+    _write(repo_task.checks / "sub" / "helper.txt", "hidden\n")  # sub/ is in repo/: merged
+    with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
+        _write(ws.path / "checks" / "test_aaa.py", "import os; os._exit(0)\n")
+        _write(ws.path / "sub" / "agent.txt", "kept\n")
+        install_checks(ws, repo_task)
+        assert sorted(p.name for p in (ws.path / "checks").iterdir()) == ["test_real.py"]
+        assert (ws.path / "sub" / "agent.txt").read_text() == "kept\n"
+        assert (ws.path / "sub" / "helper.txt").read_text() == "hidden\n"
+        assert (ws.path / "main.py").read_text() == "check version\n"
+
+
+def test_install_checks_unlinks_check_only_link_without_following(tmp_path, root, repo_task):
+    _write(repo_task.checks / "checks" / "test_real.py", "real\n")
+    outside = tmp_path / "outside"
+    _write(outside / "keep.txt", "untouched\n")
+    with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
+        _make_link(ws.path / "checks", outside)
+        install_checks(ws, repo_task)
+        assert not wsmod._is_link(ws.path / "checks")
+        assert (ws.path / "checks" / "test_real.py").read_text() == "real\n"
+    assert sorted(p.name for p in outside.iterdir()) == ["keep.txt"]
+
+
+def test_run_check_sets_safe_path(tmp_path, root, repo_task):
+    cmd = (
+        "{python}",
+        "-c",
+        "import os, sys; sys.exit(0 if os.environ.get('PYTHONSAFEPATH') else 1)",
+    )
+    with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
+        kw = {"timeout_s": 30, "stdout_path": tmp_path / "o", "stderr_path": tmp_path / "e"}
+        assert run_command(cmd, ws, **kw).exit_code == 1
+        assert wsmod.run_check(cmd, ws, **kw).exit_code == 0
