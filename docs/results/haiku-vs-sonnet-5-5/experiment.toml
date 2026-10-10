@@ -1,0 +1,39 @@
+# Model as the arm: Claude Haiku 5.5 vs Claude Sonnet 5.5 on the same 50 tasks with the
+# control prompt, to test the pilot's "Sonnet cheaper per pass" observation (which compared
+# two separate runs of different model generations). One repeat per task and arm keeps
+# Sonnet's spend inside the audit's USD 60 cap for all agent runs; the arms of each task run
+# side by side.
+
+name = "haiku-vs-sonnet-5-5"
+description = "Claude Haiku 5.5 vs Claude Sonnet 5.5, control prompt, 50 tasks."
+
+tasks = ["../../../examples/tasks/*"]
+repeats = 1
+jobs = 4
+seed = 0
+budget_usd = 30.0
+timeout_s = 1800
+check_timeout_s = 300
+max_retries = 2
+baseline = "haiku"
+
+[agent]
+adapter = "claude-code"
+
+[agent.options]
+permission_mode = "bypassPermissions"
+setting_sources = "project"
+max_budget_usd = 1.0
+max_turns = 100
+
+[[arms]]
+name = "haiku"
+description = "Claude Haiku 5.5."
+[arms.agent]
+model = "claude-haiku-5-5"
+
+[[arms]]
+name = "sonnet"
+description = "Claude Sonnet 5.5."
+[arms.agent]
+model = "claude-sonnet-5-5"
