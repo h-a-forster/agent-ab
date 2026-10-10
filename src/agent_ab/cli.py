@@ -821,10 +821,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     exp = _load(args)
     if len(exp.arms) < 2:
-        raise ConfigError(
-            f"run needs at least two arms to compare; {exp.name!r} has "
-            f"{len(exp.arms)} ({', '.join(a.name for a in exp.arms)})"
-        )
+        # A one-arm run is a pilot: it measures baseline difficulty (and feeds `power`).
+        _warn(f"only one arm ({exp.arms[0].name}): this run measures, it does not compare")
     if args.repeats is not None and args.repeats != exp.repeats:
         # repeats is part of the experiment's identity, so it must enter the fingerprint.
         exp = dataclasses.replace(exp, repeats=args.repeats)

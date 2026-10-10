@@ -16,7 +16,7 @@
 #  data you care about.
 # ============================================================================================
 #
-# Cost: 10 tasks x 2 arms x 3 repeats = 60 trials. budget_usd stops launching new trials once
+# Cost: 30 tasks x 2 arms x 3 repeats = 180 trials. budget_usd stops launching new trials once
 # the recorded spend reaches it; trials already running finish. Interrupted runs can be
 # continued with `agent-ab run ... --resume <run_dir>`.
 

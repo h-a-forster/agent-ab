@@ -198,10 +198,15 @@ def test_dry_run_creates_nothing(demo, capsys):
     assert out == ""
 
 
-def test_run_needs_two_arms(demo, capsys):
-    code, _, err = run_cli(capsys, "run", demo / "experiment.toml", "--arms", "control")
-    assert code == 2
-    assert "at least two arms" in err
+def test_run_one_arm_is_a_pilot(demo, capsys):
+    out_dir = demo / "pilot"
+    code, _, err = run_cli(
+        capsys, "run", demo / "experiment.toml", "--arms", "control", "--out", out_dir, "--quiet"
+    )
+    assert code == 0
+    assert "only one arm (control)" in err
+    code, out, _ = run_cli(capsys, "report", out_dir, "--format", "md")
+    assert code == 0 and "single arm" in out
 
 
 def test_out_and_resume_are_exclusive(demo, capsys):
