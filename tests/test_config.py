@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_ab import adapters
+from agent_ab import adapters, config
 from agent_ab.adapters.base import Adapter
 from agent_ab.config import (
     COMMAND_PLACEHOLDERS,
@@ -21,6 +21,7 @@ from agent_ab.config import (
     find_placeholders,
     load_experiment,
     load_task,
+    portable_path,
 )
 from agent_ab.errors import ConfigError
 from agent_ab.model import AgentSpec
@@ -169,8 +170,13 @@ def test_full_example_loads(exp_dir: Path):
     control, treat = exp.arms
     assert control.description == "Stock setup"
     assert control.agent == AgentSpec(
-        adapter="claude-code", model="sonnet", effort="medium", args=("--a",),
-        env={"A": "1", "B": "2"}, command=None, options={"permission_mode": "bypassPermissions"},
+        adapter="claude-code",
+        model="sonnet",
+        effort="medium",
+        args=("--a",),
+        env={"A": "1", "B": "2"},
+        command=None,
+        options={"permission_mode": "bypassPermissions"},
     )
     assert treat.agent.model == "opus"
     assert treat.agent.effort == "medium"
@@ -246,15 +252,21 @@ def test_recursive_glob(tmp_path: Path):
 
 def test_exclude_tasks(exp_dir: Path):
     make_task(exp_dir, "slow-1")
-    exp = load(exp_dir, BASE.replace('tasks = ["tasks/*"]',
-                                     'tasks = ["tasks/*"]\nexclude_tasks = ["slow-*", "t2"]'))
+    exp = load(
+        exp_dir,
+        BASE.replace(
+            'tasks = ["tasks/*"]', 'tasks = ["tasks/*"]\nexclude_tasks = ["slow-*", "t2"]'
+        ),
+    )
     assert [t.id for t in exp.tasks] == ["t1"]
 
 
 def test_excluded_task_is_not_parsed(exp_dir: Path):
     make_task(exp_dir, "broken", "not = valid = toml")
-    exp = load(exp_dir, BASE.replace('tasks = ["tasks/*"]',
-                                     'tasks = ["tasks/*"]\nexclude_tasks = ["broken"]'))
+    exp = load(
+        exp_dir,
+        BASE.replace('tasks = ["tasks/*"]', 'tasks = ["tasks/*"]\nexclude_tasks = ["broken"]'),
+    )
     assert [t.id for t in exp.tasks] == ["t1", "t2"]
 
 
@@ -327,8 +339,10 @@ def test_merge_rules(exp_dir: Path):
 
 
 def test_arm_options_are_independent_copies(exp_dir: Path):
-    exp = load(exp_dir, BASE.replace('adapter = "mock"',
-                                     'adapter = "mock"\noptions = { nested = { a = 1 } }'))
+    exp = load(
+        exp_dir,
+        BASE.replace('adapter = "mock"', 'adapter = "mock"\noptions = { nested = { a = 1 } }'),
+    )
     a, b = exp.arms
     a.agent.options["nested"]["a"] = 99
     assert b.agent.options["nested"]["a"] == 1
@@ -425,60 +439,128 @@ def test_select_tasks_none_match(exp_dir: Path):
         (("", "timeout_s = inf\n"), "experiment.toml: timeout_s", "finite"),
         (("", "timeout_s = true\n"), "experiment.toml: timeout_s", "expected a number"),
         (("", "check_timeout_s = 0\n"), "experiment.toml: check_timeout_s", "must be > 0"),
-        (("", "timeout_is_failure = 1\n"), "experiment.toml: timeout_is_failure",
-         "expected true or false"),
+        (
+            ("", "timeout_is_failure = 1\n"),
+            "experiment.toml: timeout_is_failure",
+            "expected true or false",
+        ),
         (("", 'keep_workspaces = "no"\n'), "experiment.toml: keep_workspaces", "true or false"),
         (("", "workspace_root = 5\n"), "experiment.toml: workspace_root", "expected a string"),
         (("", "description = []\n"), "experiment.toml: description", "expected a string"),
         (("", 'baseline = "nope"\n'), "experiment.toml: baseline", "is not an arm"),
-        (('tasks = ["tasks/*"]', 'tasks = "tasks/*"'), "experiment.toml: tasks",
-         "expected an array of strings"),
+        (
+            ('tasks = ["tasks/*"]', 'tasks = "tasks/*"'),
+            "experiment.toml: tasks",
+            "expected an array of strings",
+        ),
         (('tasks = ["tasks/*"]', "tasks = []"), "experiment.toml: tasks", "at least one glob"),
-        (('tasks = ["tasks/*"]', 'tasks = ["tasks/*", 3]'), "experiment.toml: tasks[1]",
-         "expected a string"),
+        (
+            ('tasks = ["tasks/*"]', 'tasks = ["tasks/*", 3]'),
+            "experiment.toml: tasks[1]",
+            "expected a string",
+        ),
         (('tasks = ["tasks/*"]\n', ""), "experiment.toml: tasks", "missing required key"),
-        (('tasks = ["tasks/*"]', 'tasks = ["nothing/*"]'), "experiment.toml: tasks",
-         "no task directories matched"),
-        (('tasks = ["tasks/*"]', 'tasks = ["tasks/missing"]'), "experiment.toml: tasks[0]",
-         "is not a task directory"),
-        (('tasks = ["tasks/*"]', 'tasks = ["tasks/*"]\nexclude_tasks = ["*"]'),
-         "experiment.toml: exclude_tasks", "every task is excluded"),
-        (('[agent]\nadapter = "mock"', "agent = 1"), "experiment.toml: agent",
-         "expected a table"),
-        (('adapter = "mock"', 'adapter = "mock"\nfoo = 1'), "experiment.toml: agent.foo",
-         "unknown key 'foo'"),
-        (('adapter = "mock"', 'adapter = "nope"'), "experiment.toml: agent.adapter",
-         "unknown adapter 'nope'"),
-        (('adapter = "mock"', 'adapter = ""'), "experiment.toml: agent.adapter",
-         "must not be empty"),
-        (('adapter = "mock"', "adapter = 1"), "experiment.toml: agent.adapter",
-         "expected a string"),
-        (('adapter = "mock"', 'adapter = "mock"\nargs = "--x"'), "experiment.toml: agent.args",
-         "expected an array of strings"),
-        (('adapter = "mock"', 'adapter = "mock"\nargs = ["--x", 1]'),
-         "experiment.toml: agent.args[1]", "expected a string"),
-        (('adapter = "mock"', 'adapter = "mock"\nenv = { X = 1 }'), "experiment.toml: agent.env.X",
-         "expected a string"),
-        (('adapter = "mock"', 'adapter = "mock"\nenv = ["X"]'), "experiment.toml: agent.env",
-         "expected a table"),
-        (('adapter = "mock"', 'adapter = "mock"\nenv = { "A=B" = "1" }'),
-         "experiment.toml: agent.env.A=B", "invalid environment variable name"),
-        (('adapter = "mock"', 'adapter = "mock"\nmodel = 4'), "experiment.toml: agent.model",
-         "expected a string"),
-        (('adapter = "mock"', 'adapter = "mock"\ncommand = "run it"'),
-         "experiment.toml: agent.command", "expected an array of strings"),
-        (('adapter = "mock"', 'adapter = "mock"\ncommand = ["x", "{promt}"]'),
-         "experiment.toml: agent.command[1]", "unknown placeholder {promt}"),
-        (('adapter = "mock"', 'adapter = "mock"\noptions = 3'), "experiment.toml: agent.options",
-         "expected a table"),
-        (('adapter = "mock"', 'adapter = "mock"\noptions = { solve_rate = nan }'),
-         "experiment.toml: agent.options.solve_rate", "finite"),
-        (('adapter = "mock"', 'adapter = "mock"\noptions = { nested = [1.0, inf] }'),
-         "experiment.toml: agent.options.nested[1]", "finite"),
-        (('adapter = "mock"', 'adapter = "mock"\noptions = { unknown_opt = 1 }'),
-         "experiment.toml: arms[0].agent", "unknown option 'unknown_opt'"),
-        (('adapter = "mock"', 'adapter = "mock"\neffort = "bogus"'),
-         "experiment.toml: arms[0].agent", "effort 'bogus' is not supported"),
+        (
+            ('tasks = ["tasks/*"]', 'tasks = ["nothing/*"]'),
+            "experiment.toml: tasks",
+            "no task directories matched",
+        ),
+        (
+            ('tasks = ["tasks/*"]', 'tasks = ["tasks/missing"]'),
+            "experiment.toml: tasks[0]",
+            "is not a task directory",
+        ),
+        (
+            ('tasks = ["tasks/*"]', 'tasks = ["tasks/*"]\nexclude_tasks = ["*"]'),
+            "experiment.toml: exclude_tasks",
+            "every task is excluded",
+        ),
+        (('[agent]\nadapter = "mock"', "agent = 1"), "experiment.toml: agent", "expected a table"),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\nfoo = 1'),
+            "experiment.toml: agent.foo",
+            "unknown key 'foo'",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "nope"'),
+            "experiment.toml: agent.adapter",
+            "unknown adapter 'nope'",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = ""'),
+            "experiment.toml: agent.adapter",
+            "must not be empty",
+        ),
+        (
+            ('adapter = "mock"', "adapter = 1"),
+            "experiment.toml: agent.adapter",
+            "expected a string",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\nargs = "--x"'),
+            "experiment.toml: agent.args",
+            "expected an array of strings",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\nargs = ["--x", 1]'),
+            "experiment.toml: agent.args[1]",
+            "expected a string",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\nenv = { X = 1 }'),
+            "experiment.toml: agent.env.X",
+            "expected a string",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\nenv = ["X"]'),
+            "experiment.toml: agent.env",
+            "expected a table",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\nenv = { "A=B" = "1" }'),
+            "experiment.toml: agent.env.A=B",
+            "invalid environment variable name",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\nmodel = 4'),
+            "experiment.toml: agent.model",
+            "expected a string",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\ncommand = "run it"'),
+            "experiment.toml: agent.command",
+            "expected an array of strings",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\ncommand = ["x", "{promt}"]'),
+            "experiment.toml: agent.command[1]",
+            "unknown placeholder {promt}",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\noptions = 3'),
+            "experiment.toml: agent.options",
+            "expected a table",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\noptions = { solve_rate = nan }'),
+            "experiment.toml: agent.options.solve_rate",
+            "finite",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\noptions = { nested = [1.0, inf] }'),
+            "experiment.toml: agent.options.nested[1]",
+            "finite",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\noptions = { unknown_opt = 1 }'),
+            "experiment.toml: arms[0].agent",
+            "unknown option 'unknown_opt'",
+        ),
+        (
+            ('adapter = "mock"', 'adapter = "mock"\neffort = "bogus"'),
+            "experiment.toml: arms[0].agent",
+            "effort 'bogus' is not supported",
+        ),
     ],
 )
 def test_experiment_errors(exp_dir: Path, edit, where, fragment):
@@ -507,37 +589,69 @@ name = "control"
         ('[[arms]]\nname = "bad/name"\n', "arms[1].name", "invalid arm name"),
         ("[[arms]]\ndescription = 'x'\n", "arms[1].name", "missing required key 'name'"),
         ('[[arms]]\nname = "b"\nmodel = "opus"\n', "arms[1].model", "unknown key 'model'"),
-        ('[[arms]]\nname = "b"\n[arms.agent]\nmodl = "x"\n', "arms[1].agent.modl",
-         "unknown key 'modl'"),
-        ('[[arms]]\nname = "b"\n[arms.agent]\nmodel = 1\n', "arms[1].agent.model",
-         "expected a string"),
-        ('[[arms]]\nname = "b"\n[arms.agent]\nadapter = "zzz"\n', "arms[1].agent.adapter",
-         "unknown adapter 'zzz'"),
-        ('[[arms]]\nname = "b"\n[arms.agent]\neffort = "bogus"\n', "arms[1].agent",
-         "effort 'bogus'"),
-        ('[[arms]]\nname = "b"\n[arms.agent.options]\nfoo = 1\n', "arms[1].agent",
-         "unknown option 'foo'"),
+        (
+            '[[arms]]\nname = "b"\n[arms.agent]\nmodl = "x"\n',
+            "arms[1].agent.modl",
+            "unknown key 'modl'",
+        ),
+        (
+            '[[arms]]\nname = "b"\n[arms.agent]\nmodel = 1\n',
+            "arms[1].agent.model",
+            "expected a string",
+        ),
+        (
+            '[[arms]]\nname = "b"\n[arms.agent]\nadapter = "zzz"\n',
+            "arms[1].agent.adapter",
+            "unknown adapter 'zzz'",
+        ),
+        (
+            '[[arms]]\nname = "b"\n[arms.agent]\neffort = "bogus"\n',
+            "arms[1].agent",
+            "effort 'bogus'",
+        ),
+        (
+            '[[arms]]\nname = "b"\n[arms.agent.options]\nfoo = 1\n',
+            "arms[1].agent",
+            "unknown option 'foo'",
+        ),
         ('[[arms]]\nname = "b"\nagent = "mock"\n', "arms[1].agent", "expected a table"),
-        ('[[arms]]\nname = "b"\noverlay = "missing"\n', "arms[1].overlay",
-         "overlay directory not found"),
+        (
+            '[[arms]]\nname = "b"\noverlay = "missing"\n',
+            "arms[1].overlay",
+            "overlay directory not found",
+        ),
         ('[[arms]]\nname = "b"\noverlay = "/abs"\n', "arms[1].overlay", "must be a relative path"),
-        ('[[arms]]\nname = "b"\noverlay = "C:\\\\abs"\n', "arms[1].overlay",
-         "must be a relative path"),
+        (
+            '[[arms]]\nname = "b"\noverlay = "C:\\\\abs"\n',
+            "arms[1].overlay",
+            "must be a relative path",
+        ),
         ('[[arms]]\nname = "b"\noverlay = "../up"\n', "arms[1].overlay", "must not contain '..'"),
         ('[[arms]]\nname = "b"\noverlay = ""\n', "arms[1].overlay", "must not be empty"),
         ('[[arms]]\nname = "b"\noverlay = 1\n', "arms[1].overlay", "expected a string"),
-        ('[[arms]]\nname = "b"\nremove = ["a/../../b"]\n', "arms[1].remove[0]",
-         "must not contain '..'"),
-        ('[[arms]]\nname = "b"\nremove = ["ok", "/etc"]\n', "arms[1].remove[1]",
-         "must be a relative path"),
-        ('[[arms]]\nname = "b"\nremove = ["\\\\\\\\server\\\\share"]\n', "arms[1].remove[0]",
-         "must be a relative path"),
-        ('[[arms]]\nname = "b"\nremove = ["D:x"]\n', "arms[1].remove[0]",
-         "must be a relative path"),
+        (
+            '[[arms]]\nname = "b"\nremove = ["a/../../b"]\n',
+            "arms[1].remove[0]",
+            "must not contain '..'",
+        ),
+        (
+            '[[arms]]\nname = "b"\nremove = ["ok", "/etc"]\n',
+            "arms[1].remove[1]",
+            "must be a relative path",
+        ),
+        (
+            '[[arms]]\nname = "b"\nremove = ["\\\\\\\\server\\\\share"]\n',
+            "arms[1].remove[0]",
+            "must be a relative path",
+        ),
+        (
+            '[[arms]]\nname = "b"\nremove = ["D:x"]\n',
+            "arms[1].remove[0]",
+            "must be a relative path",
+        ),
         ('[[arms]]\nname = "b"\nremove = ["."]\n', "arms[1].remove[0]", "must name a path"),
         ('[[arms]]\nname = "b"\nremove = "AGENTS.md"\n', "arms[1].remove", "expected an array"),
-        ('[[arms]]\nname = "b"\nprompt_suffix = 3\n', "arms[1].prompt_suffix",
-         "expected a string"),
+        ('[[arms]]\nname = "b"\nprompt_suffix = 3\n', "arms[1].prompt_suffix", "expected a string"),
     ],
 )
 def test_arm_errors(exp_dir: Path, arm, where, fragment):
@@ -638,8 +752,11 @@ def test_task_error_is_located_in_task_file(exp_dir: Path):
         ('prompt = "   \\n"\ncheck = ["a"]\n', "prompt", "prompt is empty"),
         ('prompt = 3\ncheck = ["a"]\n', "prompt", "expected a string"),
         ('prompt_file = "missing.md"\ncheck = ["a"]\n', "prompt_file", "file not found"),
-        ('prompt_file = "../escape.md"\ncheck = ["a"]\n', "prompt_file",
-         "must stay inside the task directory"),
+        (
+            'prompt_file = "../escape.md"\ncheck = ["a"]\n',
+            "prompt_file",
+            "must stay inside the task directory",
+        ),
         ('prompt_file = ""\ncheck = ["a"]\n', "prompt_file", "must not be empty"),
         ('prompt_file = "EMPTY.md"\ncheck = ["a"]\n', "prompt_file", "prompt is empty"),
         ('prompt = "x"\ncheck = []\n', "check", "must not be an empty array"),
@@ -741,7 +858,9 @@ def test_expand_placeholders_error_lists_known():
 
 def test_find_placeholders_ignores_literal_braces():
     assert find_placeholders("{python} {{x}} {{{workspace}}} {seed}") == {
-        "python", "workspace", "seed"
+        "python",
+        "workspace",
+        "seed",
     }
     assert find_placeholders("awk '{{print}}'") == set()
 
@@ -754,8 +873,7 @@ def test_check_placeholders_rejects(template):
 
 def test_check_placeholders_accepts_known():
     check_placeholders("{python} {{literal}} {workspace}", TASK_PLACEHOLDERS)
-    check_placeholders(" ".join("{" + n + "}" for n in COMMAND_PLACEHOLDERS),
-                       COMMAND_PLACEHOLDERS)
+    check_placeholders(" ".join("{" + n + "}" for n in COMMAND_PLACEHOLDERS), COMMAND_PLACEHOLDERS)
 
 
 def test_description_round_trips(exp_dir: Path):
@@ -766,8 +884,7 @@ def test_description_round_trips(exp_dir: Path):
 
 
 def test_command_placeholders_all_accepted(exp_dir: Path):
-    names = ["prompt_file", "prompt", "workspace", "artifacts", "model", "effort", "python",
-             "seed"]
+    names = ["prompt_file", "prompt", "workspace", "artifacts", "model", "effort", "python", "seed"]
     cmd = json.dumps(["{" + n + "}" for n in names])
     exp = load(exp_dir, BASE.replace('adapter = "mock"', f'adapter = "command"\ncommand = {cmd}'))
     assert exp.arms[0].agent.command == tuple("{" + n + "}" for n in names)
@@ -775,8 +892,9 @@ def test_command_placeholders_all_accepted(exp_dir: Path):
 
 def test_task_placeholders_expand_to_runtime_values(tmp_path: Path):
     task = load_task(make_task(tmp_path, "tk"))
-    argv = [expand_placeholders(a, {"python": sys.executable, "workspace": "w"})
-            for a in task.check]
+    argv = [
+        expand_placeholders(a, {"python": sys.executable, "workspace": "w"}) for a in task.check
+    ]
     assert argv[0] == sys.executable
 
 
@@ -786,8 +904,9 @@ def test_task_placeholders_expand_to_runtime_values(tmp_path: Path):
 def test_experiment_to_dict_is_json_and_relative(exp_dir: Path):
     write(exp_dir / "arms" / "ov" / "f.txt", "x\n")
     text = BASE.replace('name = "treat"', 'name = "treat"\noverlay = "arms/ov"\nremove = ["a"]')
-    text = text.replace('adapter = "mock"',
-                        'adapter = "mock"\noptions = { when = 2024-01-02, nested = [1, 2] }')
+    text = text.replace(
+        'adapter = "mock"', 'adapter = "mock"\noptions = { when = 2024-01-02, nested = [1, 2] }'
+    )
     exp = load(exp_dir, 'workspace_root = "ws"\n' + text)
     d = experiment_to_dict(exp)
     json.dumps(d, allow_nan=False)
@@ -814,8 +933,40 @@ def test_experiment_to_dict_path_outside_root(tmp_path: Path):
     text = BASE.replace('["tasks/*"]', json.dumps([str(tmp_path / "shared" / "tasks" / "*")]))
     exp = load(exp_root, text)
     d = experiment_to_dict(exp)
-    assert d["tasks"][0]["path"] == (tmp_path / "shared" / "tasks" / "ext").resolve().as_posix()
-    json.dumps(d)
+    assert d["tasks"][0]["path"] == "../shared/tasks/ext"
+    assert d["tasks"][0]["repo"] == "../shared/tasks/ext/repo"
+    assert str(tmp_path) not in json.dumps(d)
+    # An explicit base (the run directory) changes only the relative form.
+    d = experiment_to_dict(exp, tmp_path / "exp" / "results" / "run")
+    assert d["tasks"][0]["path"] == "../../../shared/tasks/ext"
+    assert d["config"] == "../../experiment.toml"
+
+
+def test_portable_path_without_relative_form_redacts_home(monkeypatch, tmp_path: Path):
+    def no_relpath(path, start):
+        raise ValueError("path is on mount 'C:', start on mount 'D:'")
+
+    monkeypatch.setattr(config.os.path, "relpath", no_relpath)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert portable_path(tmp_path / "x" / "y", Path("/base")) == "~/x/y"
+
+
+def test_fingerprint_changes_with_task_file_content(tmp_path: Path):
+    root = tmp_path / "exp"
+    make_task(root, "t1")
+    before = _fp(root)
+    write(root / "tasks" / "t1" / "extra.txt", "new\n")
+    assert _fp(root) != before
+
+
+def test_fingerprint_independent_of_external_task_location(tmp_path: Path):
+    fps = []
+    for name in ("one", "two/deeper"):
+        base = tmp_path / name
+        make_task(base / "shared", "ext")
+        text = BASE.replace('["tasks/*"]', json.dumps(["../shared/tasks/*"]))
+        fps.append(load(base / "exp", text).fingerprint)
+    assert fps[0] == fps[1]
 
 
 def test_shell_string_check_in_dict(exp_dir: Path):

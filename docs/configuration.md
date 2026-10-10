@@ -138,6 +138,15 @@ Each run stores a SHA-256 fingerprint of the resolved configuration plus the con
 every file in every task and overlay directory (ignoring `.git`, `__pycache__` and `*.pyc`).
 `--resume` refuses a run whose fingerprint differs, unless you pass `--force`.
 
+The fingerprint is location-independent: it hashes file contents (keyed by task id and arm
+name), never paths, so identical content gives the same fingerprint in any checkout. Runs
+started by older versions carry a location-dependent fingerprint; resuming one reports that
+and needs `--force`.
+
+`run.json` stores every path relative to the run directory (POSIX separators, with `..`
+segments where needed), so committed results do not reveal your home directory. If no
+relative form exists (another Windows drive), the home directory is written as `~`.
+
 Excluded from the fingerprint, so they may change between sessions: `jobs`,
 `keep_workspaces`, `workspace_root`, `budget_usd` and descriptions.
 
