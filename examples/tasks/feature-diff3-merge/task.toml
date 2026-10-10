@@ -1,0 +1,49 @@
+prompt = """
+`textmerge` only merges at file level (`merge_text` raises `MergeConflict` as soon as both
+sides changed the file) and its `diff` is a quadratic LCS table. Implement a real line-level
+three-way merge (changes touch `textmerge/diff.py`, `textmerge/merge.py` and
+`textmerge/__init__.py`). A *line* is a `str` that keeps its own line ending (see
+`split_lines`); lines are compared including their endings.
+
+**`diff(a, b)`**: same return format as today (list of `("=", line)`, `("-", line)`,
+`("+", line)`), but it must be a *minimal* edit script (fewest `-` plus `+` operations;
+among minimal scripts any is fine) and must run in roughly O((N+M)·D) time: files of 40,000
+lines with a couple of hundred edits must be diffed in well under 5 seconds. `apply_diff`
+keeps working.
+
+**`merge3(base, ours, theirs, labels=("ours", "base", "theirs"), style="merge")`** takes three
+lists of lines and returns a new `MergeResult` (exported) with `.lines` (list of lines),
+`.conflicts` (int), `.text` (the lines joined) and `.clean` (`conflicts == 0`). Inputs are not
+modified. `style` is `"merge"` or `"diff3"` (`ValueError` otherwise). Algorithm:
+
+1. Compute the changed regions ("hunks") of `ours` and of `theirs` relative to `base` from a
+   minimal diff; a hunk `(b0, b1)` says that `base[b0:b1]` (possibly empty = a pure insertion at
+   `b0`) was replaced by some lines. (When the base lines are all distinct and new lines are new,
+   the hunks do not depend on which minimal diff you pick; only such inputs are tested.)
+2. A hunk of `ours` and a hunk of `theirs` *touch* if `b0 <= c1 and c0 <= b1` for their base
+   ranges `(b0, b1)` and `(c0, c1)`, so overlapping, adjacent (`b1 == c0`) and same-point
+   insertions all touch. Group hunks into clusters: the connected components of the "touches"
+   relation (transitively). A cluster covers the base range from its smallest `b0` to its
+   largest `b1`.
+3. For each cluster compute `base_text` (the base lines of that range), `ours_text` and
+   `theirs_text` (that range with the respective side's hunks applied). If `ours_text ==
+   theirs_text`, or one side's text equals `base_text`, emit the other/equal text (no
+   conflict). Otherwise it is a conflict. Base lines outside clusters are emitted unchanged.
+4. A conflict first moves the longest common prefix of `ours_text`/`theirs_text` out of the
+   markers (emitted before them), then, on the remainders, the longest common suffix (emitted
+   after the markers); the markers surround what is left:
+   `"<<<<<<< <labels[0]>\\n"`, ours lines, [`"||||||| <labels[1]>\\n"` and the *whole* `base_text`,
+   only for `style="diff3"`], `"=======\\n"`, theirs lines, `">>>>>>> <labels[2]>\\n"`. If the
+   last line of a section inside the markers lacks a trailing `"\\n"`, one is appended to it
+   (lines moved outside the markers are not altered). `conflicts` counts conflict blocks.
+
+**`merge_text(base, ours, theirs, on_conflict="raise", labels=..., style="merge")`** works on
+strings (split with `split_lines`) and returns the merged text. With conflicts it raises
+`MergeConflict` (as today) whose new attribute `.result` is the `MergeResult`, or, with
+`on_conflict="markers"`, returns the text with markers (`ValueError` for any other value).
+The old behaviour for the three file-level cases (one side unchanged, or both sides equal)
+is of course preserved, and `split_lines` must keep treating only `"\\n"` as a line break.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file", "differential", "performance"]
