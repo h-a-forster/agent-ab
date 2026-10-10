@@ -1,0 +1,315 @@
+{
+  "analysis": {
+    "alpha": 0.05,
+    "arms": [
+      {
+        "arm": "control",
+        "cost_per_pass_usd": 0.027316583999999998,
+        "errors": 0,
+        "mean_cost_usd": {
+          "estimate": 0.027316583999999998,
+          "high": 0.03284354625,
+          "low": 0.022220514775
+        },
+        "mean_duration_s": {
+          "estimate": 139.32305000000002,
+          "high": 178.65003374999998,
+          "low": 105.07708875
+        },
+        "mean_input_tokens": 20.4,
+        "mean_output_tokens": 27557.4,
+        "mean_turns": 12.9,
+        "pass_rate": {
+          "estimate": 1.0,
+          "high": 1.0,
+          "low": 1.0
+        },
+        "pass_rate_wilson": {
+          "estimate": 1.0,
+          "high": 1.0,
+          "low": 0.8388748419471808
+        },
+        "passes": 20,
+        "tasks": 20,
+        "total_cost_usd": 0.54633168,
+        "trials": 20
+      }
+    ],
+    "baseline": "control",
+    "cells": [
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.028550910000000002,
+        "mean_duration_s": 123.769,
+        "passes": 1,
+        "task": "api-config-layers",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.02278128,
+        "mean_duration_s": 101.338,
+        "passes": 1,
+        "task": "api-miniargs-clusters",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.04444244,
+        "mean_duration_s": 205.916,
+        "passes": 1,
+        "task": "data-interval-sets",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.018120530000000003,
+        "mean_duration_s": 82.084,
+        "passes": 1,
+        "task": "data-json-patch",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.01302452,
+        "mean_duration_s": 52.332,
+        "passes": 1,
+        "task": "data-sessionize",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.040977510000000016,
+        "mean_duration_s": 187.072,
+        "passes": 1,
+        "task": "graph-build-plan",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03805404,
+        "mean_duration_s": 190.633,
+        "passes": 1,
+        "task": "graph-transit-router",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.024657629999999996,
+        "mean_duration_s": 364.675,
+        "passes": 1,
+        "task": "parse-cron-schedule",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03413721,
+        "mean_duration_s": 167.802,
+        "passes": 1,
+        "task": "parse-expr-operators",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.018673230000000002,
+        "mean_duration_s": 75.559,
+        "passes": 1,
+        "task": "parse-ini-interpolation",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.01564696,
+        "mean_duration_s": 61.692,
+        "passes": 1,
+        "task": "parse-query-nested",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.01798671,
+        "mean_duration_s": 74.096,
+        "passes": 1,
+        "task": "sched-interval-bounds",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.0163942,
+        "mean_duration_s": 61.896,
+        "passes": 1,
+        "task": "sched-recurrence-rules",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03775647,
+        "mean_duration_s": 283.63,
+        "passes": 1,
+        "task": "sched-working-hours",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.016716670000000003,
+        "mean_duration_s": 69.925,
+        "passes": 1,
+        "task": "state-hierarchical-machine",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.01328742,
+        "mean_duration_s": 51.383,
+        "passes": 1,
+        "task": "state-ttl-cache-tags",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.02852889,
+        "mean_duration_s": 125.954,
+        "passes": 1,
+        "task": "state-undo-history",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.05787024,
+        "mean_duration_s": 233.155,
+        "passes": 1,
+        "task": "text-template-engine",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.04112285000000001,
+        "mean_duration_s": 197.186,
+        "passes": 1,
+        "task": "text-unified-patch",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.017601969999999998,
+        "mean_duration_s": 76.364,
+        "passes": 1,
+        "task": "text-wrap-display-width",
+        "trials": 1
+      }
+    ],
+    "comparisons": [],
+    "completed_trials": 20,
+    "environment": [
+      {
+        "arm": "control",
+        "init_trials": 20,
+        "mcp_servers": [],
+        "models": [
+          "claude-haiku-5-5"
+        ],
+        "plugins": [
+          "cc-plugin-agents-md",
+          "cc-plugin-plugin-authoring",
+          "cc-plugin-telemetry"
+        ],
+        "requested_model": "claude-haiku-5-5",
+        "skills": [
+          "artifact-capabilities",
+          "artifact-diagramming",
+          "batch",
+          "claude-api",
+          "code-review",
+          "dataviz",
+          "debug",
+          "deep-research",
+          "design",
+          "design-sync",
+          "doctor",
+          "fewer-permission-prompts",
+          "loop",
+          "plugin-authoring",
+          "run",
+          "run-skill-generator",
+          "simplify",
+          "slides",
+          "update-config",
+          "verify",
+          "workflow-authoring"
+        ],
+        "tools": [
+          "Artifact",
+          "ArtifactComments",
+          "ArtifactData",
+          "Bash",
+          "CronCreate",
+          "CronDelete",
+          "CronList",
+          "DesignSync",
+          "Edit",
+          "EnterWorktree",
+          "ExitWorktree",
+          "ListAgents",
+          "ListConnectors",
+          "ListPlugins",
+          "ListSkills",
+          "Monitor",
+          "NotebookEdit",
+          "PushNotification",
+          "Read",
+          "ReadNotifications",
+          "ReportFindings",
+          "ScheduleWakeup",
+          "SearchMcpRegistry",
+          "SearchPlugins",
+          "SearchSkills",
+          "SendMessage",
+          "SendUserFile",
+          "ShowOnboardingRolePicker",
+          "Skill",
+          "SuggestConnectors",
+          "SuggestPluginInstall",
+          "SuggestSkills",
+          "Task",
+          "TaskStop",
+          "ToolSearch",
+          "WebFetch",
+          "WebSearch",
+          "Workflow",
+          "Write"
+        ],
+        "versions": [
+          "2.1.296"
+        ]
+      }
+    ],
+    "error_trials": 0,
+    "experiment": "pilot-haiku-5-5",
+    "flaky_tasks": [],
+    "notes": [],
+    "planned_trials": 20,
+    "total_cost_usd": 0.54633168
+  },
+  "schema": 1,
+  "tool": "agent-ab"
+}
