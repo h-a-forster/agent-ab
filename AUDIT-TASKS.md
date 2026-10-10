@@ -71,6 +71,15 @@ The example can't answer its own question: n is too small, and Sonnet saturates 
 14. Write up the results honestly in docs/results.md: keep the old example as a pilot, and add the new
     findings with CIs, power and limitations. Strip or relativise paths with the new code, not by hand.
 
+## E. Research framing (docs, do last, after new results are in)
+
+The repo will be linked from an AI-evaluation company site as research. In README.md, right after the
+intro, add `## Findings`: 3-5 bullets, each one plain-language insight plus the numbers behind it,
+linked to the exact results section. Use the final, corrected numbers (including new runs) and keep
+the caveats. Before the limitations section, add `## Open questions`: 4-6 concrete research questions
+the data raises, each with a pointer to the files or scripts to start from. Keep the voice concise and
+plain, with no hype.
+
 ## Done-check
 
 pytest, ruff check and ruff format --check pass; `agent-ab report` on each committed results dir
