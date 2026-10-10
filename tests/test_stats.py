@@ -79,8 +79,9 @@ def test_wilson_known_values(k, n, low, high):
 def test_paired_ratio_skipped_fraction():
     from agent_ab.stats import _paired_ratio_counted
 
-    ci, skipped = _paired_ratio_counted([0.0] * 9 + [1.0], [1.0] * 10, n_boot=2000, alpha=0.05,
-                                        rng=1)
+    ci, skipped = _paired_ratio_counted(
+        [0.0] * 9 + [1.0], [1.0] * 10, n_boot=2000, alpha=0.05, rng=1
+    )
     assert ci.estimate == pytest.approx(10.0)
     assert skipped == pytest.approx(0.9**10, abs=0.05)
     assert _paired_ratio_counted([1.0, 2.0], [1.0, 1.0], n_boot=100, alpha=0.05, rng=1)[1] == 0
@@ -331,7 +332,9 @@ def test_analyze_wilson_follows_alpha():
 def test_analyze_ratio_note_when_baseline_cost_mostly_zero():
     # Baseline cost is zero on all but one of 10 tasks: about 35% of resamples miss that task.
     records = grid(
-        10, 1, lambda i, arm, r: True,
+        10,
+        1,
+        lambda i, arm, r: True,
         cost=lambda i, arm: 1.0 if arm == "treat" else (2.0 if i == 0 else 0.0),
     )
     a = analyze(meta(), records, n_boot=N_BOOT)
@@ -457,7 +460,9 @@ def test_records_outside_the_plan_are_ignored():
     from agent_ab.stats import analyze
 
     meta = {
-        "experiment": "e", "baseline": "a", "planned_trials": 4,
+        "experiment": "e",
+        "baseline": "a",
+        "planned_trials": 4,
         "config": {
             "arms": [{"name": "a"}, {"name": "b"}],
             "tasks": [{"id": "t1"}, {"id": "t2"}],
@@ -467,8 +472,13 @@ def test_records_outside_the_plan_are_ignored():
 
     def rec(task, arm, repeat=0, status="pass"):
         return TrialRecord(
-            trial_id=f"{task}__{arm}__r{repeat}", task=task, arm=arm, repeat=repeat,
-            attempt=0, status=status, passed=status == "pass",
+            trial_id=f"{task}__{arm}__r{repeat}",
+            task=task,
+            arm=arm,
+            repeat=repeat,
+            attempt=0,
+            status=status,
+            passed=status == "pass",
         )
 
     planned = [rec(t, a) for t in ("t1", "t2") for a in ("a", "b")]

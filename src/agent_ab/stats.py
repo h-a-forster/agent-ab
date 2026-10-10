@@ -379,9 +379,7 @@ def _comparison_notes(arm: str, base: str, diffs: Sequence[float], alpha: float)
     return [f"{prefix} " + " ".join(sentences)] if sentences else []
 
 
-def _planned_only(
-    exp_meta: dict, records: list[TrialRecord]
-) -> tuple[list[TrialRecord], int]:
+def _planned_only(exp_meta: dict, records: list[TrialRecord]) -> tuple[list[TrialRecord], int]:
     """Drop records outside the run's plan, so stray or stale lines can never enter the stats.
 
     The plan comes from the run's stored config; without one, every record is kept.
@@ -393,8 +391,10 @@ def _planned_only(
     if not task_ids or not arm_names:
         return records, 0
     kept = [
-        r for r in records
-        if r.task in task_ids and r.arm in arm_names
+        r
+        for r in records
+        if r.task in task_ids
+        and r.arm in arm_names
         and (not isinstance(repeats, int) or 0 <= r.repeat < repeats)
     ]
     return kept, len(records) - len(kept)

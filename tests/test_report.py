@@ -28,8 +28,13 @@ def arm(name, rate, *, cost=0.05, dur=41.2, trials=30, errors=0, tasks=10):
     has_cost = cost is not None
     rate_iv = Interval(rate, max(rate - 0.12, 0), min(rate + 0.12, 1)) if rate is not None else NONE
     return ArmSummary(
-        arm=name, trials=trials, errors=errors, passes=round((rate or 0) * trials), tasks=tasks,
-        pass_rate=rate_iv, pass_rate_wilson=rate_iv,
+        arm=name,
+        trials=trials,
+        errors=errors,
+        passes=round((rate or 0) * trials),
+        tasks=tasks,
+        pass_rate=rate_iv,
+        pass_rate_wilson=rate_iv,
         mean_cost_usd=Interval(cost, cost * 0.9, cost * 1.1) if has_cost else NONE,
         total_cost_usd=cost * trials if has_cost else None,
         mean_duration_s=Interval(dur, dur * 0.9, dur * 1.1) if dur is not None else NONE,
@@ -44,11 +49,18 @@ def arm(name, rate, *, cost=0.05, dur=41.2, trials=30, errors=0, tasks=10):
 
 def comp(name, base, diff, lo, hi, p, padj, verdict, *, paired=10, cost=(0.91, 0.80, 1.03)):
     return Comparison(
-        arm=name, baseline=base, paired_tasks=paired,
-        pass_rate_diff=Interval(diff, lo, hi), p_value=p, p_value_adjusted=padj,
+        arm=name,
+        baseline=base,
+        paired_tasks=paired,
+        pass_rate_diff=Interval(diff, lo, hi),
+        p_value=p,
+        p_value_adjusted=padj,
         cost_ratio=Interval(*cost) if cost else NONE,
-        duration_ratio=Interval(1.05, 0.95, 1.2), tasks_better=3, tasks_worse=1,
-        tasks_tied=paired - 4 if paired >= 4 else 0, verdict=verdict,
+        duration_ratio=Interval(1.05, 0.95, 1.2),
+        tasks_better=3,
+        tasks_worse=1,
+        tasks_tied=paired - 4 if paired >= 4 else 0,
+        verdict=verdict,
     )
 
 
@@ -57,23 +69,36 @@ def cells(task_ids, arms, fn):
     for i, t in enumerate(task_ids):
         for j, a in enumerate(arms):
             trials, passes, errors = fn(i, j)
-            out.append(TaskCell(t, a, trials, passes, errors, 0.05 if trials else None,
-                                40.0 if trials else None))
+            out.append(
+                TaskCell(
+                    t, a, trials, passes, errors, 0.05 if trials else None, 40.0 if trials else None
+                )
+            )
     return out
 
 
 def analysis_typical() -> Analysis:
     tasks = [f"task-{i:02d}" for i in range(10)]
     return Analysis(
-        experiment="tests-vs-no-tests", baseline="control", alpha=0.05,
+        experiment="tests-vs-no-tests",
+        baseline="control",
+        alpha=0.05,
         arms=[arm("control", 0.6), arm("no-tests", 0.642, cost=0.0455)],
-        comparisons=[comp("no-tests", "control", 0.042, -0.061, 0.145, 0.41, 0.41,
-                          "no detectable difference")],
+        comparisons=[
+            comp(
+                "no-tests", "control", 0.042, -0.061, 0.145, 0.41, 0.41, "no detectable difference"
+            )
+        ],
         cells=cells(tasks, ["control", "no-tests"], lambda i, j: (3, (i + j) % 4, 0)),
-        flaky_tasks=["task-01", "task-02"], planned_trials=60, completed_trials=60,
-        error_trials=0, total_cost_usd=2.865,
-        notes=["no-tests vs control: only 10 paired tasks. Intervals from few tasks tend to be "
-               "too narrow."],
+        flaky_tasks=["task-01", "task-02"],
+        planned_trials=60,
+        completed_trials=60,
+        error_trials=0,
+        total_cost_usd=2.865,
+        notes=[
+            "no-tests vs control: only 10 paired tasks. Intervals from few tasks tend to be "
+            "too narrow."
+        ],
     )
 
 
@@ -87,33 +112,74 @@ def analysis_four_arms() -> Analysis:
         return (3, (i * (j + 1)) % 4, 1 if (i == 2 and j == 1) else 0)
 
     return Analysis(
-        experiment="four-arm", baseline="control", alpha=0.05,
-        arms=[arm("control", 0.5), arm("opus", 0.75, cost=1.37, dur=185.0),
-              arm("no-cost", 0.55, cost=None), arm("broken", None, cost=None, dur=None,
-                                                    trials=0, errors=36, tasks=0)],
+        experiment="four-arm",
+        baseline="control",
+        alpha=0.05,
+        arms=[
+            arm("control", 0.5),
+            arm("opus", 0.75, cost=1.37, dur=185.0),
+            arm("no-cost", 0.55, cost=None),
+            arm("broken", None, cost=None, dur=None, trials=0, errors=36, tasks=0),
+        ],
         comparisons=[
             comp("opus", "control", 0.25, 0.1, 0.4, 0.002, 0.006, "better", cost=(27.4, 20, 35)),
-            comp("no-cost", "control", 0.05, -0.1, 0.2, 0.5, 1.0, "no detectable difference",
-                 cost=None),
-            Comparison("broken", "control", 0, NONE, None, None, NONE, NONE, 0, 0, 0,
-                       "insufficient data"),
+            comp(
+                "no-cost",
+                "control",
+                0.05,
+                -0.1,
+                0.2,
+                0.5,
+                1.0,
+                "no detectable difference",
+                cost=None,
+            ),
+            Comparison(
+                "broken", "control", 0, NONE, None, None, NONE, NONE, 0, 0, 0, "insufficient data"
+            ),
         ],
-        cells=cells(tasks, names, fn), flaky_tasks=["t1"], planned_trials=144,
-        completed_trials=107, error_trials=37, total_cost_usd=float("nan"),
+        cells=cells(tasks, names, fn),
+        flaky_tasks=["t1"],
+        planned_trials=144,
+        completed_trials=107,
+        error_trials=37,
+        total_cost_usd=float("nan"),
         notes=["37 trials excluded as infrastructure errors", "cost not reported for arm no-cost"],
     )
 
 
 def analysis_one_task() -> Analysis:
     return Analysis(
-        experiment="tiny", baseline="a", alpha=0.05,
+        experiment="tiny",
+        baseline="a",
+        alpha=0.05,
         arms=[arm("a", 1.0, trials=1, tasks=1), arm("b", 0.0, trials=1, tasks=1)],
-        comparisons=[Comparison("b", "a", 1, Interval(-1.0, None, None), None, None,
-                                Interval(1.0, None, None), NONE, 0, 1, 0, "insufficient data")],
-        cells=[TaskCell("only", "a", 1, 1, 0, 0.05, 3.0),
-               TaskCell("only", "b", 1, 0, 0, None, None)],
-        flaky_tasks=[], planned_trials=2, completed_trials=2, error_trials=0,
-        total_cost_usd=0.05, notes=["b vs a: 1 paired task(s); at least 2 are needed to compare."],
+        comparisons=[
+            Comparison(
+                "b",
+                "a",
+                1,
+                Interval(-1.0, None, None),
+                None,
+                None,
+                Interval(1.0, None, None),
+                NONE,
+                0,
+                1,
+                0,
+                "insufficient data",
+            )
+        ],
+        cells=[
+            TaskCell("only", "a", 1, 1, 0, 0.05, 3.0),
+            TaskCell("only", "b", 1, 0, 0, None, None),
+        ],
+        flaky_tasks=[],
+        planned_trials=2,
+        completed_trials=2,
+        error_trials=0,
+        total_cost_usd=0.05,
+        notes=["b vs a: 1 paired task(s); at least 2 are needed to compare."],
     )
 
 
@@ -121,8 +187,7 @@ def analysis_many_tasks(n: int = 300) -> Analysis:
     tasks = [f"task-{i:03d}" for i in range(n)]
     a = analysis_typical()
     a.experiment = "big-suite"
-    a.cells = cells(tasks, ["control", "no-tests"],
-                    lambda i, j: (3, 3 if i % 5 else j * 3, 0))
+    a.cells = cells(tasks, ["control", "no-tests"], lambda i, j: (3, 3 if i % 5 else j * 3, 0))
     a.flaky_tasks = tasks[:120]
     a.planned_trials = a.completed_trials = n * 6
     return a
@@ -135,13 +200,20 @@ def analysis_hostile() -> Analysis:
     bad_arm = HOSTILE + " & 'q' | *b* `c`"
     bad_task = '"><img src=x onerror=alert(1)>'
     return Analysis(
-        experiment=HOSTILE, baseline="ctl</title>", alpha=0.05,
+        experiment=HOSTILE,
+        baseline="ctl</title>",
+        alpha=0.05,
         arms=[arm("ctl</title>", 0.5), arm(bad_arm, 0.4)],
-        comparisons=[comp(bad_arm, "ctl</title>", -0.1, -0.3, 0.1, 0.3, 0.3,
-                          "no detectable difference")],
+        comparisons=[
+            comp(bad_arm, "ctl</title>", -0.1, -0.3, 0.1, 0.3, 0.3, "no detectable difference")
+        ],
         cells=cells([bad_task, "ok"], ["ctl</title>", bad_arm], lambda i, j: (2, i + j, 0)),
-        flaky_tasks=[bad_task], planned_trials=8, completed_trials=8, error_trials=0,
-        total_cost_usd=0.4, notes=[HOSTILE + " note é—✓"],
+        flaky_tasks=[bad_task],
+        planned_trials=8,
+        completed_trials=8,
+        error_trials=0,
+        total_cost_usd=0.4,
+        notes=[HOSTILE + " note é—✓"],
     )
 
 
@@ -181,8 +253,10 @@ def test_text_ascii_and_width(case, width):
 
 def test_text_headline_typical():
     out = render_text(analysis_typical(), width=200)
-    assert ("no-tests vs control: +4.2 pts [-6.1, +14.5], p=0.41 (Holm 0.41) "
-            "-> no detectable difference; cost x0.91 [0.80, 1.03]") in out
+    assert (
+        "no-tests vs control: +4.2 pts [-6.1, +14.5], p=0.41 (Holm 0.41) "
+        "-> no detectable difference; cost x0.91 [0.80, 1.03]"
+    ) in out
     assert "control *" in out and "60.0%" in out and "$0.0500" in out and "41.2s" in out
     assert "only 10 paired tasks" in out and "task-01" in out
 
@@ -193,8 +267,9 @@ def test_text_four_arms_none_values():
     assert "insufficient data (0 paired tasks)" in out
     assert "total cost -" in out
     assert "broken vs control: -, p=- (Holm -)" in out
-    broken = next(ln for ln in out.splitlines()
-                  if ln.strip().startswith("broken ") and " vs " not in ln)
+    broken = next(
+        ln for ln in out.splitlines() if ln.strip().startswith("broken ") and " vs " not in ln
+    )
     assert " - " in broken
     assert "3m 05s" in out
 
@@ -370,12 +445,25 @@ def _card_expl(out: str) -> str:
 )
 def test_html_no_difference_card_never_contradicts(lo, hi):
     a = analysis_typical()
-    a.comparisons = [comp("no-tests", "control", 0.4 if lo is None else (lo + hi) / 2, lo, hi,
-                          0.0625, 0.0625, "no detectable difference", paired=5)]
+    a.comparisons = [
+        comp(
+            "no-tests",
+            "control",
+            0.4 if lo is None else (lo + hi) / 2,
+            lo,
+            hi,
+            0.0625,
+            0.0625,
+            "no detectable difference",
+            paired=5,
+        )
+    ]
     expl = _card_expl(render_html(a))
     assert "consistent with" not in expl
-    assert expl == ("Holm-adjusted p = 0.062 is not below alpha 0.05. With few or uniform tasks "
-                    "the bootstrap interval understates uncertainty.")
+    assert expl == (
+        "Holm-adjusted p = 0.062 is not below alpha 0.05. With few or uniform tasks "
+        "the bootstrap interval understates uncertainty."
+    )
 
 
 def test_html_no_difference_card_ci_spans_zero():
@@ -385,8 +473,9 @@ def test_html_no_difference_card_ci_spans_zero():
 
 def test_text_and_markdown_no_contradicting_wording():
     a = analysis_typical()
-    a.comparisons = [comp("no-tests", "control", 0.0, 0.0, 0.0, 1.0, 1.0,
-                          "no detectable difference")]
+    a.comparisons = [
+        comp("no-tests", "control", 0.0, 0.0, 0.0, 1.0, 1.0, "no detectable difference")
+    ]
     for out in (render_text(a), render_markdown(a)):
         assert "no detectable difference" in out and "consistent with" not in out
 

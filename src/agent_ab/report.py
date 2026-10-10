@@ -130,7 +130,7 @@ def _ci_level(alpha: float) -> str:
 
 
 def _pts_ci(iv: Interval) -> str:
-    """"[-6.1, +14.5]" in points, or "" when the interval is unknown."""
+    """ "[-6.1, +14.5]" in points, or "" when the interval is unknown."""
     if _num(iv.low) is None or _num(iv.high) is None:
         return ""
     return f"[{fmt_pts(iv.low, unit=False)}, {fmt_pts(iv.high, unit=False)}]"
@@ -286,7 +286,10 @@ def _clip(s: str, n: int) -> str:
 
 
 def _text_table(
-    headers: Sequence[str], rows: Sequence[Sequence[str]], right: Sequence[bool], width: int,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    right: Sequence[bool],
+    width: int,
     drop_order: Sequence[int],
 ) -> list[str]:
     """Aligned columns; drops low-priority columns, then clips the first, to fit ``width``."""
@@ -294,8 +297,10 @@ def _text_table(
     gap = 2
 
     def widths(cols: list[int]) -> list[int]:
-        return [max(len(headers[i]), *(len(r[i]) for r in rows)) if rows else len(headers[i])
-                for i in cols]
+        return [
+            max(len(headers[i]), *(len(r[i]) for r in rows)) if rows else len(headers[i])
+            for i in cols
+        ]
 
     def total(cols: list[int], ws: list[int]) -> int:
         return 2 + sum(ws) + gap * (len(cols) - 1)
@@ -333,31 +338,54 @@ def render_text(a: Analysis, *, width: int = 100) -> str:
     out.append("")
 
     level = _ci_level(a.alpha)
-    out.append(_clip(_ascii(f"Pass-rate difference vs {a.baseline} ({level}, paired over tasks)"),
-                     width))
+    out.append(
+        _clip(_ascii(f"Pass-rate difference vs {a.baseline} ({level}, paired over tasks)"), width)
+    )
     if not a.comparisons:
         out.append("  No comparisons: the analysis has a single arm.")
     for c in a.comparisons:
         out += _pack(_ascii(_headline(c)), width, indent="      ", first="  ")
         noun = "task" if c.paired_tasks == 1 else "tasks"
-        detail = (f"{c.paired_tasks} paired {noun}: {c.tasks_better} better, "
-                  f"{c.tasks_worse} worse, {c.tasks_tied} tied")
+        detail = (
+            f"{c.paired_tasks} paired {noun}: {c.tasks_better} better, "
+            f"{c.tasks_worse} worse, {c.tasks_tied} tied"
+        )
         out += _pack(_ascii(detail), width, indent="      ", first="      ")
     out.append("")
 
     out.append("Arms (* = baseline)")
-    headers = ["arm", "pass rate", level, "tasks", "trials", "errors", "cost/trial",
-               "cost/pass", "time", "tokens in/out", "turns"]
+    headers = [
+        "arm",
+        "pass rate",
+        level,
+        "tasks",
+        "trials",
+        "errors",
+        "cost/trial",
+        "cost/pass",
+        "time",
+        "tokens in/out",
+        "turns",
+    ]
     right = [False] + [True] * 10
     rows = []
     for s in a.arms:
         name = s.arm + (" *" if s.arm == a.baseline else "")
-        rows.append([
-            _ascii(name), fmt_pct(s.pass_rate.estimate), _pct_ci(s.pass_rate), str(s.tasks),
-            str(s.trials), str(s.errors), fmt_cost(s.mean_cost_usd.estimate),
-            fmt_cost(s.cost_per_pass_usd), fmt_duration(s.mean_duration_s.estimate),
-            _tokens(s), fmt_count(s.mean_turns),
-        ])
+        rows.append(
+            [
+                _ascii(name),
+                fmt_pct(s.pass_rate.estimate),
+                _pct_ci(s.pass_rate),
+                str(s.tasks),
+                str(s.trials),
+                str(s.errors),
+                fmt_cost(s.mean_cost_usd.estimate),
+                fmt_cost(s.cost_per_pass_usd),
+                fmt_duration(s.mean_duration_s.estimate),
+                _tokens(s),
+                fmt_count(s.mean_turns),
+            ]
+        )
     out += _text_table(headers, rows, right, width, drop_order=[10, 9, 3, 7, 2, 4])
 
     if a.flaky_tasks:
@@ -413,16 +441,33 @@ def render_markdown(a: Analysis) -> str:
             verdict = _verdict_phrase(c)
             if c.verdict in ("better", "worse"):
                 verdict = f"**{verdict}**"
-            rows.append([
-                _md(c.arm), fmt_pts(c.pass_rate_diff.estimate),
-                _pts_ci(c.pass_rate_diff) or "-", fmt_p(c.p_value), fmt_p(c.p_value_adjusted),
-                verdict, _ratio_ci(c.cost_ratio), _ratio_ci(c.duration_ratio),
-                f"{c.paired_tasks} ({c.tasks_better}/{c.tasks_worse}/{c.tasks_tied})",
-            ])
+            rows.append(
+                [
+                    _md(c.arm),
+                    fmt_pts(c.pass_rate_diff.estimate),
+                    _pts_ci(c.pass_rate_diff) or "-",
+                    fmt_p(c.p_value),
+                    fmt_p(c.p_value_adjusted),
+                    verdict,
+                    _ratio_ci(c.cost_ratio),
+                    _ratio_ci(c.duration_ratio),
+                    f"{c.paired_tasks} ({c.tasks_better}/{c.tasks_worse}/{c.tasks_tied})",
+                ]
+            )
         out += _md_table(
-            ["Arm", "Diff", f"{level} (pts)", "p", "p (Holm)", "Verdict", "Cost ratio",
-             "Time ratio", "Paired tasks (better/worse/tied)"],
-            rows, [False, True, True, True, True, False, True, True, True],
+            [
+                "Arm",
+                "Diff",
+                f"{level} (pts)",
+                "p",
+                "p (Holm)",
+                "Verdict",
+                "Cost ratio",
+                "Time ratio",
+                "Paired tasks (better/worse/tied)",
+            ],
+            rows,
+            [False, True, True, True, True, False, True, True, True],
         )
     out.append("")
 
@@ -431,15 +476,35 @@ def render_markdown(a: Analysis) -> str:
     rows = []
     for s in a.arms:
         name = _md(s.arm) + (" (baseline)" if s.arm == a.baseline else "")
-        rows.append([
-            name, fmt_pct(s.pass_rate.estimate), _pct_ci(s.pass_rate), str(s.tasks),
-            str(s.trials), str(s.errors), fmt_cost(s.mean_cost_usd.estimate),
-            fmt_cost(s.cost_per_pass_usd), fmt_duration(s.mean_duration_s.estimate), _tokens(s),
-        ])
+        rows.append(
+            [
+                name,
+                fmt_pct(s.pass_rate.estimate),
+                _pct_ci(s.pass_rate),
+                str(s.tasks),
+                str(s.trials),
+                str(s.errors),
+                fmt_cost(s.mean_cost_usd.estimate),
+                fmt_cost(s.cost_per_pass_usd),
+                fmt_duration(s.mean_duration_s.estimate),
+                _tokens(s),
+            ]
+        )
     out += _md_table(
-        ["Arm", "Pass rate", level, "Tasks", "Trials", "Errors", "Cost/trial", "Cost/pass",
-         "Time/trial", "Tokens in/out"],
-        rows, [False] + [True] * 9,
+        [
+            "Arm",
+            "Pass rate",
+            level,
+            "Tasks",
+            "Trials",
+            "Errors",
+            "Cost/trial",
+            "Cost/pass",
+            "Time/trial",
+            "Tokens in/out",
+        ],
+        rows,
+        [False] + [True] * 9,
     )
     out.append("")
 
@@ -447,11 +512,14 @@ def render_markdown(a: Analysis) -> str:
     arms = _arm_order(a)
     if disagree:
         limit = 100
-        out.append("<details><summary>Tasks where arms differ "
-                   f"({len(disagree)} of {len(disagree) + len(agree)})</summary>")
+        out.append(
+            "<details><summary>Tasks where arms differ "
+            f"({len(disagree)} of {len(disagree) + len(agree)})</summary>"
+        )
         out.append("")
-        rows = [[_md(t)] + [_cell_label(lookup.get((t, arm))) for arm in arms]
-                for t in disagree[:limit]]
+        rows = [
+            [_md(t)] + [_cell_label(lookup.get((t, arm))) for arm in arms] for t in disagree[:limit]
+        ]
         out += _md_table(["Task"] + [_md(x) for x in arms], rows, [False] + [True] * len(arms))
         if len(disagree) > limit:
             out.append("")
@@ -465,8 +533,7 @@ def render_markdown(a: Analysis) -> str:
         out.append("")
         shown = a.flaky_tasks[:FLAKY_INLINE_LIMIT]
         more = len(a.flaky_tasks) - len(shown)
-        out.append(", ".join(_md(t) for t in shown)
-                   + (f" and {more} more" if more > 0 else ""))
+        out.append(", ".join(_md(t) for t in shown) + (f" and {more} more" if more > 0 else ""))
         out.append("")
 
     if a.notes:
@@ -475,9 +542,11 @@ def render_markdown(a: Analysis) -> str:
         out += [f"- {_md(n)}" for n in a.notes]
         out.append("")
 
-    out.append(f"<sub>Pass rate = mean over tasks of each task's pass fraction. {level}: "
-               "bootstrap over tasks. p: paired sign-flip test over tasks, Holm-adjusted "
-               "across comparisons.</sub>")
+    out.append(
+        f"<sub>Pass rate = mean over tasks of each task's pass fraction. {level}: "
+        "bootstrap over tasks. p: paired sign-flip test over tasks, Holm-adjusted "
+        "across comparisons.</sub>"
+    )
     return "\n".join(out) + "\n"
 
 
@@ -631,7 +700,8 @@ def _svg_trunc(s: str, n: int) -> str:
 
 def _verdict_class(verdict: str) -> str:
     return {"better": "better", "worse": "worse", "insufficient data": "insufficient"}.get(
-        verdict, "neutral")
+        verdict, "neutral"
+    )
 
 
 def _forest_svg(a: Analysis) -> str:
@@ -658,38 +728,49 @@ def _forest_svg(a: Analysis) -> str:
     plot_h = row_h * len(comps)
     axis_y = top + plot_h + 4
     height = axis_y + 44
-    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" '
-             f'aria-label="Forest plot of pass-rate difference versus {_e(a.baseline)}">']
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="Forest plot of pass-rate difference versus {_e(a.baseline)}">'
+    ]
     for t in ticks:
         x = _fmt_num(sx(t))
         parts.append(f'<line class="grid" x1="{x}" y1="{top}" x2="{x}" y2="{axis_y}"/>')
         label = f"{t:+g}" if t else "0"
-        parts.append(f'<text class="muted" x="{x}" y="{axis_y + 16}" text-anchor="middle">'
-                     f"{_e(label)}</text>")
+        parts.append(
+            f'<text class="muted" x="{x}" y="{axis_y + 16}" text-anchor="middle">{_e(label)}</text>'
+        )
     zx = _fmt_num(sx(0))
     parts.append(f'<line class="zero" x1="{zx}" y1="{top - 4}" x2="{zx}" y2="{axis_y}"/>')
     parts.append(f'<line class="axis" x1="{x0}" y1="{axis_y}" x2="{x1}" y2="{axis_y}"/>')
-    parts.append(f'<text class="muted" x="{_fmt_num((x0 + x1) / 2)}" y="{axis_y + 36}" '
-                 f'text-anchor="middle">Pass-rate difference vs '
-                 f"{_e(_svg_trunc(a.baseline, 24))} (percentage points)</text>")
+    parts.append(
+        f'<text class="muted" x="{_fmt_num((x0 + x1) / 2)}" y="{axis_y + 36}" '
+        f'text-anchor="middle">Pass-rate difference vs '
+        f"{_e(_svg_trunc(a.baseline, 24))} (percentage points)</text>"
+    )
     for i, c in enumerate(comps):
         cy = top + row_h * i + row_h / 2
         y = _fmt_num(cy)
-        parts.append(f'<text x="{left - 10}" y="{_fmt_num(cy + 4)}" text-anchor="end">'
-                     f"<title>{_e(c.arm)}</title>{_e(_svg_trunc(c.arm, 20))}</text>")
+        parts.append(
+            f'<text x="{left - 10}" y="{_fmt_num(cy + 4)}" text-anchor="end">'
+            f"<title>{_e(c.arm)}</title>{_e(_svg_trunc(c.arm, 20))}</text>"
+        )
         iv = c.pass_rate_diff
         est, low, high = _num(iv.estimate), _num(iv.low), _num(iv.high)
         if low is not None and high is not None:
             xa, xb = _fmt_num(sx(low * 100)), _fmt_num(sx(high * 100))
             parts.append(f'<line class="whisker" x1="{xa}" y1="{y}" x2="{xb}" y2="{y}"/>')
             for xe in (xa, xb):
-                parts.append(f'<line class="whisker" x1="{xe}" y1="{_fmt_num(cy - 5)}" '
-                             f'x2="{xe}" y2="{_fmt_num(cy + 5)}"/>')
+                parts.append(
+                    f'<line class="whisker" x1="{xe}" y1="{_fmt_num(cy - 5)}" '
+                    f'x2="{xe}" y2="{_fmt_num(cy + 5)}"/>'
+                )
         if est is not None:
             cls = _verdict_class(c.verdict)
-            parts.append(f'<circle class="pt {cls}" cx="{_fmt_num(sx(est * 100))}" cy="{y}" r="5">'
-                         f"<title>{_e(c.arm)}: {_e(fmt_pts(est))} {_e(_pts_ci(iv))}</title>"
-                         "</circle>")
+            parts.append(
+                f'<circle class="pt {cls}" cx="{_fmt_num(sx(est * 100))}" cy="{y}" r="5">'
+                f"<title>{_e(c.arm)}: {_e(fmt_pts(est))} {_e(_pts_ci(iv))}</title>"
+                "</circle>"
+            )
             value = f"{fmt_pts(est, unit=False)} {_pts_ci(iv)}".strip()
         else:
             value = "no paired data"
@@ -717,30 +798,49 @@ def _scatter_svg(a: Analysis, arms: list[ArmSummary]) -> str:
     def sy(v: float) -> float:
         return y1 - v * (y1 - y0)
 
-    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" '
-             'aria-label="Mean cost per trial versus pass rate for each arm">']
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" '
+        'aria-label="Mean cost per trial versus pass rate for each arm">'
+    ]
     for t in (0, 0.2, 0.4, 0.6, 0.8, 1.0):
         y = _fmt_num(sy(t))
         parts.append(f'<line class="grid" x1="{x0}" y1="{y}" x2="{x1}" y2="{y}"/>')
-        parts.append(f'<text class="muted" x="{x0 - 8}" y="{_fmt_num(sy(t) + 4)}" '
-                     f'text-anchor="end">{t * 100:.0f}%</text>')
+        parts.append(
+            f'<text class="muted" x="{x0 - 8}" y="{_fmt_num(sy(t) + 4)}" '
+            f'text-anchor="end">{t * 100:.0f}%</text>'
+        )
     for t in xticks:
         x = _fmt_num(sx(t))
         parts.append(f'<line class="grid" x1="{x}" y1="{y0}" x2="{x}" y2="{y1}"/>')
-        parts.append(f'<text class="muted" x="{x}" y="{y1 + 16}" text-anchor="middle">'
-                     f"{_e(fmt_cost(t))}</text>")
+        parts.append(
+            f'<text class="muted" x="{x}" y="{y1 + 16}" text-anchor="middle">'
+            f"{_e(fmt_cost(t))}</text>"
+        )
     parts.append(f'<line class="axis" x1="{x0}" y1="{y1}" x2="{x1}" y2="{y1}"/>')
     parts.append(f'<line class="axis" x1="{x0}" y1="{y0}" x2="{x0}" y2="{y1}"/>')
-    parts.append(f'<text class="muted" x="{_fmt_num((x0 + x1) / 2)}" y="{height - 10}" '
-                 'text-anchor="middle">Mean cost per trial (USD)</text>')
-    parts.append(f'<text class="muted" transform="translate(16 {_fmt_num((y0 + y1) / 2)}) '
-                 'rotate(-90)" text-anchor="middle">Pass rate</text>')
+    parts.append(
+        f'<text class="muted" x="{_fmt_num((x0 + x1) / 2)}" y="{height - 10}" '
+        'text-anchor="middle">Mean cost per trial (USD)</text>'
+    )
+    parts.append(
+        f'<text class="muted" transform="translate(16 {_fmt_num((y0 + y1) / 2)}) '
+        'rotate(-90)" text-anchor="middle">Pass rate</text>'
+    )
 
-    pts = [(s, s.mean_cost_usd.estimate, s.pass_rate.estimate) for s in arms
-           if _num(s.mean_cost_usd.estimate) is not None and _num(s.pass_rate.estimate) is not None]
+    pts = [
+        (s, s.mean_cost_usd.estimate, s.pass_rate.estimate)
+        for s in arms
+        if _num(s.mean_cost_usd.estimate) is not None and _num(s.pass_rate.estimate) is not None
+    ]
     # Pareto frontier: arms no other arm beats on both cost (lower) and pass rate (higher).
-    frontier = [p for p in pts if not any(
-        q is not p and q[1] <= p[1] and q[2] >= p[2] and (q[1] < p[1] or q[2] > p[2]) for q in pts)]
+    frontier = [
+        p
+        for p in pts
+        if not any(
+            q is not p and q[1] <= p[1] and q[2] >= p[2] and (q[1] < p[1] or q[2] > p[2])
+            for q in pts
+        )
+    ]
     frontier.sort(key=lambda p: p[1])
     if len(frontier) > 1:
         coords = " ".join(f"{_fmt_num(sx(c))},{_fmt_num(sy(r))}" for _, c, r in frontier)
@@ -750,12 +850,16 @@ def _scatter_svg(a: Analysis, arms: list[ArmSummary]) -> str:
         cx, cy = sx(cost), sy(rate)
         cl, ch = _num(s.mean_cost_usd.low), _num(s.mean_cost_usd.high)
         if cl is not None and ch is not None:
-            parts.append(f'<line class="whisker" x1="{_fmt_num(sx(cl))}" y1="{_fmt_num(cy)}" '
-                         f'x2="{_fmt_num(sx(ch))}" y2="{_fmt_num(cy)}"/>')
+            parts.append(
+                f'<line class="whisker" x1="{_fmt_num(sx(cl))}" y1="{_fmt_num(cy)}" '
+                f'x2="{_fmt_num(sx(ch))}" y2="{_fmt_num(cy)}"/>'
+            )
         rl, rh = _num(s.pass_rate.low), _num(s.pass_rate.high)
         if rl is not None and rh is not None:
-            parts.append(f'<line class="whisker" x1="{_fmt_num(cx)}" y1="{_fmt_num(sy(rl))}" '
-                         f'x2="{_fmt_num(cx)}" y2="{_fmt_num(sy(rh))}"/>')
+            parts.append(
+                f'<line class="whisker" x1="{_fmt_num(cx)}" y1="{_fmt_num(sy(rl))}" '
+                f'x2="{_fmt_num(cx)}" y2="{_fmt_num(sy(rh))}"/>'
+            )
     # Labels: nudge apart vertically so neighbouring arms stay readable.
     placed: list[float] = []
     for s, cost, rate in sorted(pts, key=lambda p: -p[2]):
@@ -766,16 +870,21 @@ def _scatter_svg(a: Analysis, arms: list[ArmSummary]) -> str:
                 ly = py + 14
         placed.append(ly)
         base = s.arm == a.baseline
-        shape = (f'<rect class="pt base" x="{_fmt_num(cx - 5)}" y="{_fmt_num(cy - 5)}" '
-                 'width="10" height="10"' if base else
-                 f'<circle class="pt" cx="{_fmt_num(cx)}" cy="{_fmt_num(cy)}" r="5"')
+        shape = (
+            f'<rect class="pt base" x="{_fmt_num(cx - 5)}" y="{_fmt_num(cy - 5)}" '
+            'width="10" height="10"'
+            if base
+            else f'<circle class="pt" cx="{_fmt_num(cx)}" cy="{_fmt_num(cy)}" r="5"'
+        )
         tip = f"{s.arm}: {fmt_pct(rate)}, {fmt_cost(cost)} per trial"
         parts.append(f"{shape}><title>{_e(tip)}</title></{'rect' if base else 'circle'}>")
         label = _svg_trunc(s.arm, 18) + (" (baseline)" if base else "")
         # ~6.6 units per character at 12px; flip to the left side when the label would clip.
         if cx + 9 + len(label) * 6.6 > width:
-            parts.append(f'<text x="{_fmt_num(cx - 9)}" y="{_fmt_num(ly)}" text-anchor="end">'
-                         f"{_e(label)}</text>")
+            parts.append(
+                f'<text x="{_fmt_num(cx - 9)}" y="{_fmt_num(ly)}" text-anchor="end">'
+                f"{_e(label)}</text>"
+            )
         else:
             parts.append(f'<text x="{_fmt_num(cx + 9)}" y="{_fmt_num(ly)}">{_e(label)}</text>')
     parts.append("</svg>")
@@ -795,9 +904,7 @@ def _heat_class(c: TaskCell | None) -> str:
     return "h2" if f < 2 / 3 else "h3"
 
 
-def _heat_table(
-    tasks: list[str], arms: list[str], lookup: dict[tuple[str, str], TaskCell]
-) -> str:
+def _heat_table(tasks: list[str], arms: list[str], lookup: dict[tuple[str, str], TaskCell]) -> str:
     head = "".join(f"<th>{_e(x)}</th>" for x in arms)
     rows = []
     for t in tasks:
@@ -807,13 +914,17 @@ def _heat_table(
             if c is None:
                 tip = f"{t} / {arm}: no trials"
             else:
-                tip = (f"{t} / {arm}: {c.passes} of {c.trials} completed trials passed"
-                       + (f", {c.errors} infrastructure error(s)" if c.errors else ""))
-            cells.append(f'<td class="c {_heat_class(c)}" title="{_e(tip)}">'
-                         f"{_e(_cell_label(c))}</td>")
+                tip = f"{t} / {arm}: {c.passes} of {c.trials} completed trials passed" + (
+                    f", {c.errors} infrastructure error(s)" if c.errors else ""
+                )
+            cells.append(
+                f'<td class="c {_heat_class(c)}" title="{_e(tip)}">{_e(_cell_label(c))}</td>'
+            )
         rows.append(f'<tr><td class="name" title="{_e(t)}">{_e(t)}</td>{"".join(cells)}</tr>')
-    return (f'<div class="scroll"><table class="heat"><thead><tr><th>Task</th>{head}</tr></thead>'
-            f'<tbody>{"".join(rows)}</tbody></table></div>')
+    return (
+        f'<div class="scroll"><table class="heat"><thead><tr><th>Task</th>{head}</tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
 
 
 _LEGEND = (
@@ -834,31 +945,43 @@ def _card(a: Analysis, c: Comparison) -> str:
     verdict = _VERDICT_SHORT.get(c.verdict, str(c.verdict))
     iv = c.pass_rate_diff
     has_ci = _num(iv.low) is not None and _num(iv.high) is not None
-    ci_text = (f"{fmt_pts(iv.low, unit=False)} to {fmt_pts(iv.high, unit=False)} pts"
-               if has_ci else "not available")
+    ci_text = (
+        f"{fmt_pts(iv.low, unit=False)} to {fmt_pts(iv.high, unit=False)} pts"
+        if has_ci
+        else "not available"
+    )
     if c.verdict == "insufficient data":
         n = c.paired_tasks
-        expl = (f"Only {n} task{'' if n == 1 else 's'} completed in both arms; at least 2 are "
-                "needed for a comparison.")
+        expl = (
+            f"Only {n} task{'' if n == 1 else 's'} completed in both arms; at least 2 are "
+            "needed for a comparison."
+        )
     elif c.verdict == "no detectable difference":
         if has_ci and iv.low < iv.high and iv.low <= 0 <= iv.high:
             expl = f"The data are consistent with a true difference anywhere from {ci_text}."
         else:
             # A zero-width interval, one that excludes 0, or none at all: quoting it as the
             # range of plausible differences would contradict the verdict.
-            expl = (f"Holm-adjusted p = {fmt_p(c.p_value_adjusted)} is not below alpha "
-                    f"{a.alpha:g}. With few or uniform tasks the bootstrap interval "
-                    "understates uncertainty.")
+            expl = (
+                f"Holm-adjusted p = {fmt_p(c.p_value_adjusted)} is not below alpha "
+                f"{a.alpha:g}. With few or uniform tasks the bootstrap interval "
+                "understates uncertainty."
+            )
     else:
-        expl = (f"Holm-adjusted p = {fmt_p(c.p_value_adjusted)} is below alpha {a.alpha:g} and "
-                f"the {level} ({ci_text}) excludes zero.")
+        expl = (
+            f"Holm-adjusted p = {fmt_p(c.p_value_adjusted)} is below alpha {a.alpha:g} and "
+            f"the {level} ({ci_text}) excludes zero."
+        )
     kv = [
         (level, ci_text),
         ("p / Holm", f"{fmt_p(c.p_value)} / {fmt_p(c.p_value_adjusted)}"),
         ("Cost ratio", _ratio_ci(c.cost_ratio)),
         ("Time ratio", _ratio_ci(c.duration_ratio)),
-        ("Paired tasks", f"{c.paired_tasks} ({c.tasks_better} better, {c.tasks_worse} worse, "
-                         f"{c.tasks_tied} tied)"),
+        (
+            "Paired tasks",
+            f"{c.paired_tasks} ({c.tasks_better} better, {c.tasks_worse} worse, "
+            f"{c.tasks_tied} tied)",
+        ),
     ]
     dl = "".join(f"<dt>{_e(k)}</dt><dd>{_e(v)}</dd>" for k, v in kv)
     return (
@@ -871,19 +994,41 @@ def _card(a: Analysis, c: Comparison) -> str:
 
 def _arm_table(a: Analysis) -> str:
     level = _ci_level(a.alpha)
-    heads = ["Arm", "Pass rate", level, "Tasks", "Trials", "Errors", "Cost / trial",
-             "Cost / pass", "Time / trial", "Tokens in / out", "Turns"]
+    heads = [
+        "Arm",
+        "Pass rate",
+        level,
+        "Tasks",
+        "Trials",
+        "Errors",
+        "Cost / trial",
+        "Cost / pass",
+        "Time / trial",
+        "Tokens in / out",
+        "Turns",
+    ]
     rows = []
     for s in a.arms:
         badge = '<span class="badge">baseline</span>' if s.arm == a.baseline else ""
-        vals = [fmt_pct(s.pass_rate.estimate), _pct_ci(s.pass_rate), str(s.tasks), str(s.trials),
-                str(s.errors), fmt_cost(s.mean_cost_usd.estimate), fmt_cost(s.cost_per_pass_usd),
-                fmt_duration(s.mean_duration_s.estimate), _tokens(s), fmt_count(s.mean_turns)]
+        vals = [
+            fmt_pct(s.pass_rate.estimate),
+            _pct_ci(s.pass_rate),
+            str(s.tasks),
+            str(s.trials),
+            str(s.errors),
+            fmt_cost(s.mean_cost_usd.estimate),
+            fmt_cost(s.cost_per_pass_usd),
+            fmt_duration(s.mean_duration_s.estimate),
+            _tokens(s),
+            fmt_count(s.mean_turns),
+        ]
         tds = "".join(f"<td>{_e(v)}</td>" for v in vals)
         rows.append(f'<tr><td class="name" title="{_e(s.arm)}">{_e(s.arm)}{badge}</td>{tds}</tr>')
     th = "".join(f"<th>{_e(h)}</th>" for h in heads)
-    return (f'<div class="scroll"><table><thead><tr>{th}</tr></thead>'
-            f'<tbody>{"".join(rows)}</tbody></table></div>')
+    return (
+        f'<div class="scroll"><table><thead><tr>{th}</tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
 
 
 def _section(sid: str, title: str, body: str) -> str:
@@ -909,7 +1054,8 @@ def render_html(a: Analysis, *, title: str | None = None) -> str:
     ]
     body: list[str] = [
         f"<header><h1>{_e(a.experiment)}</h1>",
-        '<p class="meta">' + "".join(f"<span>{_e(k)} <b>{_e(v)}</b></span>" for k, v in meta)
+        '<p class="meta">'
+        + "".join(f"<span>{_e(k)} <b>{_e(v)}</b></span>" for k, v in meta)
         + "</p></header>",
     ]
 
@@ -919,26 +1065,39 @@ def render_html(a: Analysis, *, title: str | None = None) -> str:
         cards = '<p class="muted">Only one arm was analysed, so there is nothing to compare.</p>'
     body.append(_section("verdicts", f"Pass rate vs {a.baseline}", cards))
 
-    body.append(_section("arms", "Arms", _arm_table(a)
-                         + '<p class="small muted">Pass rate is the mean over tasks of each '
-                         "task's pass fraction. Costs and times are per completed trial.</p>"))
+    body.append(
+        _section(
+            "arms",
+            "Arms",
+            _arm_table(a) + '<p class="small muted">Pass rate is the mean over tasks of each '
+            "task's pass fraction. Costs and times are per completed trial.</p>",
+        )
+    )
 
     if a.comparisons:
-        fig = (f"<figure>{_forest_svg(a)}<figcaption>Dots: estimated difference in pass rate "
-               f"against {_e(a.baseline)}; whiskers: {_e(level)}. Intervals that cross the dashed "
-               "zero line are consistent with no difference.</figcaption></figure>")
+        fig = (
+            f"<figure>{_forest_svg(a)}<figcaption>Dots: estimated difference in pass rate "
+            f"against {_e(a.baseline)}; whiskers: {_e(level)}. Intervals that cross the dashed "
+            "zero line are consistent with no difference.</figcaption></figure>"
+        )
         body.append(_section("forest", "Difference in pass rate", fig))
 
-    with_cost = [s for s in a.arms if _num(s.mean_cost_usd.estimate) is not None
-                 and _num(s.pass_rate.estimate) is not None]
+    with_cost = [
+        s
+        for s in a.arms
+        if _num(s.mean_cost_usd.estimate) is not None and _num(s.pass_rate.estimate) is not None
+    ]
     if with_cost:
         missing = [s.arm for s in a.arms if s not in with_cost]
-        cap = (f"Each arm's mean cost per trial against its pass rate; whiskers show {_e(level)}s "
-               "on both axes. Up and to the left is better; the dashed line joins arms that no "
-               "other arm beats on both cost and pass rate.")
+        cap = (
+            f"Each arm's mean cost per trial against its pass rate; whiskers show {_e(level)}s "
+            "on both axes. Up and to the left is better; the dashed line joins arms that no "
+            "other arm beats on both cost and pass rate."
+        )
         if missing:
-            cap += (" Not shown (no cost or pass-rate data): "
-                    + ", ".join(_e(m) for m in missing) + ".")
+            cap += (
+                " Not shown (no cost or pass-rate data): " + ", ".join(_e(m) for m in missing) + "."
+            )
         fig = f"<figure>{_scatter_svg(a, with_cost)}<figcaption>{cap}</figcaption></figure>"
     else:
         fig = '<p class="muted">No arm reported cost, so the cost chart is omitted.</p>'
@@ -949,31 +1108,39 @@ def render_html(a: Analysis, *, title: str | None = None) -> str:
     if n_tasks == 0:
         heat = '<p class="muted">No task results.</p>'
     else:
-        intro = ('<p class="small muted">Each cell shows passes / completed trials for one task '
-                 'and arm ("+1 err" marks infrastructure errors, excluded from the count). Tasks '
-                 "where arms disagree come first.</p>")
+        intro = (
+            '<p class="small muted">Each cell shows passes / completed trials for one task '
+            'and arm ("+1 err" marks infrastructure errors, excluded from the count). Tasks '
+            "where arms disagree come first.</p>"
+        )
         heat = intro + _LEGEND
         if n_tasks <= HEATMAP_FULL_LIMIT:
             heat += _heat_table(disagree + agree, arms, lookup)
         else:
             if disagree:
-                heat += (f'<p class="small">{len(disagree)} of {n_tasks} tasks have different '
-                         "results across arms.</p>" + _heat_table(disagree, arms, lookup))
+                heat += (
+                    f'<p class="small">{len(disagree)} of {n_tasks} tasks have different '
+                    "results across arms.</p>" + _heat_table(disagree, arms, lookup)
+                )
             else:
-                heat += (f'<p class="small">All {n_tasks} tasks have the same result in every '
-                         "arm.</p>")
+                heat += (
+                    f'<p class="small">All {n_tasks} tasks have the same result in every arm.</p>'
+                )
             if agree:
-                heat += (f"<details><summary>{len(agree)} tasks with the same result in every arm"
-                         f"</summary>{_heat_table(agree, arms, lookup)}</details>")
+                heat += (
+                    f"<details><summary>{len(agree)} tasks with the same result in every arm"
+                    f"</summary>{_heat_table(agree, arms, lookup)}</details>"
+                )
     body.append(_section("tasks", "Results by task", heat))
 
     if a.flaky_tasks:
         shown = a.flaky_tasks[:FLAKY_INLINE_LIMIT]
-        flaky = ('<p class="small muted">Outcome varied across repeats within at least one arm. '
-                 "These tasks add noise; more repeats narrow their uncertainty.</p>"
-                 + _chips(shown))
+        flaky = (
+            '<p class="small muted">Outcome varied across repeats within at least one arm. '
+            "These tasks add noise; more repeats narrow their uncertainty.</p>" + _chips(shown)
+        )
         if len(a.flaky_tasks) > len(shown):
-            rest = a.flaky_tasks[len(shown):]
+            rest = a.flaky_tasks[len(shown) :]
             flaky += f"<details><summary>{len(rest)} more</summary>{_chips(rest)}</details>"
         body.append(_section("flaky", f"Flaky tasks ({len(a.flaky_tasks)})", flaky))
 

@@ -34,8 +34,15 @@ def make_ctx(tmp_path: Path, spec: AgentSpec, *, prompt: str = "Fix it.", soluti
     art.mkdir(exist_ok=True)
     task = Task(id="t1", path=tmp_path, prompt=prompt, check=("x",), solution=solution)
     return TrialContext(
-        spec=spec, task=task, arm=Arm(name="a", agent=spec), repeat=0, attempt=0,
-        prompt=prompt, workspace=ws, artifacts=art, seed=42,
+        spec=spec,
+        task=task,
+        arm=Arm(name="a", agent=spec),
+        repeat=0,
+        attempt=0,
+        prompt=prompt,
+        workspace=ws,
+        artifacts=art,
+        seed=42,
     )
 
 
@@ -46,8 +53,14 @@ def proc_result(tmp_path: Path, stdout: str | bytes = "", stderr: str = "", code
     else:
         out.write_text(stdout, encoding="utf-8")
     err.write_text(stderr, encoding="utf-8")
-    return ProcResult(exit_code=code, timed_out=kw.get("timed_out", False), duration_s=1.0,
-                      stdout_path=out, stderr_path=err, start_error=kw.get("start_error"))
+    return ProcResult(
+        exit_code=code,
+        timed_out=kw.get("timed_out", False),
+        duration_s=1.0,
+        stdout_path=out,
+        stderr_path=err,
+        start_error=kw.get("start_error"),
+    )
 
 
 def fixture(name: str) -> str:
@@ -58,8 +71,12 @@ def fixture(name: str) -> str:
 
 
 def test_registry_classes():
-    expected = {"claude-code": ClaudeCodeAdapter, "codex": CodexAdapter,
-                "command": CommandAdapter, "mock": MockAdapter}
+    expected = {
+        "claude-code": ClaudeCodeAdapter,
+        "codex": CodexAdapter,
+        "command": CommandAdapter,
+        "mock": MockAdapter,
+    }
     for name in ADAPTER_NAMES:
         adapter = get_adapter(name)
         assert isinstance(adapter, expected[name])
@@ -83,23 +100,53 @@ def claude_argv(tmp_path, **kw):
 
 def test_claude_minimal_argv(tmp_path):
     argv = claude_argv(tmp_path)
-    assert argv == ["definitely-not-a-real-claude", *CLAUDE_BASE,
-                    "--permission-mode", "bypassPermissions"]
+    assert argv == [
+        "definitely-not-a-real-claude",
+        *CLAUDE_BASE,
+        "--permission-mode",
+        "bypassPermissions",
+    ]
 
 
 def test_claude_all_options_argv(tmp_path):
     argv = claude_argv(
-        tmp_path, model="opus", effort="xhigh", args=("--verbose",), env={"A": "1"},
-        options={"executable": "nope-claude", "permission_mode": "acceptEdits",
-                 "max_budget_usd": 2.5, "max_turns": 30, "safe_mode": True, "bare": True,
-                 "setting_sources": "project,local", "append_system_prompt": "Be brief."},
+        tmp_path,
+        model="opus",
+        effort="xhigh",
+        args=("--verbose",),
+        env={"A": "1"},
+        options={
+            "executable": "nope-claude",
+            "permission_mode": "acceptEdits",
+            "max_budget_usd": 2.5,
+            "max_turns": 30,
+            "safe_mode": True,
+            "bare": True,
+            "setting_sources": "project,local",
+            "append_system_prompt": "Be brief.",
+        },
     )
-    assert argv == ["nope-claude", *CLAUDE_BASE, "--permission-mode", "acceptEdits",
-                    "--model", "opus", "--effort", "xhigh", "--max-budget-usd", "2.5",
-                    "--max-turns", "30", "--safe-mode", "--bare",
-                    "--setting-sources", "project,local",
-                    "--append-system-prompt-file", str(tmp_path / "art" / SYSTEM_PROMPT_FILE),
-                    "--verbose"]
+    assert argv == [
+        "nope-claude",
+        *CLAUDE_BASE,
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "opus",
+        "--effort",
+        "xhigh",
+        "--max-budget-usd",
+        "2.5",
+        "--max-turns",
+        "30",
+        "--safe-mode",
+        "--bare",
+        "--setting-sources",
+        "project,local",
+        "--append-system-prompt-file",
+        str(tmp_path / "art" / SYSTEM_PROMPT_FILE),
+        "--verbose",
+    ]
     assert (tmp_path / "art" / SYSTEM_PROMPT_FILE).read_text(encoding="utf-8") == "Be brief."
 
 
@@ -121,14 +168,17 @@ def test_claude_option_combinations(tmp_path, r):
         expected = ["nope-claude", *CLAUDE_BASE, "--permission-mode", "bypassPermissions"]
         for k in FLAG_OPTIONS:  # flags are emitted in a fixed order
             if k in combo:
-                expected += [str(tmp_path / "art" / x) if x == SYSTEM_PROMPT_FILE else x
-                             for x in FLAG_OPTIONS[k][1]]
+                expected += [
+                    str(tmp_path / "art" / x) if x == SYSTEM_PROMPT_FILE else x
+                    for x in FLAG_OPTIONS[k][1]
+                ]
         assert argv == expected
 
 
 def test_claude_false_flags_omitted(tmp_path):
-    argv = claude_argv(tmp_path, options={"executable": "x-claude", "safe_mode": False,
-                                          "bare": False})
+    argv = claude_argv(
+        tmp_path, options={"executable": "x-claude", "safe_mode": False, "bare": False}
+    )
     assert "--safe-mode" not in argv and "--bare" not in argv
 
 
@@ -171,8 +221,9 @@ def test_claude_valid_efforts(effort):
 
 def claude_parse(tmp_path, stdout, stderr="", code=0, **kw):
     spec = AgentSpec(adapter="claude-code")
-    return ClaudeCodeAdapter().parse(make_ctx(tmp_path, spec),
-                                     proc_result(tmp_path, stdout, stderr, code, **kw))
+    return ClaudeCodeAdapter().parse(
+        make_ctx(tmp_path, spec), proc_result(tmp_path, stdout, stderr, code, **kw)
+    )
 
 
 def test_claude_parse_success(tmp_path):
@@ -195,8 +246,13 @@ def test_claude_parse_pretty_printed(tmp_path):
     assert u.final_message == "ok" and u.output_tokens == 2
 
 
-@pytest.mark.parametrize("name, subtype", [("claude_max_turns.json", "error_max_turns"),
-                                           ("claude_max_budget.json", "error_max_budget_usd")])
+@pytest.mark.parametrize(
+    "name, subtype",
+    [
+        ("claude_max_turns.json", "error_max_turns"),
+        ("claude_max_budget.json", "error_max_budget_usd"),
+    ],
+)
 def test_claude_limits_are_agent_failures(tmp_path, name, subtype):
     u = claude_parse(tmp_path, fixture(name), code=1)
     assert u.infra_error is None
@@ -210,8 +266,10 @@ def test_claude_ordinary_error_is_agent_failure(tmp_path):
     assert u.final_message == "error_during_execution"
 
 
-@pytest.mark.parametrize("name, needle", [("claude_auth_error.json", "Invalid API key"),
-                                          ("claude_rate_limited.json", "429")])
+@pytest.mark.parametrize(
+    "name, needle",
+    [("claude_auth_error.json", "Invalid API key"), ("claude_rate_limited.json", "429")],
+)
 def test_claude_infra_errors_in_result(tmp_path, name, needle):
     u = claude_parse(tmp_path, fixture(name), code=1)
     assert u.infra_error is not None and needle in u.infra_error
@@ -219,8 +277,12 @@ def test_claude_infra_errors_in_result(tmp_path, name, needle):
 
 
 def test_claude_success_mentioning_429_is_not_infra(tmp_path):
-    obj = {"type": "result", "subtype": "success", "is_error": False,
-           "result": "Fixed the off-by-one on line 429; rate limit logic untouched."}
+    obj = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": "Fixed the off-by-one on line 429; rate limit logic untouched.",
+    }
     assert claude_parse(tmp_path, json.dumps(obj)).infra_error is None
 
 
@@ -264,20 +326,37 @@ def test_claude_real_unknown_model_is_infra(tmp_path):
     assert "selected model" in u.infra_error
 
 
-@pytest.mark.parametrize("status, infra", [(400, False), (401, True), (404, True),
-                                           (429, True), (529, True), (None, False)])
+@pytest.mark.parametrize(
+    "status, infra",
+    [(400, False), (401, True), (404, True), (429, True), (529, True), (None, False)],
+)
 def test_claude_api_error_status(status, infra):
-    obj = {"type": "result", "subtype": "success", "is_error": True,
-           "result": "something went wrong", "api_error_status": status}
+    obj = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": True,
+        "result": "something went wrong",
+        "api_error_status": status,
+    }
     assert (parse_result_text(json.dumps(obj), "", 1).infra_error is not None) is infra
 
 
 def test_claude_parse_wrong_types_ignored():
-    obj = {"type": "result", "total_cost_usd": "1.0", "num_turns": True,
-           "usage": {"input_tokens": "12", "output_tokens": -1}, "result": 5}
+    obj = {
+        "type": "result",
+        "total_cost_usd": "1.0",
+        "num_turns": True,
+        "usage": {"input_tokens": "12", "output_tokens": -1},
+        "result": 5,
+    }
     u = parse_result_text(json.dumps(obj), "", 0)
     assert (u.cost_usd, u.turns, u.input_tokens, u.output_tokens, u.final_message) == (
-        None, None, None, None, None)
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
 
 
 def test_claude_last_object_fallback():
@@ -301,22 +380,48 @@ def codex_build(tmp_path, **kw):
 def test_codex_minimal_argv(tmp_path):
     ws = str(tmp_path / "ws")
     assert codex_build(tmp_path) == [
-        "nope-codex", "exec", "--json", "--skip-git-repo-check", "--ephemeral", "-C", ws,
-        "--sandbox", "workspace-write", "-"]
+        "nope-codex",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "-C",
+        ws,
+        "--sandbox",
+        "workspace-write",
+        "-",
+    ]
 
 
-@pytest.mark.parametrize("bypass, sandbox, model, effort, ignore, args",
-                         [c for c in itertools.product([False, True], [None, "read-only"],
-                                                       [None, "gpt-5"], [None, "high"],
-                                                       [False, True], [(), ("--oss",)])
-                          if not (c[0] and c[1])])  # bypass + sandbox: see validate test
+@pytest.mark.parametrize(
+    "bypass, sandbox, model, effort, ignore, args",
+    [
+        c
+        for c in itertools.product(
+            [False, True],
+            [None, "read-only"],
+            [None, "gpt-5"],
+            [None, "high"],
+            [False, True],
+            [(), ("--oss",)],
+        )
+        if not (c[0] and c[1])
+    ],
+)  # bypass + sandbox: see validate test
 def test_codex_argv_combinations(tmp_path, bypass, sandbox, model, effort, ignore, args):
     options = {"bypass_sandbox": bypass, "ignore_user_config": ignore}
     if sandbox:
         options["sandbox"] = sandbox
     argv = codex_build(tmp_path, model=model, effort=effort, args=args, options=options)
-    expected = ["nope-codex", "exec", "--json", "--skip-git-repo-check", "--ephemeral",
-                "-C", str(tmp_path / "ws")]
+    expected = [
+        "nope-codex",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "-C",
+        str(tmp_path / "ws"),
+    ]
     if bypass:
         expected.append("--dangerously-bypass-approvals-and-sandbox")
     else:
@@ -348,8 +453,11 @@ def test_codex_validate_errors(kw, fragment):
     assert any(fragment in p for p in problems), problems
 
 
-PRICES = {"price_input_per_mtok": 1.25, "price_cached_input_per_mtok": 0.125,
-          "price_output_per_mtok": 10.0}
+PRICES = {
+    "price_input_per_mtok": 1.25,
+    "price_cached_input_per_mtok": 0.125,
+    "price_output_per_mtok": 10.0,
+}
 
 
 def test_codex_parse_success_with_cost():
@@ -430,8 +538,12 @@ def test_codex_valid_efforts(effort):
 
 def test_codex_no_events_nonzero_exit_is_infra(tmp_path):
     spec = AgentSpec(adapter="codex")
-    res = proc_result(tmp_path, (FIXTURES / "claude_garbage.txt").read_bytes(),
-                      "Error: unexpected argument", code=2)
+    res = proc_result(
+        tmp_path,
+        (FIXTURES / "claude_garbage.txt").read_bytes(),
+        "Error: unexpected argument",
+        code=2,
+    )
     u = CodexAdapter().parse(make_ctx(tmp_path, spec), res)
     assert "code 2" in u.infra_error and "unexpected argument" in u.infra_error
 
@@ -455,17 +567,42 @@ def test_expand_placeholders():
 
 
 def test_command_build_expands_and_writes_prompt(tmp_path):
-    spec = AgentSpec(adapter="command", model="m1", effort="e1",
-                     command=("{python}", "-c", "pass", "{prompt_file}", "{prompt}", "{workspace}",
-                              "{artifacts}", "{model}", "{effort}", "{seed}", "{{lit}}"))
+    spec = AgentSpec(
+        adapter="command",
+        model="m1",
+        effort="e1",
+        command=(
+            "{python}",
+            "-c",
+            "pass",
+            "{prompt_file}",
+            "{prompt}",
+            "{workspace}",
+            "{artifacts}",
+            "{model}",
+            "{effort}",
+            "{seed}",
+            "{{lit}}",
+        ),
+    )
     assert CommandAdapter().validate(spec) == []
     ctx = make_ctx(tmp_path, spec, prompt="hello\nworld")
     inv = CommandAdapter().build(ctx)
     prompt_file = ctx.artifacts / "prompt.md"
     assert prompt_file.read_bytes() == b"hello\nworld\n"
     assert Path(inv.argv[0]).resolve() == Path(sys.executable).resolve()
-    assert inv.argv[1:] == ["-c", "pass", str(prompt_file), "hello\nworld", str(ctx.workspace),
-                            str(ctx.artifacts), "m1", "e1", "42", "{lit}"]
+    assert inv.argv[1:] == [
+        "-c",
+        "pass",
+        str(prompt_file),
+        "hello\nworld",
+        str(ctx.workspace),
+        str(ctx.artifacts),
+        "m1",
+        "e1",
+        "42",
+        "{lit}",
+    ]
     assert inv.stdin is None
 
 
@@ -475,8 +612,11 @@ def test_command_stdin_option(tmp_path):
 
 
 def test_command_shell_option_runs(tmp_path):
-    spec = AgentSpec(adapter="command", options={"shell": True},
-                     command=("{python}", "-c", '"print(1+1)"', ">", "{artifacts}/out.txt"))
+    spec = AgentSpec(
+        adapter="command",
+        options={"shell": True},
+        command=("{python}", "-c", '"print(1+1)"', ">", "{artifacts}/out.txt"),
+    )
     inv = CommandAdapter().build(make_ctx(tmp_path, spec))
     assert inv.argv[0] != "{python}"
     subprocess.run(inv.argv, cwd=inv.cwd, check=True, timeout=30)
@@ -509,19 +649,31 @@ def test_command_check_available():
 
 def test_usage_json_contract(tmp_path):
     path = tmp_path / "usage.json"
-    path.write_text(json.dumps({
-        "cost_usd": 0.5, "input_tokens": 10, "output_tokens": "20", "cache_read_tokens": 1.5,
-        "cache_write_tokens": True, "turns": 3, "final_message": "hi", "infra_error": 7,
-        "extra": "ignored",
-    }), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "cost_usd": 0.5,
+                "input_tokens": 10,
+                "output_tokens": "20",
+                "cache_read_tokens": 1.5,
+                "cache_write_tokens": True,
+                "turns": 3,
+                "final_message": "hi",
+                "infra_error": 7,
+                "extra": "ignored",
+            }
+        ),
+        encoding="utf-8",
+    )
     u = _read_usage_file(path)
     assert (u.cost_usd, u.input_tokens, u.turns, u.final_message) == (0.5, 10, 3, "hi")
     assert u.output_tokens is None and u.cache_read_tokens is None
     assert u.cache_write_tokens is None and u.infra_error is None
 
 
-@pytest.mark.parametrize("content", ["", "not json", "[1, 2]", '{"cost_usd": "NaN"}',
-                                     '{"cost_usd": -1}'])
+@pytest.mark.parametrize(
+    "content", ["", "not json", "[1, 2]", '{"cost_usd": "NaN"}', '{"cost_usd": -1}']
+)
 def test_usage_json_garbage(tmp_path, content):
     path = tmp_path / "usage.json"
     path.write_text(content, encoding="utf-8")
@@ -539,9 +691,11 @@ def test_command_parse(tmp_path):
 
 
 def test_command_end_to_end(tmp_path):
-    script = ("import json,pathlib,sys; a=pathlib.Path(sys.argv[1]);"
-              "p=(a/'prompt.md').read_text(encoding='utf-8');"
-              "(a/'usage.json').write_text(json.dumps(dict(cost_usd=0.25,final_message=p)))")
+    script = (
+        "import json,pathlib,sys; a=pathlib.Path(sys.argv[1]);"
+        "p=(a/'prompt.md').read_text(encoding='utf-8');"
+        "(a/'usage.json').write_text(json.dumps(dict(cost_usd=0.25,final_message=p)))"
+    )
     spec = AgentSpec(adapter="command", command=("{python}", "-c", script, "{artifacts}"))
     ctx = make_ctx(tmp_path, spec, prompt="say hi")
     inv = CommandAdapter().build(ctx)
@@ -575,10 +729,19 @@ def test_mock_validate_errors(options, fragment):
 
 
 def test_mock_validate_ok():
-    spec = AgentSpec(adapter="mock", options={
-        "solve_rate": 0.3, "cost_usd": [0.01, 0.05], "duration_s": 0, "tokens": 500,
-        "fail_mode": "break", "task_rates": {"t1": 1.0}, "crash_rate": 0.1,
-        "infra_error_rate": 0.05})
+    spec = AgentSpec(
+        adapter="mock",
+        options={
+            "solve_rate": 0.3,
+            "cost_usd": [0.01, 0.05],
+            "duration_s": 0,
+            "tokens": 500,
+            "fail_mode": "break",
+            "task_rates": {"t1": 1.0},
+            "crash_rate": 0.1,
+            "infra_error_rate": 0.05,
+        },
+    )
     assert MockAdapter().validate(spec) == []
 
 
@@ -650,8 +813,9 @@ def test_command_shell_allows_prompt_file_and_literal_braces():
 
 
 def test_command_shell_rejects_newline_in_value(tmp_path):
-    spec = AgentSpec(adapter="command", model="a\nb", command=("tool", "{model}"),
-                     options={"shell": True})
+    spec = AgentSpec(
+        adapter="command", model="a\nb", command=("tool", "{model}"), options={"shell": True}
+    )
     with pytest.raises(AdapterError, match="newline"):
         CommandAdapter().build(make_ctx(tmp_path, spec))
     # Unused placeholders are not checked.
@@ -662,8 +826,9 @@ def test_command_shell_rejects_newline_in_value(tmp_path):
 @pytest.mark.parametrize("value", ["100%", "%USERNAME%", "hi!", 'say "x"'])
 def test_command_shell_rejects_cmd_expansion_on_windows(tmp_path, monkeypatch, value):
     monkeypatch.setattr(command_mod, "IS_WINDOWS", True)
-    spec = AgentSpec(adapter="command", model=value, command=("tool", "{model}"),
-                     options={"shell": True})
+    spec = AgentSpec(
+        adapter="command", model=value, command=("tool", "{model}"), options={"shell": True}
+    )
     with pytest.raises(AdapterError, match="cmd.exe"):
         CommandAdapter().build(make_ctx(tmp_path, spec))
     monkeypatch.setattr(command_mod, "IS_WINDOWS", False)
@@ -675,8 +840,12 @@ def test_command_shell_keeps_metacharacters_literal(tmp_path):
     marker = tmp_path / "pwned.txt"
     value = f"a&b|c^d<e>f & echo x>{marker}"
     script = "import sys; open(sys.argv[1], 'w', encoding='utf-8').write(sys.argv[2])"
-    spec = AgentSpec(adapter="command", model=value, options={"shell": True},
-                     command=("{python}", "-c", f'"{script}"', str(out), "{model}"))
+    spec = AgentSpec(
+        adapter="command",
+        model=value,
+        options={"shell": True},
+        command=("{python}", "-c", f'"{script}"', str(out), "{model}"),
+    )
     inv = CommandAdapter().build(make_ctx(tmp_path, spec))
     subprocess.run(inv.argv, cwd=inv.cwd, check=True, timeout=30)
     assert out.read_text(encoding="utf-8") == value
@@ -686,7 +855,7 @@ def test_command_shell_keeps_metacharacters_literal(tmp_path):
 # --------------------------------------------------------------------------- Windows batch shims
 
 
-@pytest.mark.parametrize("ch", list("&|<>^%!\"\r\n"))
+@pytest.mark.parametrize("ch", list('&|<>^%!"\r\n'))
 def test_batch_argv_problems_flags_each_character(ch):
     problems = base.batch_argv_problems(["C:/bin/claude.CMD", "-p", f"a{ch}b"])
     assert len(problems) == 1
@@ -739,8 +908,11 @@ def windows(monkeypatch):
 def test_claude_batch_shim_checked_up_front(tmp_path, windows):
     shim = str(fake_shim(tmp_path, "claude.cmd"))
     a = ClaudeCodeAdapter()
-    ok = AgentSpec(adapter="claude-code", model="sonnet",
-                   options={"executable": shim, "append_system_prompt": "a & b\n100%"})
+    ok = AgentSpec(
+        adapter="claude-code",
+        model="sonnet",
+        options={"executable": shim, "append_system_prompt": "a & b\n100%"},
+    )
     assert a.check_available(ok) is None  # the system prompt goes through a file
     for spec in (
         AgentSpec(adapter="claude-code", model="x&y", options={"executable": shim}),
@@ -752,8 +924,9 @@ def test_claude_batch_shim_checked_up_front(tmp_path, windows):
 
 def test_claude_batch_shim_rejects_unsafe_artifacts_path(tmp_path, windows):
     shim = str(fake_shim(tmp_path, "claude.cmd"))
-    spec = AgentSpec(adapter="claude-code",
-                     options={"executable": shim, "append_system_prompt": "hi"})
+    spec = AgentSpec(
+        adapter="claude-code", options={"executable": shim, "append_system_prompt": "hi"}
+    )
     (tmp_path / "100%").mkdir()
     ctx = make_ctx(tmp_path / "100%", spec)
     with pytest.raises(AdapterError, match="batch file"):
@@ -790,9 +963,12 @@ def test_command_batch_shim_checked(tmp_path, windows):
 def test_claude_batch_shim_end_to_end(tmp_path):
     shim = fake_shim(tmp_path, "claude.cmd")
     marker = tmp_path / "pwned.txt"
-    text = f"Line one.\nUse %USERNAME% & echo INJECTED>{marker}\n\"quoted\" ^ !x!"
-    spec = AgentSpec(adapter="claude-code", model="sonnet",
-                     options={"executable": str(shim), "append_system_prompt": text})
+    text = f'Line one.\nUse %USERNAME% & echo INJECTED>{marker}\n"quoted" ^ !x!'
+    spec = AgentSpec(
+        adapter="claude-code",
+        model="sonnet",
+        options={"executable": str(shim), "append_system_prompt": text},
+    )
     assert ClaudeCodeAdapter().check_available(spec) is None
     ctx = make_ctx(tmp_path, spec)
     inv = ClaudeCodeAdapter().build(ctx)

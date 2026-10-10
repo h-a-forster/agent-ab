@@ -54,7 +54,9 @@ def test_version(capsys):
 def test_module_entry_point_version():
     proc = subprocess.run(
         [sys.executable, "-m", "agent_ab", "--version"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert proc.returncode == 0
     assert __version__ in proc.stdout
@@ -134,8 +136,9 @@ def test_validate_summary(demo, capsys):
 
 
 def test_validate_selection(demo, capsys):
-    code, out, err = run_cli(capsys, "validate", demo / "experiment.toml", "--arms", "control",
-                             "--only", "fix-*")
+    code, out, err = run_cli(
+        capsys, "validate", demo / "experiment.toml", "--arms", "control", "--only", "fix-*"
+    )
     assert code == 0
     assert "1 tasks x 1 arms" in out
     assert "only one arm" in err
@@ -144,7 +147,7 @@ def test_validate_selection(demo, capsys):
 def test_validate_unavailable_adapter_is_a_warning(demo, capsys):
     cfg = demo / "experiment.claude-code.toml"
     text = cfg.read_text(encoding="utf-8").replace(
-        'max_turns = 30', 'max_turns = 30\nexecutable = "agent-ab-no-such-binary"'
+        "max_turns = 30", 'max_turns = 30\nexecutable = "agent-ab-no-such-binary"'
     )
     cfg.write_text(text, encoding="utf-8")
     code, out, err = run_cli(capsys, "validate", cfg)
@@ -163,15 +166,18 @@ def test_validate_tasks_on_scaffold(demo, capsys):
 def test_validate_tasks_flags_broken_tasks(demo, capsys):
     tasks = demo / "tasks"
     # Already solved: the check passes before the agent does anything.
-    shutil.copy(tasks / "roman-numerals" / "solution" / "roman.py",
-                tasks / "roman-numerals" / "repo" / "roman.py")
+    shutil.copy(
+        tasks / "roman-numerals" / "solution" / "roman.py",
+        tasks / "roman-numerals" / "repo" / "roman.py",
+    )
     # Wrong solution: the check fails even with the reference fix.
-    shutil.copy(tasks / "fix-slugify" / "repo" / "text_utils.py",
-                tasks / "fix-slugify" / "solution" / "text_utils.py")
+    shutil.copy(
+        tasks / "fix-slugify" / "repo" / "text_utils.py",
+        tasks / "fix-slugify" / "solution" / "text_utils.py",
+    )
     # No solution: only the must-fail half can be checked (a warning, not a problem).
     shutil.rmtree(tasks / "merge-intervals" / "solution")
-    code, out, err = run_cli(capsys, "validate", demo / "experiment.toml", "--tasks",
-                             "--jobs", "2")
+    code, out, err = run_cli(capsys, "validate", demo / "experiment.toml", "--tasks", "--jobs", "2")
     assert code == 1
     assert "roman-numerals: check passes on the untouched repo" in out
     assert "fix-slugify: check fails with the solution applied" in out
@@ -185,8 +191,7 @@ def test_validate_tasks_flags_broken_tasks(demo, capsys):
 
 def test_dry_run_creates_nothing(demo, capsys):
     out_dir = demo / "the-run"
-    code, out, err = run_cli(capsys, "run", demo / "experiment.toml", "--dry-run",
-                             "--out", out_dir)
+    code, out, err = run_cli(capsys, "run", demo / "experiment.toml", "--dry-run", "--out", out_dir)
     assert code == 0
     assert "16 planned" in err and "dry run" in err
     assert not out_dir.exists() and not (demo / "runs").exists()
@@ -228,8 +233,9 @@ def test_run_quiet_has_no_progress_lines(finished_run):
 
 
 def test_quiet_suppresses_trial_lines(demo, capsys):
-    code, _, err = run_cli(capsys, "run", demo / "experiment.toml", *SMALL, "--quiet",
-                           "--only", "parse-duration")
+    code, _, err = run_cli(
+        capsys, "run", demo / "experiment.toml", *SMALL, "--quiet", "--only", "parse-duration"
+    )
     assert code == 0
     assert not PROGRESS_RE.search(err)
 
@@ -238,16 +244,28 @@ def test_budget_stop_then_resume(demo, capsys):
     cfg = demo / "experiment.toml"
     run_dir = demo / "r"
     # One job and a budget below one trial's cost: exactly one trial runs, then it stops.
-    code, _, err = run_cli(capsys, "run", cfg, "--out", run_dir, "--budget", "0.001",
-                           "--jobs", "1", *SMALL)
+    code, _, err = run_cli(
+        capsys, "run", cfg, "--out", run_dir, "--budget", "0.001", "--jobs", "1", *SMALL
+    )
     assert code == 0
     assert "budget" in err and "--resume" in err
     assert "--repeats 1" in err  # the hint reproduces the fingerprint-relevant overrides
     assert len(RunStore.open(run_dir).records()) == 1
 
     # A different --repeats changes the fingerprint, so resuming must refuse.
-    code, _, err = run_cli(capsys, "run", cfg, "--resume", run_dir, "--repeats", "2",
-                           "--only", "fix-slugify", "--only", "roman-numerals")
+    code, _, err = run_cli(
+        capsys,
+        "run",
+        cfg,
+        "--resume",
+        run_dir,
+        "--repeats",
+        "2",
+        "--only",
+        "fix-slugify",
+        "--only",
+        "roman-numerals",
+    )
     assert code == 1
     assert "changed" in err
 
@@ -288,9 +306,16 @@ def test_cancelled_summary_exits_130(demo, capsys, monkeypatch):
         if kwargs["options"].dry_run:  # the CLI's silent preflight
             return None
         RunStore.create(run_dir, exp, planned_trials=4)
-        return runner.RunSummary(run_dir=run_dir, planned=4, completed=1, errors=0,
-                                 skipped_budget=0, cancelled=True, total_cost_usd=0.0,
-                                 budget_exhausted=False)
+        return runner.RunSummary(
+            run_dir=run_dir,
+            planned=4,
+            completed=1,
+            errors=0,
+            skipped_budget=0,
+            cancelled=True,
+            total_cost_usd=0.0,
+            budget_exhausted=False,
+        )
 
     monkeypatch.setattr(runner, "run_experiment", cancelled)
     code, _, err = run_cli(capsys, "run", demo / "experiment.toml", "--out", demo / "r")
@@ -327,8 +352,9 @@ def test_report_out_file_and_dir(finished_run, tmp_path, capsys):
 
 def test_report_options(finished_run, capsys):
     _, run_dir = finished_run
-    code, out, _ = run_cli(capsys, "report", run_dir, "--baseline", "with-guide",
-                           "--alpha", "0.1", "--seed", "3")
+    code, out, _ = run_cli(
+        capsys, "report", run_dir, "--baseline", "with-guide", "--alpha", "0.1", "--seed", "3"
+    )
     assert code == 0
     assert "vs with-guide" in out
     code, _, err = run_cli(capsys, "report", run_dir, "--baseline", "nope")
@@ -347,12 +373,21 @@ def _partial_run(demo: Path) -> Path:
 
     def rec(tid, attempt, status, cost, error=None, finished="2026-01-01T00:00:0{}Z"):
         task, arm, rep = tid.split("__")
-        store.append(TrialRecord(
-            trial_id=tid, task=task, arm=arm, repeat=int(rep[1:]), attempt=attempt,
-            status=status, passed={"pass": True, "fail": False}.get(status), cost_usd=cost,
-            error=error, finished_at=finished.format(attempt),
-            artifacts=f"trials/{tid}/attempt-{attempt}",
-        ))
+        store.append(
+            TrialRecord(
+                trial_id=tid,
+                task=task,
+                arm=arm,
+                repeat=int(rep[1:]),
+                attempt=attempt,
+                status=status,
+                passed={"pass": True, "fail": False}.get(status),
+                cost_usd=cost,
+                error=error,
+                finished_at=finished.format(attempt),
+                artifacts=f"trials/{tid}/attempt-{attempt}",
+            )
+        )
         store.attempt_dir(tid, attempt).joinpath("agent.stdout").write_text("x", "utf-8")
 
     rec("fix-slugify__control__r0", 0, "pass", 0.25)
@@ -489,7 +524,7 @@ def test_out_onto_existing_run_exits_2_before_header(finished_run, capsys):
 def test_unavailable_adapter_fails_before_header(demo, capsys):
     cfg = demo / "experiment.claude-code.toml"
     text = cfg.read_text(encoding="utf-8").replace(
-        'max_turns = 30', 'max_turns = 30\nexecutable = "agent-ab-no-such-binary"'
+        "max_turns = 30", 'max_turns = 30\nexecutable = "agent-ab-no-such-binary"'
     )
     cfg.write_text(text, encoding="utf-8")
     code, _, err = run_cli(capsys, "run", cfg, "--out", demo / "r")
@@ -519,8 +554,15 @@ def test_report_out_reserved_device_name(finished_run, tmp_path, capsys, name):
 
 @pytest.mark.parametrize(
     ("flag", "value"),
-    [("--budget", "0"), ("--budget", "-1"), ("--budget", "nan"), ("--jobs", "0"),
-     ("--jobs", "x"), ("--repeats", "0"), ("--repeats", "-2")],
+    [
+        ("--budget", "0"),
+        ("--budget", "-1"),
+        ("--budget", "nan"),
+        ("--jobs", "0"),
+        ("--jobs", "x"),
+        ("--repeats", "0"),
+        ("--repeats", "-2"),
+    ],
 )
 def test_numeric_flags_must_be_positive(demo, capsys, flag, value):
     code, _, err = run_cli(capsys, "run", demo / "experiment.toml", flag, value)
@@ -533,12 +575,28 @@ def _hostile_run(demo: Path) -> Path:
     run_dir = demo / "hostile"
     RunStore.create(run_dir, exp, planned_trials=24)
     lines = [
-        {"trial_id": "fix-slugify__control__r0", "task": "fix-slugify", "arm": "control",
-         "repeat": 0, "attempt": 2, "status": "error", "cost_usd": 10**400,
-         "error": "boom\x1b]0;owned\x07\x1b[2J\x1b[1A hidden", "artifacts": "../../.."},
-        {"trial_id": "x\x1b[31m__with-guide__r0", "task": "x\x1b[31m", "arm": "with-guide",
-         "repeat": 0, "attempt": 2, "status": "error", "cost_usd": 1e308, "duration_s": 1e300,
-         "error": "\x9b2J\x00bad"},
+        {
+            "trial_id": "fix-slugify__control__r0",
+            "task": "fix-slugify",
+            "arm": "control",
+            "repeat": 0,
+            "attempt": 2,
+            "status": "error",
+            "cost_usd": 10**400,
+            "error": "boom\x1b]0;owned\x07\x1b[2J\x1b[1A hidden",
+            "artifacts": "../../..",
+        },
+        {
+            "trial_id": "x\x1b[31m__with-guide__r0",
+            "task": "x\x1b[31m",
+            "arm": "with-guide",
+            "repeat": 0,
+            "attempt": 2,
+            "status": "error",
+            "cost_usd": 1e308,
+            "duration_s": 1e300,
+            "error": "\x9b2J\x00bad",
+        },
     ]
     with open(run_dir / "trials.jsonl", "a", encoding="utf-8") as f:
         for line in lines:
@@ -582,8 +640,20 @@ def test_number_formatting_caps():
 
 def test_power_json_output(capsys):
     code, out, err = run_cli(
-        capsys, "power", "--effect", "20", "--tasks", "10,20", "--repeats", "1",
-        "--sims", "20", "--seed", "5", "--format", "json",
+        capsys,
+        "power",
+        "--effect",
+        "20",
+        "--tasks",
+        "10,20",
+        "--repeats",
+        "1",
+        "--sims",
+        "20",
+        "--seed",
+        "5",
+        "--format",
+        "json",
     )
     assert code == 0, err
     data = json.loads(out)
@@ -601,9 +671,17 @@ def test_power_text_output(capsys):
 
 @pytest.mark.parametrize(
     ("flag", "value"),
-    [("--effect", "0"), ("--effect", "100"), ("--effect", "10,x"), ("--tasks", "10,,20"),
-     ("--tasks", "-5"), ("--repeats", "0"), ("--alpha", "2"), ("--sims", "0"),
-     ("--seed", "1.5")],
+    [
+        ("--effect", "0"),
+        ("--effect", "100"),
+        ("--effect", "10,x"),
+        ("--tasks", "10,,20"),
+        ("--tasks", "-5"),
+        ("--repeats", "0"),
+        ("--alpha", "2"),
+        ("--sims", "0"),
+        ("--seed", "1.5"),
+    ],
 )
 def test_power_bad_values_exit_2_with_one_line(capsys, flag, value):
     code, out, err = run_cli(capsys, "power", flag, value)
