@@ -1,0 +1,39 @@
+prompt = """
+`inix` is our small INI reader. Values are currently returned verbatim, but the deploy configs
+now reference each other (`url = http://${host}:${port}/api`), so please add interpolation.
+Touch only what is needed in `inix/` (the new logic belongs in a new `inix/interpolate.py`;
+`Config` and the writer must use it). Keep the existing public API.
+
+Syntax, inside any value:
+
+- `${key}` is replaced by the value of `key` in the same section as the value being resolved.
+- `${section:key}` refers to another section (split the body at the first `:`).
+- `${name|default}` uses the literal text `default` when the referenced key (or section) does
+  not exist. Split at the first `|`; the name part is stripped of surrounding whitespace
+  (`${ host }` works), the default is used exactly as written (not stripped, not interpolated,
+  may be empty, ends at the first `}`).
+- `$$` is a literal `$`. A `$` followed by anything other than `$` or `{` is a literal `$`.
+- The referenced value is itself interpolated, in the context of the section it lives in
+  (so `[b] x = ${y}` referenced as `${b:x}` from section `a` reads `b`'s `y`). Text that was
+  produced by `$$` or by a referenced value is never scanned again: `$${x}` yields the text
+  `${x}`. Referencing the same key several times (`${a}${a}`) is fine.
+
+Errors: `inix.InterpolationError` (a `ValueError` subclass, exported from `inix`) is raised for
+a reference to a missing key/section without a default (the message contains the missing key
+name as written), for an unterminated `${` (no closing `}`), for an empty name (`${}`), and for
+reference cycles including self-reference, even when a default is given (the message contains
+the word `cycle`). An error inside a referenced value propagates even if a default was given.
+
+API changes:
+
+- `Config.get(section, key, fallback=..., raw=False)` returns the interpolated value by default;
+  `raw=True` returns the stored text and never raises `InterpolationError`. `fallback` only
+  covers a missing `section/key` itself, it never hides an `InterpolationError`.
+- `Config.items(section, raw=False)` interpolates every value likewise.
+- `getint`, `getfloat`, `getbool` convert the interpolated value.
+- `inix.writer.dumps(config, resolved=False)`: with `resolved=True` it writes interpolated values
+  (so the output contains no `${}` or `$$`); with the default it still writes the raw text.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "multi-file", "hard"]

@@ -1,0 +1,42 @@
+prompt = """
+The analytics dashboard's `sessions` package gives wrong numbers. Fix and extend
+`sessions/loader.py`, `sessionizer.py` and `report.py` (public API stays; new names are
+listed below). Event log lines are JSON objects `{"ts", "user", "type", "value"}`.
+
+Loading
+- `ts` may be an ISO-8601 string (anything `datetime.fromisoformat` accepts: `Z` or `+02:00`
+  offsets, fractional seconds, date-only, space separator) or a number of epoch seconds (`int`
+  or `float`, not `bool`). Naive ISO strings mean UTC. `Event.ts` is always an aware UTC
+  datetime. Non-finite or out-of-range numbers and unparsable values are errors.
+- `user` must be a non-empty string; `type` is optional (default `"event"`) but if present must
+  be a non-empty string; `value` is optional (default 0) but if present must be a finite
+  `int`/`float` (not `bool`, so `NaN`/`Infinity`, strings and `true` are errors). A line that is
+  not a JSON object is an error. Blank lines are skipped but still counted in line numbers
+  (1-based).
+- `load_events(lines)` keeps its behaviour (raises `EventError` with `.line` on the first bad
+  line). New `load_lenient(lines)` returns `(events, errors)` where `errors` is the list of
+  `EventError`s for all bad lines, in order, and `events` the good ones.
+
+`sessionize(events, gap=timedelta(minutes=30), max_duration=None, types=None)`
+- `types` (a collection of type names) keeps only events with those types (`None` = all; an
+  empty collection keeps nothing). Then exact duplicates by `(user, ts, type)` are dropped,
+  keeping the first one in input order.
+- Each user's events are ordered by `ts` (events with equal `ts` keep their input order) and
+  split into sessions: a new session starts when the time since the PREVIOUS event of that user
+  is strictly greater than `gap` (exactly `gap` stays in the session), or when
+  `max_duration` is given and the time since the session's FIRST event is strictly greater than
+  `max_duration`. `gap <= 0` or `max_duration <= 0` raises `ValueError`.
+- `Session.id` is `"<user>#<n>"` with `n` counting that user's sessions from 1 in time order.
+  `start`/`end` are the first/last event times and `events` the (ordered) tuple of events.
+  The result is sorted by `(start, user)`.
+
+`daily_report(sessions, utc_offset=timedelta(0))`
+- A session belongs to the local day of its START (`start + utc_offset`), even if it ends after
+  midnight. `utc_offset` must be strictly between -24h and +24h (else `ValueError`).
+  One `DayStats` row per day that has sessions, ascending: `sessions`, distinct `users`,
+  total `events`, `total_seconds` (sum of session durations as float), `avg_events`
+  (events per session, float) and `total_value` (sum of event values as float).
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "feature", "multi-file", "hard"]
