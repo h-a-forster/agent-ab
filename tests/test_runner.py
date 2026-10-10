@@ -55,10 +55,17 @@ class FakeAdapter(Adapter):
     """Runs ``options['script']`` with the interpreter; reads optional usage.json."""
 
     name = "fake"
-    option_keys = frozenset({"script", "missing", "build_error", "argv", "parse_error"})
+    option_keys = frozenset(
+        {"script", "missing", "build_error", "argv", "parse_error", "version", "version_error"}
+    )
 
     def check_available(self, spec: AgentSpec) -> str | None:
         return spec.options.get("missing")
+
+    def version(self, spec: AgentSpec) -> str | None:
+        if spec.options.get("version_error"):
+            raise RuntimeError("boom in version")
+        return spec.options.get("version")
 
     def build(self, ctx: TrialContext) -> AgentInvocation:
         if ctx.spec.options.get("build_error"):
@@ -197,6 +204,48 @@ def test_old_records_without_concurrency_load():
          "status": "pass"}
     )  # fmt: skip
     assert rec.concurrency is None
+
+
+def test_identity_fields_recorded(tmp_path):
+    init = {"model": "claude-x", "tools": ["Bash"], "mcp_servers": []}
+    usage = usage_snippet(
+        models=["m2", "m1", "m1"], agent_version="9.9.9", agent_init=init, cost_usd=0.1
+    )
+    arms = (
+        fake_arm("a", SOLVE + "\n" + usage, options={"version": "1.2.3"}),
+        fake_arm("b", SOLVE, options={"version": " 4.5.6 "}),
+        fake_arm("c", SOLVE, options={"version_error": True}),
+    )
+    run_experiment(make_exp(tmp_path, arms=arms), tmp_path / "run")
+    store = RunStore.open(tmp_path / "run")
+    # Versions are probed once per arm; an arm whose probe fails is simply absent.
+    assert store.meta["agent_versions"] == {"a": "1.2.3", "b": "4.5.6"}
+    by_arm = {r.arm: r for r in store.records()}
+    a, b, c = by_arm["a"], by_arm["b"], by_arm["c"]
+    assert a.models == ["m1", "m2"] and a.agent_init == init
+    assert a.agent_version == "9.9.9"  # reported by the agent itself wins over the probe
+    assert (b.models, b.agent_init, b.agent_version) == (None, None, "4.5.6")
+    assert (c.models, c.agent_version) == (None, None)
+    # Round trip through the log and record.json.
+    again = TrialRecord.from_dict(json.loads(json.dumps(a.to_dict())))
+    assert again == a
+
+
+def test_malformed_identity_fields_are_dropped(tmp_path):
+    usage = usage_snippet(models="claude", agent_version=3, agent_init=["x"])
+    arm = fake_arm("a", SOLVE + "\n" + usage)
+    run_experiment(make_exp(tmp_path, arms=(arm,)), tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert (rec.models, rec.agent_version, rec.agent_init) == (None, None, None)
+    assert "agent_versions" not in RunStore.open(tmp_path / "run").meta
+
+
+def test_old_records_without_identity_fields_load():
+    rec = TrialRecord.from_dict(
+        {"trial_id": "t__a__r0", "task": "t", "arm": "a", "repeat": 0, "attempt": 0,
+         "status": "pass"}
+    )  # fmt: skip
+    assert (rec.models, rec.agent_version, rec.agent_init) == (None, None, None)
 
 
 def test_default_run_dir(tmp_path):

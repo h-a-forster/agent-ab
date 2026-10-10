@@ -7,7 +7,13 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from agent_ab.adapters.base import Adapter, batch_argv_issue, check_batch_argv, read_text
+from agent_ab.adapters.base import (
+    Adapter,
+    batch_argv_issue,
+    check_batch_argv,
+    probe_version,
+    read_text,
+)
 from agent_ab.adapters.claude_code import _int, _looks_like_infra, _tail
 from agent_ab.adapters.command import _check_bool, _is_number, _resolve
 from agent_ab.model import AgentInvocation, AgentSpec, AgentUsage, ProcResult, TrialContext
@@ -181,6 +187,9 @@ class CodexAdapter(Adapter):
         # The workspace path is only known per attempt; build() checks it.
         issue = batch_argv_issue(self._argv(spec, resolved, None))
         return f"codex: {issue}" if issue else None
+
+    def version(self, spec: AgentSpec) -> str | None:
+        return probe_version(spec, "codex")  # prints e.g. "codex-cli 0.46.0"
 
     def _argv(self, spec: AgentSpec, exe: str, workspace: str | None) -> list[str]:
         o = spec.options

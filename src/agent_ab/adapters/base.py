@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
 
 from agent_ab.errors import AdapterError
 from agent_ab.model import AgentInvocation, AgentSpec, AgentUsage, ProcResult, TrialContext
+from agent_ab.proc import build_env
 
 IS_WINDOWS = os.name == "nt"
 
@@ -40,6 +43,10 @@ class Adapter(ABC):
         """Return a message if the agent cannot be launched on this machine, else None."""
         return None
 
+    def version(self, spec: AgentSpec) -> str | None:
+        """The agent CLI's version, or None when unknown. Must never raise; called once per arm."""
+        return None
+
     @abstractmethod
     def build(self, ctx: TrialContext) -> AgentInvocation:
         """Build the process invocation for one attempt. May write files under ``ctx.artifacts``."""
@@ -58,6 +65,49 @@ def read_text(path: Path, limit: int | None = None) -> str:
     if limit is not None and len(data) > limit:
         data = data[-limit:]
     return data.decode("utf-8", errors="replace")
+
+
+def read_head(path: Path, limit: int) -> str:
+    """The first ``limit`` bytes of a captured output file (``read_text`` keeps the tail)."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read(limit)
+    except OSError:
+        return ""
+    return data.decode("utf-8", errors="replace")
+
+
+_VERSION_NUMBER = re.compile(r"\d+(?:\.\d+)+\S*")
+_VERSION_TIMEOUT_S = 15.0
+
+
+def probe_version(spec: AgentSpec, default_exe: str) -> str | None:
+    """Run ``<executable> --version`` and return the version number it prints, else None.
+
+    Falls back to the first output line when no dotted number is found. Never raises: a
+    missing executable, a timeout or a non-zero exit all mean "unknown".
+    """
+    exe = spec.options.get("executable", default_exe)
+    if not isinstance(exe, str) or not exe.strip():
+        return None
+    try:
+        proc = subprocess.run(
+            [shutil.which(exe) or exe, "--version"],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            env=build_env(spec.env),
+            timeout=_VERSION_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if proc.returncode != 0:
+        return None
+    lines = proc.stdout.decode("utf-8", errors="replace").strip().splitlines()
+    if not lines or not lines[0].strip():
+        return None
+    match = _VERSION_NUMBER.search(lines[0])
+    return (match.group(0) if match else lines[0].strip())[:100]
 
 
 def is_batch_file(path: str | None) -> bool:

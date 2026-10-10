@@ -9,7 +9,7 @@ from html.parser import HTMLParser
 
 import pytest
 
-from agent_ab.model import Analysis, ArmSummary, Comparison, Interval, TaskCell
+from agent_ab.model import Analysis, ArmEnvironment, ArmSummary, Comparison, Interval, TaskCell
 from agent_ab.report import (
     fmt_cost,
     fmt_duration,
@@ -523,3 +523,50 @@ def test_html_escapes_hostile():
     text = "".join(p.text)
     assert HOSTILE in text  # shown literally to the reader
     assert "✓" in out  # non-ASCII notes survive in HTML
+
+
+# --------------------------------------------------------------------------- environment
+
+
+def analysis_with_environment() -> Analysis:
+    a = analysis_typical()
+    a.environment = [
+        ArmEnvironment("control", "haiku", ["claude-haiku-4-5-20251001"], ["2.1.296"], 3,
+                       ["Bash", "Edit"], [], ["p"], ["s"]),
+        ArmEnvironment("no-tests", "haiku", ["claude-haiku-4-5-20251001"], ["2.1.296"], 3,
+                       ["Bash", "Edit", "Web"], ["web", "db", "fs", "git"], [], ["s", "t"]),
+    ]  # fmt: skip
+    return a
+
+
+def test_environment_absent_changes_nothing():
+    a = analysis_typical()
+    outputs = [render_text(a), render_markdown(a), render_html(a), render_json(a)]
+    assert not any("environment" in o.lower() for o in outputs)
+    assert "environment" not in json.loads(render_json(a))["analysis"]
+
+
+def test_environment_shown_in_every_format():
+    a = analysis_with_environment()
+    text = render_text(a, width=120)
+    assert "Agent environment" in text
+    assert "haiku -> claude-haiku-4-5-20251001" in text and "2.1.296" in text
+    assert "web, db, fs +1" in text and "none" in text
+    md = render_markdown(a)
+    assert "## Agent environment" in md and "haiku → claude-haiku-4-5-20251001" in md
+    html = render_html(a)
+    assert 'id="environment"' in html and "claude-haiku-4-5-20251001" in html
+    doc = json.loads(render_json(a))["analysis"]
+    assert doc["environment"][0]["models"] == ["claude-haiku-4-5-20251001"]
+
+
+def test_environment_without_init_omits_startup_columns():
+    a = analysis_with_environment()
+    for e in a.environment:
+        e.init_trials = 0
+    md = render_markdown(a)
+    assert "Agent version" in md and "MCP servers" not in md
+    a.environment[0].init_trials = 1
+    a.environment[0].mcp_servers = []
+    md = render_markdown(a)
+    assert "MCP servers" in md and "| - | - | - | - |" in md

@@ -487,3 +487,70 @@ def test_records_outside_the_plan_are_ignored():
     assert a.completed_trials == 4
     assert any("do not belong" in n for n in a.notes)
     assert {s.arm for s in a.arms} == {"a", "b"}
+
+
+# --------------------------------------------------------------------------- environment
+
+
+def init(model="claude-haiku-5-5", tools=("Bash", "Edit"), mcp=(), plugins=("p",)):
+    return {
+        "model": model,
+        "tools": list(tools),
+        "mcp_servers": [{"name": n, "status": "connected"} for n in mcp],
+        "plugins": list(plugins),
+        "skills": ["s1"],
+        "agents": [],
+    }
+
+
+def env_meta(requested=("haiku", "haiku")):
+    m = meta()
+    for cfg, model in zip(m["config"]["arms"], requested, strict=True):
+        cfg["agent"] = {"model": model}
+    return m
+
+
+def env_grid(**per_arm):
+    return [
+        rec(t, arm, **kw) for t in ("t1", "t2") for arm, kw in per_arm.items()
+    ]  # fmt: skip
+
+
+def test_analyze_environment_absent_for_old_records():
+    a = analyze(meta(), grid(2, 1, lambda *_: True), n_boot=100)
+    assert a.environment == []
+    assert not any("model" in n or "version" in n for n in a.notes)
+
+
+def test_analyze_environment_summarises_and_flags_confounds():
+    records = env_grid(
+        control=dict(models=["claude-haiku-4-5"], agent_version="2.1.1", agent_init=init()),
+        treat=dict(
+            models=["claude-haiku-4-5", "claude-sonnet-5-5"],
+            agent_version="2.1.2",
+            agent_init=init(tools=("Bash", "Edit", "Extra"), mcp=("web",), plugins=()),
+        ),
+    )
+    a = analyze(env_meta(("haiku", "opus")), records, n_boot=100)
+    control, treat = a.environment
+    assert control.requested_model == "haiku" and control.models == ["claude-haiku-4-5"]
+    assert control.versions == ["2.1.1"] and control.init_trials == 2
+    assert treat.mcp_servers == ["web"] and treat.tools == ["Bash", "Edit", "Extra"]
+    notes = "\n".join(a.notes)
+    assert "treat used more than one model" in notes
+    assert "treat requested model opus but ran" in notes
+    assert "control requested" not in notes  # alias "haiku" resolves to a haiku ID
+    assert "different agent versions" in notes
+    assert "differ in tools" in notes and "treat adds Extra" in notes
+    assert "differ in MCP servers" in notes and "treat adds web" in notes
+    assert "differ in plugins" in notes and "treat lacks p" in notes
+
+
+def test_analyze_environment_models_fall_back_to_init():
+    records = env_grid(
+        control=dict(agent_init=init(model="claude-haiku-4-5")),
+        treat=dict(agent_init=init(model="claude-haiku-4-5")),
+    )
+    a = analyze(env_meta(), records, n_boot=100)
+    assert [e.models for e in a.environment] == [["claude-haiku-4-5"]] * 2
+    assert not any("Arms differ" in n for n in a.notes)

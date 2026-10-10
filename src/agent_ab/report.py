@@ -13,7 +13,7 @@ import math
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from .model import Analysis, ArmSummary, Comparison, Interval, TaskCell
+from .model import Analysis, ArmEnvironment, ArmSummary, Comparison, Interval, TaskCell
 
 JSON_SCHEMA = 1
 HEATMAP_FULL_LIMIT = 60  # above this many tasks, agreeing tasks collapse into <details>
@@ -281,6 +281,42 @@ def _pack(text: str, width: int, indent: str = "", first: str = "") -> list[str]
     return [ln.rstrip().replace(_NBSP, " ") for ln in lines]
 
 
+def _env_model(e: ArmEnvironment, arrow: str) -> str:
+    used = ", ".join(e.models)
+    if e.requested_model and used and e.requested_model != used:
+        return f"{e.requested_model} {arrow} {used}"
+    return used or e.requested_model or "-"
+
+
+def _env_table(a: Analysis, arrow: str = "->") -> tuple[list[str], list[list[str]]]:
+    """Header and rows of the agent-environment table; empty rows when nothing was recorded.
+
+    Start-up columns appear only when some arm recorded a start-up summary.
+    """
+    if not a.environment:
+        return [], []
+    has_init = any(e.init_trials for e in a.environment)
+    headers = ["Arm", "Model", "Agent version"]
+    if has_init:
+        headers += ["Tools", "MCP servers", "Plugins", "Skills"]
+    rows = []
+    for e in a.environment:
+        row = [e.arm, _env_model(e, arrow), ", ".join(e.versions) or "-"]
+        if has_init:
+            if e.init_trials:
+                servers = _short_list_text(e.mcp_servers) if e.mcp_servers else "none"
+                row += [str(len(e.tools)), servers, str(len(e.plugins)), str(len(e.skills))]
+            else:
+                row += ["-"] * 4
+        rows.append(row)
+    return headers, rows
+
+
+def _short_list_text(items: Sequence[str], limit: int = 3) -> str:
+    shown = ", ".join(items[:limit])
+    return shown + (f" +{len(items) - limit}" if len(items) > limit else "")
+
+
 def _clip(s: str, n: int) -> str:
     return s if len(s) <= n else s[: max(n - 1, 0)] + "~"
 
@@ -387,6 +423,14 @@ def render_text(a: Analysis, *, width: int = 100) -> str:
             ]
         )
     out += _text_table(headers, rows, right, width, drop_order=[10, 9, 3, 7, 2, 4])
+
+    headers, env_rows = _env_table(a)
+    if env_rows:
+        out.append("")
+        out.append("Agent environment (model as requested -> as used)")
+        ascii_rows = [[_ascii(c) for c in r] for r in env_rows]
+        right = [False, False, False] + [True] * (len(headers) - 3)
+        out += _text_table(headers, ascii_rows, right, width, drop_order=[6, 5, 4, 3, 2])
 
     if a.flaky_tasks:
         out.append("")
@@ -508,6 +552,14 @@ def render_markdown(a: Analysis) -> str:
     )
     out.append("")
 
+    headers, env_rows = _env_table(a, "→")
+    if env_rows:
+        out.append("## Agent environment")
+        out.append("")
+        right = [False, False, False] + [True] * (len(headers) - 3)
+        out += _md_table(headers, [[_md(c) for c in r] for r in env_rows], right)
+        out.append("")
+
     disagree, agree, lookup = _split_tasks(a)
     arms = _arm_order(a)
     if disagree:
@@ -565,7 +617,10 @@ def _json_safe(x: Any) -> Any:
 
 def render_json(a: Analysis) -> str:
     """Stable JSON: ``{"analysis": ..., "schema": 1, "tool": "agent-ab"}``, NaN/inf as null."""
-    doc = {"tool": "agent-ab", "schema": JSON_SCHEMA, "analysis": _json_safe(dataclasses.asdict(a))}
+    data = _json_safe(dataclasses.asdict(a))
+    if not data["environment"]:
+        del data["environment"]  # runs without model or version data keep their old shape
+    doc = {"tool": "agent-ab", "schema": JSON_SCHEMA, "analysis": data}
     return json.dumps(doc, sort_keys=True, indent=2, allow_nan=False, ensure_ascii=False) + "\n"
 
 
@@ -1102,6 +1157,21 @@ def render_html(a: Analysis, *, title: str | None = None) -> str:
     else:
         fig = '<p class="muted">No arm reported cost, so the cost chart is omitted.</p>'
     body.append(_section("cost", "Cost vs pass rate", fig))
+
+    headers, env_rows = _env_table(a, "→")
+    if env_rows:
+        th = "".join(f"<th>{_e(h)}</th>" for h in headers)
+        trs = "".join("<tr>" + "".join(f"<td>{_e(c)}</td>" for c in r) + "</tr>" for r in env_rows)
+        body.append(
+            _section(
+                "environment",
+                "Agent environment",
+                f'<div class="scroll"><table><thead><tr>{th}</tr></thead><tbody>{trs}</tbody>'
+                "</table></div>"
+                '<p class="small muted">Model: as requested, then as reported by the agent. '
+                "Tool, plugin and skill counts come from the agent's start-up event.</p>",
+            )
+        )
 
     disagree, agree, lookup = _split_tasks(a)
     arms = _arm_order(a)

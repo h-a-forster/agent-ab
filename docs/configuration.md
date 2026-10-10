@@ -24,7 +24,7 @@ Rules:
 | `exclude_tasks` | list of strings | `[]` | Task ids or globs to leave out. |
 | `repeats` | integer >= 1 | `1` | Trials per task per arm. |
 | `jobs` | integer >= 1 | `1` | Concurrent trials. |
-| `seed` | integer | `0` | Seeds the trial order and each trial's seed. |
+| `seed` | integer | `0` | Seeds each trial's seed and the trial order. (task, repeat) blocks are shuffled, and the arms of a block run next to each other in a per-block random order. |
 | `budget_usd` | number > 0 | none | Stop starting new trials once recorded spend reaches this. |
 | `timeout_s` | number > 0 | `1800` | Agent time limit per attempt. Also limits `setup`. A task can override it. |
 | `check_timeout_s` | number > 0 | `600` | Check time limit. A task can override it. A timed-out check is a fail. |

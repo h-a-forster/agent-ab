@@ -172,6 +172,9 @@ class AgentUsage:
     cache_write_tokens: int | None = None
     turns: int | None = None
     final_message: str | None = None
+    models: list[str] | None = None  # model IDs the agent actually used, sorted
+    agent_version: str | None = None  # CLI version the agent itself reported
+    agent_init: dict[str, Any] | None = None  # compact summary of the agent's start-up event
     # Set when the run failed for reasons unrelated to the configuration under test
     # (authentication, rate limiting, provider outage). The attempt is retried and,
     # if it never succeeds, excluded from statistics.
@@ -209,6 +212,9 @@ class TrialRecord:
     finished_at: str | None = None
     artifacts: str | None = None  # run-dir-relative path, forward slashes
     concurrency: int | None = None  # trials in flight when this attempt started, itself included
+    models: list[str] | None = None  # model IDs the agent reported using, sorted
+    agent_version: str | None = None  # agent CLI version (as reported during the trial if possible)
+    agent_init: dict[str, Any] | None = None  # compact summary of the agent's start-up event
     schema: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -278,6 +284,21 @@ class TaskCell:
 
 
 @dataclass
+class ArmEnvironment:
+    """What an arm's agent actually ran with, as far as its trial records say."""
+
+    arm: str
+    requested_model: str | None  # as configured; may be an alias
+    models: list[str]  # model IDs seen across the arm's trials
+    versions: list[str]  # agent CLI versions seen
+    init_trials: int  # trials that recorded a start-up summary
+    tools: list[str]  # union over trials with a start-up summary
+    mcp_servers: list[str]
+    plugins: list[str]
+    skills: list[str]
+
+
+@dataclass
 class Analysis:
     experiment: str
     baseline: str
@@ -291,3 +312,4 @@ class Analysis:
     error_trials: int
     total_cost_usd: float | None
     notes: list[str] = field(default_factory=list)  # human-readable caveats for the report
+    environment: list[ArmEnvironment] = field(default_factory=list)  # empty for old runs

@@ -47,6 +47,8 @@ permission_mode = "bypassPermissions"
 # setting_sources = "project"  # optional: comma-separated settings sources the CLI loads
 #                              # (user, project, local); "project" keeps your personal
 #                              # configuration out of the experiment
+# Defaults worth knowing: strict_mcp_config = true (no MCP servers, not even your own) and
+# capture_init = true (records the model, tools, MCP servers and plugins each trial ran with).
 
 [[arms]]
 name = "control"

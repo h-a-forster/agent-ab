@@ -192,6 +192,8 @@ def _check_cancel(cancel: threading.Event, r: ProcResult | None = None) -> None:
         raise _Cancelled
 
 
+_MAX_MODELS = 20
+_MAX_VERSION = 100
 _MAX_COUNT = 10**12  # tokens/turns above this are not plausible for one attempt
 _USAGE_COUNTS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
                  "turns")  # fmt: skip
@@ -232,6 +234,7 @@ def _copy_usage(rec: TrialRecord, usage: AgentUsage) -> list[str]:
     if cost is None and usage.cost_usd is not None:
         dropped.append(f"cost_usd: {_short_repr(usage.cost_usd)}")
     rec.cost_usd = cost
+    _copy_identity(rec, usage)
     for name in _USAGE_COUNTS:
         raw = getattr(usage, name)
         value = _sane_count(raw)
@@ -241,12 +244,43 @@ def _copy_usage(rec: TrialRecord, usage: AgentUsage) -> list[str]:
     return dropped
 
 
+def _copy_identity(rec: TrialRecord, usage: AgentUsage) -> None:
+    """Copy the model, version and start-up summary reported by the agent, if well formed."""
+    models = usage.models
+    if isinstance(models, list) and all(isinstance(m, str) for m in models) and models:
+        rec.models = sorted(set(models))[:_MAX_MODELS]
+    version = usage.agent_version
+    if isinstance(version, str) and version.strip():
+        rec.agent_version = version.strip()[:_MAX_VERSION]
+    init = usage.agent_init
+    if isinstance(init, dict):
+        try:
+            json.dumps(init, allow_nan=False)
+        except (TypeError, ValueError):
+            pass
+        else:
+            rec.agent_init = init
+
+
 def _write_usage_warning(art: Path, notes: list[str]) -> None:
     with (
         contextlib.suppress(OSError),
         open(art / "usage_warning.txt", "a", encoding="utf-8", newline="\n") as f,
     ):
         f.write("".join(n + "\n" for n in notes))
+
+
+def _probe_versions(exp: Experiment) -> dict[str, str]:
+    """Agent CLI version per arm, for the arms whose adapter can tell."""
+    found: dict[str, str] = {}
+    for arm in exp.arms:
+        try:
+            version = get_adapter(arm.agent.adapter).version(arm.agent)
+        except Exception:  # a probe must never stop a run
+            continue
+        if isinstance(version, str) and version.strip():
+            found[arm.name] = version.strip()[:_MAX_VERSION]
+    return found
 
 
 def _parse_usage(adapter: Adapter, ctx: TrialContext, result: ProcResult, art: Path) -> AgentUsage:
@@ -400,6 +434,7 @@ def run_trial(
     *,
     keep_workspaces: bool | None = None,
     concurrency: int | None = None,
+    agent_version: str | None = None,
 ) -> TrialRecord:
     """Run one attempt of one trial and return its record. Never raises.
 
@@ -407,12 +442,14 @@ def run_trial(
     log; the scheduler does that. If ``cancel`` is set mid-attempt the attempt folder is
     removed and the returned record has status ``error`` and error ``"cancelled"``; such a
     record must not be stored. ``keep_workspaces`` defaults to the experiment's setting.
-    ``concurrency`` (trials in flight, this one included) is recorded as given.
+    ``concurrency`` (trials in flight, this one included) is recorded as given, as is
+    ``agent_version`` (probed once per arm); a version the agent reports itself replaces it.
     """
     keep = exp.keep_workspaces if keep_workspaces is None else keep_workspaces
     rec = TrialRecord(
         trial_id=spec.id, task=spec.task.id, arm=spec.arm.name, repeat=spec.repeat,
         attempt=attempt, status="error", started_at=utc_now(), concurrency=concurrency,
+        agent_version=agent_version,
     )  # fmt: skip
     art: Path | None = None
     ws: Workspace | None = None
@@ -573,6 +610,9 @@ def run_experiment(
         store = RunStore.create(run_dir, exp, planned_trials=total)
     elif store.meta.get("planned_trials") != total:
         store.update_meta(planned_trials=total)
+    versions = _probe_versions(exp)
+    if versions:
+        store.update_meta(agent_versions=versions)
 
     if foreign:
         emit(
@@ -650,6 +690,7 @@ def run_experiment(
                     cancel,
                     keep_workspaces=keep,
                     concurrency=len(running) + 1,
+                    agent_version=versions.get(spec.arm.name),
                 )
                 running[fut] = (spec, attempt)
             if not running:
