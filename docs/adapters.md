@@ -222,6 +222,7 @@ keys. Missing keys and wrong types are recorded as unknown.
 
 ```python
 """Run my_agent.py for one trial and write usage.json."""
+
 import json, re, subprocess, sys
 from pathlib import Path
 
@@ -229,7 +230,8 @@ prompt_file, artifacts, model = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3
 agent = Path(__file__).with_name("my_agent.py")
 proc = subprocess.run(
     [sys.executable, str(agent), "--model", model, "--prompt-file", str(prompt_file)],
-    capture_output=True, text=True,
+    capture_output=True,
+    text=True,
 )
 sys.stdout.write(proc.stdout)
 sys.stderr.write(proc.stderr)
