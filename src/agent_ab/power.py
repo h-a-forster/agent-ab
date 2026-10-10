@@ -3,7 +3,9 @@
 Each simulated experiment draws per-task baseline pass probabilities from a difficulty model,
 shifts every task's logit by one constant so the expected mean difference equals the requested
 effect, draws binomial outcomes for both arms, and applies the decision rule the reports use:
-a two-sided paired sign-flip p below alpha and a paired bootstrap CI that excludes 0.
+a two-sided paired sign-flip p below alpha and a paired bootstrap CI that excludes 0. The
+effect may be negative ("does X hurt?"); power then means the chance of detecting a difference
+in either direction, as the two-sided test does.
 
 Speed. Per-task differences are multiples of ``1/repeats``, so the sign-flip null distribution
 is a convolution of a few binomials and the p-value is computed exactly by counting. For at most
@@ -45,7 +47,10 @@ __all__ = [
 ]
 
 DEFAULT_EFFECTS = "10,20"
-DEFAULT_TASKS = "10,20,50,100,200"
+# A coarse grid makes the recommendation an artefact of the grid (an audit found "about 100
+# tasks x 1" where 25 tasks x 3 repeats reaches the same power), so the default is fine at the
+# small end, where costs are low and the answer usually lies.
+DEFAULT_TASKS = "10,15,20,25,30,40,50,75,100,150,200"
 DEFAULT_REPEATS = "1,3"
 DEFAULT_ALPHA = "0.05"
 DEFAULT_SIMS = "400"
@@ -59,6 +64,9 @@ _MAX_PRIOR_STRENGTH = 1000.0
 # excludes 0 with overwhelming probability, so it is not computed (a pure speed shortcut).
 _SKIP_CI_MIN_TASKS = 30
 _SKIP_CI_FACTOR = 0.02
+# Share of simulated experiments that must hit the headroom limit for an effect to count as
+# unrealisable at a design.
+_NO_HEADROOM_SHARE = 0.5
 
 
 # --------------------------------------------------------------------------- options
@@ -110,10 +118,18 @@ def parse_options(
             value = float(part)
         except ValueError:
             raise ValueError(f"--effect: expected numbers of points, got {part!r}") from None
-        if not math.isfinite(value) or value <= 0:
-            raise ValueError(f"--effect: values must be > 0 points, got {part!r}")
-        if value >= 100:
-            raise ValueError(f"--effect: values must be below 100 points, got {part!r}")
+        if not math.isfinite(value):
+            raise ValueError(f"--effect: expected numbers of points, got {part!r}")
+        if value == 0:
+            raise ValueError(
+                f"--effect: values must be non-zero points, got {part!r} (power at zero effect "
+                "is the false-positive rate, which every plan already checks)"
+            )
+        if abs(value) >= 100:
+            raise ValueError(
+                f"--effect: values must be between -100 and 100 points (exclusive), so the "
+                f"arm's pass rate stays within 0-100%, got {part!r}"
+            )
         effects.add(value)
     try:
         a = float(alpha)
@@ -247,10 +263,15 @@ def _expit(x: float) -> float:
 def solve_shift(probs: Sequence[float], effect: float) -> tuple[float, bool]:
     """Logit shift giving ``mean(expit(logit p + shift) - p) == effect``.
 
+    A negative effect is solved on the mirrored probabilities ``1 - p`` and the shift negated.
     Bisection on a bracket, accelerated by Newton steps that are taken only when they stay
     inside it. Returns ``(shift, capped)``; ``capped`` is True when the effect exceeds the
-    headroom ``1 - mean(p)`` and the largest shift was used instead.
+    headroom (``1 - mean(p)``, or ``mean(p)`` for a negative effect) and the largest shift was
+    used instead.
     """
+    if effect < 0:
+        shift, capped = solve_shift([1 - p for p in probs], -effect)
+        return -shift, capped
     logits = [math.log(p / (1 - p)) for p in probs]
     n = len(logits)
     target = fmean(probs) + effect
@@ -336,6 +357,8 @@ class DesignResult:
     power: float
     se: float
     capped: float  # share of simulated experiments where the effect exceeded the headroom
+    baseline: float = 0.0  # mean simulated baseline pass rate, in points
+    realised: float = 0.0  # mean simulated effect actually achieved, in points
 
     @property
     def trials(self) -> int:
@@ -350,6 +373,8 @@ class DesignResult:
             "power": self.power,
             "se": self.se,
             "capped_fraction": self.capped,
+            "baseline_pts": self.baseline,
+            "realised_effect_pts": self.realised,
         }
 
 
@@ -367,21 +392,24 @@ def simulate_design(
 ) -> DesignResult:
     """Detection rate over ``sims`` simulated experiments of one design.
 
-    With ``effect_pts == 0`` a detection in either direction counts (a false positive);
-    otherwise only a detection of an improvement counts.
+    A detection in either direction counts, as the two-sided test would report it. With
+    ``effect_pts == 0`` that is the false-positive rate.
     """
     r = random.Random(f"agent-ab-power:{seed}:{model.name}:{effect_pts!r}:{tasks}:{repeats}")
     cache = {} if cache is None else cache
     effect = effect_pts / 100
     detected = capped = 0
+    base_sum = realised_sum = 0.0
     for _ in range(sims):
         base = [model.sample(r) for _ in range(tasks)]
-        if effect > 0:
+        if effect != 0:
             shift, was_capped = solve_shift(base, effect)
             capped += was_capped
             arm = [_expit(math.log(p / (1 - p)) + shift) for p in base]
         else:
             arm = base
+        base_sum += fmean(base)
+        realised_sum += fmean(arm) - fmean(base)
         ka = [sum(r.random() < p for _ in range(repeats)) for p in base]
         kb = [sum(r.random() < p for _ in range(repeats)) for p in arm]
         diffs = [b - a for a, b in zip(ka, kb, strict=True)]
@@ -390,15 +418,18 @@ def simulate_design(
             continue
         if p < alpha * _SKIP_CI_FACTOR and tasks >= _SKIP_CI_MIN_TASKS:
             # The bootstrap CI cannot plausibly reach 0 here (see the module notes).
-            detected += sum(diffs) > 0 or effect == 0
+            detected += 1
             continue
         ci = paired_bootstrap_diff(
-            [k / repeats for k in ka], [k / repeats for k in kb],
-            n_boot=n_boot, alpha=alpha, rng=r,
+            [k / repeats for k in ka],
+            [k / repeats for k in kb],
+            n_boot=n_boot,
+            alpha=alpha,
+            rng=r,
         )
         up = ci.low is not None and ci.low > 0
         down = ci.high is not None and ci.high < 0
-        if up or (effect == 0 and down):
+        if up or down:
             detected += 1
     power = detected / sims
     return DesignResult(
@@ -408,6 +439,8 @@ def simulate_design(
         power=power,
         se=math.sqrt(power * (1 - power) / sims),
         capped=capped / sims,
+        baseline=100 * base_sum / sims,
+        realised=100 * realised_sum / sims,
     )
 
 
@@ -417,6 +450,12 @@ class PowerPlan:
     model: DifficultyModel
     rows: list[DesignResult]
     false_positive: DesignResult | None
+    false_positive_basis: str = ""
+
+    def no_headroom(self, effect: float) -> bool:
+        """True when the effect cannot be realised at any simulated design (arm saturated)."""
+        rows = [d for d in self.rows if d.effect == effect]
+        return bool(rows) and all(d.capped >= _NO_HEADROOM_SHARE for d in rows)
 
     def recommendation(self, effect: float) -> DesignResult | None:
         """Fewest total trials reaching the target power (ties: higher power)."""
@@ -428,11 +467,17 @@ class PowerPlan:
         for effect in self.options.effects:
             worst = max((d.capped for d in self.rows if d.effect == effect), default=0.0)
             if worst > 0:
+                end = "almost every task" if effect > 0 else "almost no task"
                 out.append(
-                    f"+{_pts(effect)} pts exceeds the baseline's headroom in up to "
-                    f"{worst:.0%} of simulated experiments; there the arm passes almost every task "
+                    f"{_pts(effect, True)} pts exceeds the baseline's headroom in up to "
+                    f"{worst:.0%} of simulated experiments; there the arm passes {end} "
                     "and the simulated effect is smaller than requested."
                 )
+        if (fp := self.false_positive) is not None and 2.0 ** (1 - fp.tasks) >= self.options.alpha:
+            out.append(
+                f"The false-positive check is degenerate: with {fp.tasks} tasks the smallest "
+                f"attainable two-sided p is {2.0 ** (1 - fp.tasks):.3g}, not below alpha."
+            )
         return out
 
 
@@ -442,36 +487,63 @@ def run_plan(
     *,
     progress: Callable[[int, int, DesignResult], None] | None = None,
 ) -> PowerPlan:
-    """Simulate every (effect, tasks, repeats) design plus a false-positive check at effect 0
-    for the smallest design."""
+    """Simulate every (effect, tasks, repeats) design plus a false-positive check at effect 0."""
     cache: _TailCache = {}
-    designs = [
-        (e, n, k) for e in options.effects for n in options.tasks for k in options.repeats
-    ]
+    designs = [(e, n, k) for e in options.effects for n in options.tasks for k in options.repeats]
     total = len(designs) + 1
     rows: list[DesignResult] = []
     for i, (e, n, k) in enumerate(designs, start=1):
         row = simulate_design(
-            model, e, n, k, alpha=options.alpha, sims=options.sims, seed=options.seed,
+            model,
+            e,
+            n,
+            k,
+            alpha=options.alpha,
+            sims=options.sims,
+            seed=options.seed,
             cache=cache,
         )
         rows.append(row)
         if progress is not None:
             progress(i, total, row)
+    # The false-positive check must run where the sign-flip test can actually reject. At a tiny
+    # design (10 tasks x 1 repeat) most simulated differences are zero, so the test almost never
+    # rejects and "0% false positives" reflects discreteness, not validity. So check the design
+    # a user would run: the recommended design with the most trials, else the largest design
+    # simulated (most tasks, then most repeats).
+    recommended = [
+        best
+        for e in options.effects
+        if (best := PowerPlan(options, model, rows, None).recommendation(e)) is not None
+    ]
+    if recommended:
+        chosen = max(recommended, key=lambda d: (d.trials, d.tasks))
+        basis = f"the largest recommended design, for {_pts(chosen.effect, True)} pts"
+    else:
+        chosen = None
+        basis = "the largest design simulated, as none reached the target power"
+    n_fp = chosen.tasks if chosen else options.tasks[-1]
+    k_fp = chosen.repeats if chosen else options.repeats[-1]
     fp = simulate_design(
-        model, 0.0, options.tasks[0], options.repeats[0],
-        alpha=options.alpha, sims=options.sims, seed=options.seed, cache=cache,
+        model,
+        0.0,
+        n_fp,
+        k_fp,
+        alpha=options.alpha,
+        sims=options.sims,
+        seed=options.seed,
+        cache=cache,
     )
     if progress is not None:
         progress(total, total, fp)
-    return PowerPlan(options, model, rows, fp)
+    return PowerPlan(options, model, rows, fp, basis)
 
 
 # --------------------------------------------------------------------------- rendering
 
 
-def _pts(x: float) -> str:
-    return f"{x:g}"
+def _pts(x: float, signed: bool = False) -> str:
+    return f"{x:+g}" if signed else f"{x:g}"
 
 
 def _pct(x: float) -> str:
@@ -484,13 +556,24 @@ def _n(count: int, word: str) -> str:
 
 def _rec_line(plan: PowerPlan, effect: float) -> str:
     best = plan.recommendation(effect)
+    label = _pts(effect, True)
+    if plan.no_headroom(effect):
+        rows = [d for d in plan.rows if d.effect == effect]
+        base = max(d.baseline for d in rows)
+        got = max(rows, key=lambda d: abs(d.realised)).realised
+        verb = "gain" if effect > 0 else "lose"
+        return (
+            f"{label} pts: no headroom. The baseline passes about {base:.0f}% of tasks, so the "
+            f"arm cannot {verb} that much (simulated effect about {got:+.1f} pts). Power for "
+            "this effect is not meaningful; use harder or easier tasks, or a smaller effect."
+        )
     if best is None:
         return (
-            f"+{_pts(effect)} pts: none of the simulated designs reach "
+            f"{label} pts: none of the simulated designs reach "
             f"{_pct(TARGET_POWER)}; try more tasks."
         )
     return (
-        f"+{_pts(effect)} pts: {best.tasks} tasks x {_n(best.repeats, 'repeat')} "
+        f"{label} pts: {best.tasks} tasks x {_n(best.repeats, 'repeat')} "
         f"({best.trials} trials in total) reaches {_pct(best.power)} power."
     )
 
@@ -500,7 +583,8 @@ def _fp_line(plan: PowerPlan) -> str | None:
     if fp is None:
         return None
     return (
-        f"False positives at effect 0 ({fp.tasks} tasks x {_n(fp.repeats, 'repeat')}): "
+        f"False positives at effect 0 ({fp.tasks} tasks x {_n(fp.repeats, 'repeat')}, "
+        f"{plan.false_positive_basis}): "
         f"{fp.power * 100:.1f}% (should be at most {plan.options.alpha * 100:g}%)."
     )
 
@@ -512,7 +596,8 @@ def _header(plan: PowerPlan) -> list[str]:
         f"Task difficulty: {plan.model.description}.",
         "Effect model: one logit shift for every task, sized so the mean difference equals "
         "the effect.",
-        f"Detected: sign-flip p < {o.alpha:g} and bootstrap CI above 0 (the report rule).",
+        f"Detected: sign-flip p < {o.alpha:g} and bootstrap CI excluding 0, in either direction "
+        "(the report rule).",
     ]
 
 
@@ -528,8 +613,12 @@ def _footer(plan: PowerPlan) -> list[str]:
 
 def _row_cells(d: DesignResult) -> list[str]:
     return [
-        f"+{_pts(d.effect)}", str(d.tasks), str(d.repeats), str(d.trials),
-        _pct(d.power), f"{d.se * 100:.1f}",
+        _pts(d.effect, True),
+        str(d.tasks),
+        str(d.repeats),
+        str(d.trials),
+        _pct(d.power),
+        f"{d.se * 100:.1f}",
     ]
 
 
@@ -547,9 +636,7 @@ def render_text(plan: PowerPlan) -> str:
         return "  ".join(c.rjust(w) for c, w in zip(cells, widths, strict=True)).rstrip()
 
     def wrap(text: str, indent: str = "") -> str:
-        return textwrap.fill(
-            text, _WIDTH, initial_indent=indent, subsequent_indent=indent + "  "
-        )
+        return textwrap.fill(text, _WIDTH, initial_indent=indent, subsequent_indent=indent + "  ")
 
     lines = ["Power plan", "", *(wrap(h) for h in _header(plan)), ""]
     lines += [fmt(_HEADERS), fmt(["-" * w for w in widths]), *(fmt(r) for r in rows)]
@@ -587,6 +674,7 @@ def render_json(plan: PowerPlan) -> str:
             for e in o.effects
         ],
         "false_positive": plan.false_positive.to_dict() if plan.false_positive else None,
+        "false_positive_basis": plan.false_positive_basis,
         "notes": plan.notes(),
     }
     return json.dumps(data, indent=2) + "\n"
