@@ -1,0 +1,55 @@
+prompt = """
+`wrapkit` lays out terminal text (help screens, tables), but it measures text with `len()`.
+That breaks for coloured output (ANSI colour codes count as characters), CJK text (wide
+characters take two columns) and combining accents. Fix the library so everything works in
+terms of display width. The public API stays: `display_width`, `strip_ansi`, `wrap`,
+`render_table`, `truncate`.
+
+Display width:
+
+- Only SGR escape sequences (`ESC [ digits-and-semicolons m`, e.g. `\\x1b[1;31m`, `\\x1b[0m`) are
+  recognised as ANSI; they take 0 columns.
+- Other characters: category `Mn`, `Me`, `Cc` or `Cf` (combining marks, controls, zero-width
+  space/joiner) take 0 columns; `unicodedata.east_asian_width` of `W` or `F` takes 2; anything
+  else takes 1.
+
+`wrap(text, width)`:
+
+- `width < 1` raises `ValueError`. Paragraphs are separated by `"\\n"`; a paragraph with no
+  words yields one `""` line. Words are separated by runs of whitespace (`str.split()` rules)
+  and rejoined with one space. A word is placed on the current line if
+  `current + 1 + word_width <= width` (display widths); otherwise a new line starts.
+- A word wider than `width` starts on a new line (the current line is flushed if it has
+  content) and is broken into chunks by display columns. A break happens only right before a
+  visible (width > 0) character, never inside a wide character (a wide character that does not
+  fit moves to the next line; if `width` is 1, a wide character sits alone on its line).
+  Zero-width characters stay with the character before them. The last chunk can continue to
+  collect following words. ANSI sequences are emitted in place, so a sequence directly before
+  the character that causes a break stays at the end of the previous line.
+- Styles carry across lines: track the SGR sequences seen so far over all lines in order
+  (`\\x1b[0m` and `\\x1b[m` clear the list, any other SGR sequence is appended). Every non-empty
+  line starts with the sequences still open from before it, and every non-empty line that
+  ends with a non-empty open list gets `\\x1b[0m` appended. `""` lines are left alone.
+  Text without ANSI must wrap exactly as before.
+
+`render_table(rows, widths, aligns="")`:
+
+- Each cell is wrapped to its column width with `wrap`, rows are as tall as their tallest
+  cell, each cell line is padded with spaces to the column's display width according to
+  `aligns` (one char per column: `l` left (default), `r` right, `c` centre with
+  `pad // 2` spaces on the left), cells are joined with `" | "`, and trailing spaces
+  (only spaces) are removed from every line. Lines are joined with `"\\n"`. A row with fewer
+  cells than `widths` is padded with empty cells; more cells raises `ValueError`.
+
+`truncate(text, width, placeholder="...")`:
+
+- If `display_width(text) <= width` return it unchanged. Otherwise keep the longest prefix of
+  visible characters whose width fits in `width - display_width(placeholder)` (never splitting
+  a wide character; zero-width characters directly after the kept prefix are kept too), keep
+  every ANSI sequence that appears before the first dropped visible character and drop all
+  later text and sequences, then if any style is open (by the same rule as in `wrap`) append `\\x1b[0m`, and finally append the placeholder. `ValueError` if the placeholder alone
+  is wider than `width`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "multi-file", "hard"]

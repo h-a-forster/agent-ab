@@ -1,0 +1,54 @@
+prompt = """
+`crdtext`'s `Session` applies edits in arrival order, which corrupts concurrent edits. Add a
+replicated text type that converges without a server: an RGA (Replicated Growable Array)
+sequence CRDT (new modules `crdtext/ops.py`, `crdtext/replica.py`, export `Op` and `Replica`
+from the package; `Document` and `Session` stay unchanged).
+
+**`Op`** - an immutable (frozen dataclass-like, hashable, `==` by value) record
+`Op(kind, id=None, ref=None, char=None)`:
+- insert: `Op("ins", id=(counter, replica_id), ref=<id of the element it goes after, or None for
+  the start of the text>, char=<one character>)`;
+- delete: `Op("del", id=None, ref=<id of the element to delete>, char=None)`.
+`op.to_dict()` gives a JSON-friendly dict (`{"kind", "id": [counter, replica], "ref": [...]|None,
+"char"}` for inserts, `{"kind": "del", "ref": [...]}` for deletes) and `Op.from_dict(d)`
+restores an equal `Op` (lists become tuples again, also after a JSON round trip).
+
+**`Replica(replica_id)`** (`replica_id` a non-empty `str`, else `ValueError`):
+- `text()`, `len(replica)`, `visible_ids()` (ids of the visible characters in order),
+  `pending()` (number of buffered operations), `history()` (list of the operations applied so far
+  in the order they were applied, local ones included; a copy).
+- Ids are compared as plain tuples `(counter, replica_id)`.
+- `insert(index, char)` -> `Op`: `char` must be a one-character `str` (`ValueError`), `0 <=
+  index <= len` (`IndexError`). The new element goes in front of the visible character that is
+  currently at `index`, i.e. its `ref` is the id of the visible character at `index - 1` (None for
+  index 0; deleted characters are not counted). Its counter is `1 + c`, where `c` is the largest
+  counter of all insert operations this replica has APPLIED so far (0 if none; buffered operations do
+  not count). The operation is applied locally and returned.
+- `insert_text(index, s)` -> list of the ops of inserting the characters of `s` one after the other
+  at `index, index + 1, ...` (`[]` for an empty string). `delete(index)` -> `Op("del", ref=<id of the
+  visible character at index>)`, `IndexError` unless `0 <= index < len`; applied and returned.
+- `apply(op)` applies an operation received from anywhere (any order, any number of times) and
+  returns how many operations were newly applied by this call (an unblocked buffered operation
+  counts; `0` for duplicates and for operations that had to be buffered; `ValueError` for an
+  unknown kind). An insert needs its `ref` element (if any) to exist, a delete needs its target to
+  exist; otherwise it is buffered (once, however often it is delivered) until the element arrives and
+  is then applied automatically. An insert with an already known id and a delete of an already
+  deleted element are duplicates. Deletion only hides the element (tombstone); a later insert may
+  still use a deleted element as its `ref`.
+- Ordering rule (this is what makes all replicas converge): the elements form a tree in which each
+  insert is a child of its `ref` element (None = root). The text is the pre-order depth-first walk of
+  that tree in which the children of a node are visited in DESCENDING id order (the newest sibling
+  first), skipping deleted elements. Consequently the final text depends only on the SET of
+  operations, never on their arrival order, and concurrent runs of typing at the same place do not
+  interleave (e.g. A types `abc` and B types `xyz` at index 0 concurrently: `xyzabc` since
+  `(1, "B") > (1, "A")`). An efficient incremental way to get this order is the classic RGA
+  integration: put the new element right after its `ref`, skipping over every following element whose
+  id is greater than the new id.
+- Performance: 15,000 random local inserts/deletes, then applying all those operations in random
+  order (many get buffered) or in reverse order on another replica, must each take only a few
+  seconds, as must 20,000 sequential inserts at one place (so no O(n) work per operation in
+  Python code is affordable for the index lookups).
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file", "differential", "algorithm", "performance"]

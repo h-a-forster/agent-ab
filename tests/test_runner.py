@@ -55,10 +55,17 @@ class FakeAdapter(Adapter):
     """Runs ``options['script']`` with the interpreter; reads optional usage.json."""
 
     name = "fake"
-    option_keys = frozenset({"script", "missing", "build_error", "argv", "parse_error"})
+    option_keys = frozenset(
+        {"script", "missing", "build_error", "argv", "parse_error", "version", "version_error"}
+    )
 
     def check_available(self, spec: AgentSpec) -> str | None:
         return spec.options.get("missing")
+
+    def version(self, spec: AgentSpec) -> str | None:
+        if spec.options.get("version_error"):
+            raise RuntimeError("boom in version")
+        return spec.options.get("version")
 
     def build(self, ctx: TrialContext) -> AgentInvocation:
         if ctx.spec.options.get("build_error"):
@@ -87,26 +94,45 @@ def make_task(tmp_path: Path, tid: str = "t1", **kw) -> Task:
     repo = task_dir / "repo"
     repo.mkdir(parents=True, exist_ok=True)
     (repo / "README.md").write_text("hello\n", encoding="utf-8")
-    fields = {"id": tid, "path": task_dir, "prompt": "Write solution.txt.", "check": CHECK_SOLVED,
-              "repo": repo}
+    fields = {
+        "id": tid,
+        "path": task_dir,
+        "prompt": "Write solution.txt.",
+        "check": CHECK_SOLVED,
+        "repo": repo,
+    }
     fields.update(kw)
     return Task(**fields)
 
 
 def fake_arm(name: str, script: str = SOLVE, **kw) -> Arm:
     options = kw.pop("options", {})
-    return Arm(name=name, agent=AgentSpec(adapter="fake", options={"script": script, **options}),
-               **kw)
+    return Arm(
+        name=name, agent=AgentSpec(adapter="fake", options={"script": script, **options}), **kw
+    )
 
 
 def make_exp(tmp_path: Path, arms=None, tasks=None, **kw) -> Experiment:
     arms = tuple(arms or (fake_arm("a"), fake_arm("b")))
     tasks = tuple(tasks or (make_task(tmp_path),))
-    fields = {"repeats": 1, "jobs": 1, "max_retries": 2, "timeout_s": 60.0,
-              "check_timeout_s": 60.0, "workspace_root": tmp_path / "ws"}
+    fields = {
+        "repeats": 1,
+        "jobs": 1,
+        "max_retries": 2,
+        "timeout_s": 60.0,
+        "check_timeout_s": 60.0,
+        "workspace_root": tmp_path / "ws",
+    }
     fields.update(kw)
-    exp = Experiment(name="exp", config_path=tmp_path / "experiment.toml", root=tmp_path,
-                     tasks=tasks, arms=arms, baseline=arms[0].name, **fields)
+    exp = Experiment(
+        name="exp",
+        config_path=tmp_path / "experiment.toml",
+        root=tmp_path,
+        tasks=tasks,
+        arms=arms,
+        baseline=arms[0].name,
+        **fields,
+    )
     return replace(exp, fingerprint=compute_fingerprint(exp))
 
 
@@ -122,8 +148,9 @@ def ws_left(tmp_path: Path) -> list[Path]:
 def run_one(tmp_path: Path, script: str, **kw) -> TrialRecord:
     """Run a single-arm, single-task experiment and return the only final record."""
     task_kw = kw.pop("task_kw", {})
-    exp = make_exp(tmp_path, arms=[fake_arm("a", script)], tasks=[make_task(tmp_path, **task_kw)],
-                   **kw)
+    exp = make_exp(
+        tmp_path, arms=[fake_arm("a", script)], tasks=[make_task(tmp_path, **task_kw)], **kw
+    )
     summary = run_experiment(exp, tmp_path / "run")
     assert summary.planned == 1
     final = RunStore.open(tmp_path / "run").final_records()
@@ -135,12 +162,90 @@ def run_one(tmp_path: Path, script: str, **kw) -> TrialRecord:
 
 
 def test_plan_is_complete_and_deterministic(tmp_path):
-    exp = make_exp(tmp_path, tasks=[make_task(tmp_path, "t1"), make_task(tmp_path, "t2")],
-                   repeats=3, seed=7)
+    exp = make_exp(
+        tmp_path, tasks=[make_task(tmp_path, "t1"), make_task(tmp_path, "t2")], repeats=3, seed=7
+    )
     ids = [s.id for s in plan_trials(exp)]
     assert len(ids) == len(set(ids)) == 12
     assert ids == [s.id for s in plan_trials(exp)]
     assert ids != [s.id for s in plan_trials(replace(exp, seed=8))]
+
+
+def test_plan_keeps_arms_adjacent_in_randomised_order(tmp_path):
+    arms = [fake_arm(n) for n in "abc"]
+    tasks = [make_task(tmp_path, f"t{i}") for i in range(4)]
+    exp = make_exp(tmp_path, arms=arms, tasks=tasks, repeats=2, seed=3)
+    plan = plan_trials(exp)
+    blocks = [plan[i : i + 3] for i in range(0, len(plan), 3)]
+    keys = [(b[0].task.id, b[0].repeat) for b in blocks]
+    assert len(set(keys)) == 8
+    for b in blocks:
+        assert {(s.task.id, s.repeat) for s in b} == {(b[0].task.id, b[0].repeat)}
+        assert sorted(s.arm.name for s in b) == ["a", "b", "c"]
+    # The arm order varies between blocks, and so does the block order across seeds.
+    assert len({tuple(s.arm.name for s in b) for b in blocks}) > 1
+    other = [(s.task.id, s.repeat) for s in plan_trials(replace(exp, seed=4))][::3]
+    assert other != keys
+
+
+def test_concurrency_recorded(tmp_path):
+    tasks = [make_task(tmp_path, f"t{i}") for i in range(3)]
+    exp = make_exp(tmp_path, tasks=tasks, jobs=2)
+    run_experiment(exp, tmp_path / "run")
+    recs = records(tmp_path / "run")
+    assert recs and all(r.concurrency in (1, 2) for r in recs)
+    # The log is in finish order, so the first-started trial need not come first.
+    assert min(r.concurrency for r in recs) == 1
+
+
+def test_old_records_without_concurrency_load():
+    rec = TrialRecord.from_dict(
+        {"trial_id": "t__a__r0", "task": "t", "arm": "a", "repeat": 0, "attempt": 0,
+         "status": "pass"}
+    )  # fmt: skip
+    assert rec.concurrency is None
+
+
+def test_identity_fields_recorded(tmp_path):
+    init = {"model": "claude-x", "tools": ["Bash"], "mcp_servers": []}
+    usage = usage_snippet(
+        models=["m2", "m1", "m1"], agent_version="9.9.9", agent_init=init, cost_usd=0.1
+    )
+    arms = (
+        fake_arm("a", SOLVE + "\n" + usage, options={"version": "1.2.3"}),
+        fake_arm("b", SOLVE, options={"version": " 4.5.6 "}),
+        fake_arm("c", SOLVE, options={"version_error": True}),
+    )
+    run_experiment(make_exp(tmp_path, arms=arms), tmp_path / "run")
+    store = RunStore.open(tmp_path / "run")
+    # Versions are probed once per arm; an arm whose probe fails is simply absent.
+    assert store.meta["agent_versions"] == {"a": "1.2.3", "b": "4.5.6"}
+    by_arm = {r.arm: r for r in store.records()}
+    a, b, c = by_arm["a"], by_arm["b"], by_arm["c"]
+    assert a.models == ["m1", "m2"] and a.agent_init == init
+    assert a.agent_version == "9.9.9"  # reported by the agent itself wins over the probe
+    assert (b.models, b.agent_init, b.agent_version) == (None, None, "4.5.6")
+    assert (c.models, c.agent_version) == (None, None)
+    # Round trip through the log and record.json.
+    again = TrialRecord.from_dict(json.loads(json.dumps(a.to_dict())))
+    assert again == a
+
+
+def test_malformed_identity_fields_are_dropped(tmp_path):
+    usage = usage_snippet(models="claude", agent_version=3, agent_init=["x"])
+    arm = fake_arm("a", SOLVE + "\n" + usage)
+    run_experiment(make_exp(tmp_path, arms=(arm,)), tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert (rec.models, rec.agent_version, rec.agent_init) == (None, None, None)
+    assert "agent_versions" not in RunStore.open(tmp_path / "run").meta
+
+
+def test_old_records_without_identity_fields_load():
+    rec = TrialRecord.from_dict(
+        {"trial_id": "t__a__r0", "task": "t", "arm": "a", "repeat": 0, "attempt": 0,
+         "status": "pass"}
+    )  # fmt: skip
+    assert (rec.models, rec.agent_version, rec.agent_init) == (None, None, None)
 
 
 def test_default_run_dir(tmp_path):
@@ -160,8 +265,14 @@ def test_pass_and_artifacts(tmp_path):
     assert rec.started_at.endswith("Z") and rec.finished_at.endswith("Z")
     assert rec.artifacts == "trials/t1__a__r0/attempt-0"
     art = tmp_path / "run" / rec.artifacts
-    for name in ("prompt.md", "agent.stdout", "agent.stderr", "check.stdout", "check.stderr",
-                 "record.json"):
+    for name in (
+        "prompt.md",
+        "agent.stdout",
+        "agent.stderr",
+        "check.stdout",
+        "check.stderr",
+        "record.json",
+    ):
         assert (art / name).is_file(), name
     assert not (art / "workspace.txt").exists()
     assert (art / "prompt.md").read_text(encoding="utf-8") == "Write solution.txt.\n"
@@ -216,8 +327,11 @@ def test_setup_runs_before_agent(tmp_path):
 
 
 def test_start_error_is_error_without_check(tmp_path):
-    exp = make_exp(tmp_path, max_retries=0,
-                   arms=[fake_arm("a", options={"argv": ["no-such-agent-binary-xyz"]})])
+    exp = make_exp(
+        tmp_path,
+        max_retries=0,
+        arms=[fake_arm("a", options={"argv": ["no-such-agent-binary-xyz"]})],
+    )
     run_experiment(exp, tmp_path / "run")
     (rec,) = records(tmp_path / "run")
     assert rec.status == "error" and "could not start" in rec.error
@@ -245,8 +359,7 @@ def test_infra_error_retried_then_success(tmp_path):
 
 
 def test_infra_error_exhausts_retries(tmp_path):
-    exp = make_exp(tmp_path, max_retries=2,
-                   arms=[fake_arm("a", usage_snippet(infra_error="down"))])
+    exp = make_exp(tmp_path, max_retries=2, arms=[fake_arm("a", usage_snippet(infra_error="down"))])
     summary = run_experiment(exp, tmp_path / "run")
     assert [r.attempt for r in records(tmp_path / "run")] == [0, 1, 2]
     assert summary.errors == 1 and summary.completed == 0
@@ -290,8 +403,10 @@ def test_overlay_and_remove_applied(tmp_path):
         "if os.path.exists('AGENTS.md') and not os.path.exists('README.md'):\n"
         f"    {SOLVE}\n"
     )
-    exp = make_exp(tmp_path, arms=[fake_arm("a", script),
-                                   fake_arm("b", script, overlay=overlay, remove=("README.md",))])
+    exp = make_exp(
+        tmp_path,
+        arms=[fake_arm("a", script), fake_arm("b", script, overlay=overlay, remove=("README.md",))],
+    )
     run_experiment(exp, tmp_path / "run")
     final = RunStore.open(tmp_path / "run").final_records()
     assert final["t1__a__r0"].status == "fail"
@@ -322,14 +437,19 @@ def test_keep_workspaces(tmp_path):
 
 
 def test_budget_stops_launching(tmp_path):
-    exp = make_exp(tmp_path, tasks=[make_task(tmp_path, "t1"), make_task(tmp_path, "t2"),
-                                    make_task(tmp_path, "t3")],
-                   arms=[fake_arm("a", usage_snippet(cost_usd=1.0)),
-                         fake_arm("b", usage_snippet(cost_usd=1.0))],
-                   budget_usd=100.0)
+    exp = make_exp(
+        tmp_path,
+        tasks=[make_task(tmp_path, "t1"), make_task(tmp_path, "t2"), make_task(tmp_path, "t3")],
+        arms=[
+            fake_arm("a", usage_snippet(cost_usd=1.0)),
+            fake_arm("b", usage_snippet(cost_usd=1.0)),
+        ],
+        budget_usd=100.0,
+    )
     events = []
-    summary = run_experiment(exp, tmp_path / "run",
-                             options=RunOptions(budget_usd=2.5, progress=events.append))
+    summary = run_experiment(
+        exp, tmp_path / "run", options=RunOptions(budget_usd=2.5, progress=events.append)
+    )
     assert len(records(tmp_path / "run")) == 3
     assert summary.budget_exhausted and summary.skipped_budget == 3
     assert summary.completed == 3 and summary.total_cost_usd == 3.0
@@ -337,9 +457,14 @@ def test_budget_stops_launching(tmp_path):
 
 
 def test_resume_completes_missing_trials(tmp_path):
-    exp = make_exp(tmp_path, tasks=[make_task(tmp_path, "t1"), make_task(tmp_path, "t2")],
-                   arms=[fake_arm("a", usage_snippet(cost_usd=1.0)),
-                         fake_arm("b", usage_snippet(cost_usd=1.0))])
+    exp = make_exp(
+        tmp_path,
+        tasks=[make_task(tmp_path, "t1"), make_task(tmp_path, "t2")],
+        arms=[
+            fake_arm("a", usage_snippet(cost_usd=1.0)),
+            fake_arm("b", usage_snippet(cost_usd=1.0)),
+        ],
+    )
     first = run_experiment(exp, tmp_path / "run", options=RunOptions(budget_usd=1.5))
     assert first.skipped_budget == 2
     before = records(tmp_path / "run")
@@ -356,10 +481,28 @@ def test_resume_completes_missing_trials(tmp_path):
 def test_resume_continues_attempt_numbering(tmp_path):
     exp = make_exp(tmp_path, arms=[fake_arm("a"), fake_arm("b")])
     store = RunStore.create(tmp_path / "run", exp, planned_trials=2)
-    store.append(TrialRecord(trial_id="t1__a__r0", task="t1", arm="a", repeat=0, attempt=0,
-                             status="error", error="earlier infra error"))
-    store.append(TrialRecord(trial_id="t1__b__r0", task="t1", arm="b", repeat=0, attempt=0,
-                             status="pass", passed=True))
+    store.append(
+        TrialRecord(
+            trial_id="t1__a__r0",
+            task="t1",
+            arm="a",
+            repeat=0,
+            attempt=0,
+            status="error",
+            error="earlier infra error",
+        )
+    )
+    store.append(
+        TrialRecord(
+            trial_id="t1__b__r0",
+            task="t1",
+            arm="b",
+            repeat=0,
+            attempt=0,
+            status="pass",
+            passed=True,
+        )
+    )
     summary = run_experiment(exp, tmp_path / "run", resume=True)
     recs = records(tmp_path / "run")
     assert len(recs) == 3
@@ -402,8 +545,13 @@ def test_dry_run_creates_nothing(tmp_path):
 
 
 def test_unavailable_adapter_fails_fast(tmp_path):
-    exp = make_exp(tmp_path, arms=[fake_arm("a", options={"missing": "fake-cli not installed"}),
-                                   fake_arm("b", options={"missing": "fake-cli too old"})])
+    exp = make_exp(
+        tmp_path,
+        arms=[
+            fake_arm("a", options={"missing": "fake-cli not installed"}),
+            fake_arm("b", options={"missing": "fake-cli too old"}),
+        ],
+    )
     with pytest.raises(AdapterError) as info:
         run_experiment(exp, tmp_path / "run")
     assert "not installed" in str(info.value) and "too old" in str(info.value)
@@ -417,8 +565,9 @@ def test_jobs_run_concurrently(tmp_path):
         "open(os.path.join(os.environ['FAKE_ARTIFACTS'], 'span.txt'), 'w')"
         ".write(f'{s} {time.time()}')\n"
     )
-    exp = make_exp(tmp_path, arms=[fake_arm("a", script), fake_arm("b", script),
-                                   fake_arm("c", script)], jobs=1)
+    exp = make_exp(
+        tmp_path, arms=[fake_arm("a", script), fake_arm("b", script), fake_arm("c", script)], jobs=1
+    )
     run_experiment(exp, tmp_path / "run", options=RunOptions(jobs=3))
     spans = [
         tuple(map(float, (tmp_path / "run" / r.artifacts / "span.txt").read_text().split()))
@@ -474,8 +623,10 @@ def test_end_to_end_with_mock_adapter(tmp_path):
     task = replace(task, solution=solution)
     arms = [
         Arm(name="weak", agent=AgentSpec(adapter="mock", options={"solve_rate": 0.0})),
-        Arm(name="strong", agent=AgentSpec(adapter="mock", options={"solve_rate": 1.0,
-                                                                     "cost_usd": 0.02})),
+        Arm(
+            name="strong",
+            agent=AgentSpec(adapter="mock", options={"solve_rate": 1.0, "cost_usd": 0.02}),
+        ),
     ]
     exp = make_exp(tmp_path, arms=arms, tasks=[task], repeats=2, jobs=2)
     summary = run_experiment(exp, tmp_path / "run")
@@ -600,11 +751,21 @@ def test_resume_ignores_records_outside_the_plan(tmp_path):
     exp = make_exp(tmp_path)
     run_experiment(exp, tmp_path / "run")
     store = RunStore.open(tmp_path / "run")
-    store.append(TrialRecord(trial_id="gone__a__r0", task="gone", arm="a", repeat=0, attempt=0,
-                             status="pass", passed=True))
+    store.append(
+        TrialRecord(
+            trial_id="gone__a__r0",
+            task="gone",
+            arm="a",
+            repeat=0,
+            attempt=0,
+            status="pass",
+            passed=True,
+        )
+    )
     events = []
-    summary = run_experiment(exp, tmp_path / "run", resume=True,
-                             options=RunOptions(progress=events.append))
+    summary = run_experiment(
+        exp, tmp_path / "run", resume=True, options=RunOptions(progress=events.append)
+    )
     assert summary.planned == 2 and summary.completed == 2
     assert any("not in the current plan" in e.message for e in events if e.kind == "info")
 

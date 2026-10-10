@@ -16,7 +16,19 @@ description = "Offline demo: does an AGENTS.md guide or a terser prompt change t
 
 # Task directories, as globs relative to this file. Every matching directory that contains
 # a task.toml is one task (see ../README.md for the task format).
-tasks = ["../tasks/*"]
+# The ten tasks the solve-rate table below was written for.
+tasks = [
+    "../tasks/cli-min-level-flag",
+    "../tasks/config-validation-errors",
+    "../tasks/csv-quoted-newlines",
+    "../tasks/dedupe-quadratic",
+    "../tasks/dst-daily-schedule",
+    "../tasks/lru-cache-thread-safety",
+    "../tasks/money-decimal-rounding",
+    "../tasks/pagination-off-by-one",
+    "../tasks/portable-path-normalize",
+    "../tasks/semver-precedence",
+]
 
 # Each task runs `repeats` times per arm: 10 tasks x 3 arms x 3 repeats = 90 trials.
 # More repeats narrow the confidence intervals; real experiments usually need 3-5.

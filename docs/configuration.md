@@ -24,7 +24,7 @@ Rules:
 | `exclude_tasks` | list of strings | `[]` | Task ids or globs to leave out. |
 | `repeats` | integer >= 1 | `1` | Trials per task per arm. |
 | `jobs` | integer >= 1 | `1` | Concurrent trials. |
-| `seed` | integer | `0` | Seeds the trial order and each trial's seed. |
+| `seed` | integer | `0` | Seeds each trial's seed and the trial order. (task, repeat) blocks are shuffled, and the arms of a block run next to each other in a per-block random order. |
 | `budget_usd` | number > 0 | none | Stop starting new trials once recorded spend reaches this. |
 | `timeout_s` | number > 0 | `1800` | Agent time limit per attempt. Also limits `setup`. A task can override it. |
 | `check_timeout_s` | number > 0 | `600` | Check time limit. A task can override it. A timed-out check is a fail. |
@@ -137,6 +137,15 @@ Write literal braces as `{{` and `}}`. Unknown placeholders are errors when the 
 Each run stores a SHA-256 fingerprint of the resolved configuration plus the content of
 every file in every task and overlay directory (ignoring `.git`, `__pycache__` and `*.pyc`).
 `--resume` refuses a run whose fingerprint differs, unless you pass `--force`.
+
+The fingerprint is location-independent: it hashes file contents (keyed by task id and arm
+name), never paths, so identical content gives the same fingerprint in any checkout. Runs
+started by older versions carry a location-dependent fingerprint; resuming one reports that
+and needs `--force`.
+
+`run.json` stores every path relative to the run directory (POSIX separators, with `..`
+segments where needed), so committed results do not reveal your home directory. If no
+relative form exists (another Windows drive), the home directory is written as `~`.
 
 Excluded from the fingerprint, so they may change between sessions: `jobs`,
 `keep_workspaces`, `workspace_root`, `budget_usd` and descriptions.

@@ -29,6 +29,29 @@ groups on Linux and macOS). A process that deliberately escapes these can surviv
 Agents inherit your environment plus `env` from the config. Anything exported in your shell
 is visible to every agent.
 
+## Grading integrity
+
+The check runs in the workspace the agent edited, so the agent's files can try to influence it.
+Two routes are closed:
+
+- Every check command runs with `PYTHONSAFEPATH=1` (the environment form of `python -P`), so
+  `python -m ...` and script runs do not put the workspace first on `sys.path`. An agent-written
+  `unittest/` package can no longer shadow the standard library.
+- Before the hidden `checks/` are copied in, every top-level entry of them that is absent from the
+  task's `repo/` is removed from the workspace (links are unlinked, not followed). A file the
+  agent planted next to the real checks, such as `checks/test_aaa.py`, does not run.
+
+Residual risks:
+
+- The checks import the agent's own code, which can exit the process or monkeypatch things at
+  import time.
+- Modules the checks import after discovery can still be shadowed by workspace files of the same
+  name.
+- An agent with full filesystem access can alter the interpreter's `site-packages`.
+
+Mitigate these with a sandbox (see below) and by reading the diffs of passing trials, especially
+surprising passes.
+
 ## Use a container or VM
 
 Run experiments in a container or disposable VM that holds:

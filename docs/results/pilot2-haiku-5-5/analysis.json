@@ -1,0 +1,405 @@
+{
+  "analysis": {
+    "alpha": 0.05,
+    "arms": [
+      {
+        "arm": "control",
+        "cost_per_pass_usd": 0.05793744999999999,
+        "errors": 0,
+        "mean_cost_usd": {
+          "estimate": 0.050212456666666655,
+          "high": 0.09477428372499996,
+          "low": 0.019976477350000004
+        },
+        "mean_duration_s": {
+          "estimate": 147.1043,
+          "high": 238.53196499999999,
+          "low": 82.604315
+        },
+        "mean_input_tokens": 21.0,
+        "mean_output_tokens": 23033.6,
+        "mean_turns": 13.866666666666667,
+        "pass_rate": {
+          "estimate": 0.8666666666666667,
+          "high": 0.9666666666666667,
+          "low": 0.7333333333333333
+        },
+        "pass_rate_wilson": {
+          "estimate": 0.8666666666666667,
+          "high": 0.9469034451594526,
+          "low": 0.7031867331796372
+        },
+        "passes": 26,
+        "tasks": 30,
+        "total_cost_usd": 1.5063736999999997,
+        "trials": 30
+      }
+    ],
+    "baseline": "control",
+    "cells": [
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.02194919,
+        "mean_duration_s": 79.449,
+        "passes": 1,
+        "task": "bughunt-depres",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.01694545,
+        "mean_duration_s": 55.542,
+        "passes": 1,
+        "task": "bughunt-inventory",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.01535911,
+        "mean_duration_s": 53.986,
+        "passes": 1,
+        "task": "bughunt-ledger",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.011408670000000001,
+        "mean_duration_s": 32.877,
+        "passes": 1,
+        "task": "bughunt-logpipe",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.024480699999999998,
+        "mean_duration_s": 94.899,
+        "passes": 1,
+        "task": "bughunt-mdhtml",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03282542,
+        "mean_duration_s": 219.229,
+        "passes": 1,
+        "task": "bughunt-miniql",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.015987800000000003,
+        "mean_duration_s": 48.635,
+        "passes": 1,
+        "task": "bughunt-ratelimit",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.02720813,
+        "mean_duration_s": 89.577,
+        "passes": 1,
+        "task": "bughunt-sheet",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.016329530000000002,
+        "mean_duration_s": 45.455,
+        "passes": 1,
+        "task": "bughunt-sitegen",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.023328500000000002,
+        "mean_duration_s": 95.085,
+        "passes": 0,
+        "task": "bughunt-textadv",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.01012997,
+        "mean_duration_s": 32.376,
+        "passes": 1,
+        "task": "cli-min-level-flag",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.015014899999999998,
+        "mean_duration_s": 54.07,
+        "passes": 1,
+        "task": "config-validation-errors",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.0114513,
+        "mean_duration_s": 44.928,
+        "passes": 1,
+        "task": "csv-quoted-newlines",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.00748774,
+        "mean_duration_s": 30.55,
+        "passes": 1,
+        "task": "dedupe-quadratic",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.007214900000000001,
+        "mean_duration_s": 24.263,
+        "passes": 1,
+        "task": "dst-daily-schedule",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03824566000000001,
+        "mean_duration_s": 188.596,
+        "passes": 1,
+        "task": "feature-decimal-context",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.027381179999999998,
+        "mean_duration_s": 117.471,
+        "passes": 1,
+        "task": "feature-diff3-merge",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.04272954999999999,
+        "mean_duration_s": 200.096,
+        "passes": 1,
+        "task": "feature-md-emphasis",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.3370200999999999,
+        "mean_duration_s": 1156.38,
+        "passes": 1,
+        "task": "feature-minire",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.032381570000000005,
+        "mean_duration_s": 143.597,
+        "passes": 1,
+        "task": "feature-paragraph-layout",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.028320279999999996,
+        "mean_duration_s": 136.739,
+        "passes": 1,
+        "task": "feature-rga-text-crdt",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03654267,
+        "mean_duration_s": 202.304,
+        "passes": 0,
+        "task": "feature-rope-buffer",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.5473437099999999,
+        "mean_duration_s": 648.604,
+        "passes": 0,
+        "task": "feature-sql-select",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.07657776,
+        "mean_duration_s": 278.928,
+        "passes": 1,
+        "task": "feature-toml-config",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03074243,
+        "mean_duration_s": 136.664,
+        "passes": 0,
+        "task": "feature-uri-resolve",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.01456908,
+        "mean_duration_s": 62.223,
+        "passes": 1,
+        "task": "lru-cache-thread-safety",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.013126220000000003,
+        "mean_duration_s": 52.236,
+        "passes": 1,
+        "task": "money-decimal-rounding",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.0048414,
+        "mean_duration_s": 13.418,
+        "passes": 1,
+        "task": "pagination-off-by-one",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.010238570000000002,
+        "mean_duration_s": 35.828,
+        "passes": 1,
+        "task": "portable-path-normalize",
+        "trials": 1
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.00919221,
+        "mean_duration_s": 39.124,
+        "passes": 1,
+        "task": "semver-precedence",
+        "trials": 1
+      }
+    ],
+    "comparisons": [],
+    "completed_trials": 30,
+    "environment": [
+      {
+        "arm": "control",
+        "init_trials": 30,
+        "mcp_servers": [],
+        "models": [
+          "claude-haiku-5-5"
+        ],
+        "plugins": [
+          "cc-plugin-agents-md",
+          "cc-plugin-plugin-authoring",
+          "cc-plugin-telemetry"
+        ],
+        "requested_model": "claude-haiku-5-5",
+        "skills": [
+          "artifact-capabilities",
+          "artifact-diagramming",
+          "batch",
+          "claude-api",
+          "code-review",
+          "dataviz",
+          "debug",
+          "deep-research",
+          "design",
+          "design-sync",
+          "doctor",
+          "fewer-permission-prompts",
+          "loop",
+          "plugin-authoring",
+          "run",
+          "run-skill-generator",
+          "simplify",
+          "slides",
+          "update-config",
+          "verify",
+          "workflow-authoring"
+        ],
+        "tools": [
+          "Artifact",
+          "ArtifactComments",
+          "ArtifactData",
+          "Bash",
+          "CronCreate",
+          "CronDelete",
+          "CronList",
+          "DesignSync",
+          "Edit",
+          "EnterWorktree",
+          "ExitWorktree",
+          "ListAgents",
+          "ListConnectors",
+          "ListPlugins",
+          "ListSkills",
+          "Monitor",
+          "NotebookEdit",
+          "PushNotification",
+          "Read",
+          "ReadNotifications",
+          "ReportFindings",
+          "ScheduleWakeup",
+          "SearchMcpRegistry",
+          "SearchPlugins",
+          "SearchSkills",
+          "SendMessage",
+          "SendUserFile",
+          "ShowOnboardingRolePicker",
+          "Skill",
+          "SuggestConnectors",
+          "SuggestPluginInstall",
+          "SuggestSkills",
+          "Task",
+          "TaskStop",
+          "ToolSearch",
+          "WebFetch",
+          "WebSearch",
+          "Workflow",
+          "Write"
+        ],
+        "versions": [
+          "2.1.296"
+        ]
+      }
+    ],
+    "error_trials": 0,
+    "experiment": "pilot2-haiku-5-5",
+    "flaky_tasks": [],
+    "notes": [],
+    "planned_trials": 30,
+    "total_cost_usd": 1.5063736999999997
+  },
+  "schema": 1,
+  "tool": "agent-ab"
+}

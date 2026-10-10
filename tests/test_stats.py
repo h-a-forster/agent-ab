@@ -79,8 +79,9 @@ def test_wilson_known_values(k, n, low, high):
 def test_paired_ratio_skipped_fraction():
     from agent_ab.stats import _paired_ratio_counted
 
-    ci, skipped = _paired_ratio_counted([0.0] * 9 + [1.0], [1.0] * 10, n_boot=2000, alpha=0.05,
-                                        rng=1)
+    ci, skipped = _paired_ratio_counted(
+        [0.0] * 9 + [1.0], [1.0] * 10, n_boot=2000, alpha=0.05, rng=1
+    )
     assert ci.estimate == pytest.approx(10.0)
     assert skipped == pytest.approx(0.9**10, abs=0.05)
     assert _paired_ratio_counted([1.0, 2.0], [1.0, 1.0], n_boot=100, alpha=0.05, rng=1)[1] == 0
@@ -331,7 +332,9 @@ def test_analyze_wilson_follows_alpha():
 def test_analyze_ratio_note_when_baseline_cost_mostly_zero():
     # Baseline cost is zero on all but one of 10 tasks: about 35% of resamples miss that task.
     records = grid(
-        10, 1, lambda i, arm, r: True,
+        10,
+        1,
+        lambda i, arm, r: True,
         cost=lambda i, arm: 1.0 if arm == "treat" else (2.0 if i == 0 else 0.0),
     )
     a = analyze(meta(), records, n_boot=N_BOOT)
@@ -457,7 +460,9 @@ def test_records_outside_the_plan_are_ignored():
     from agent_ab.stats import analyze
 
     meta = {
-        "experiment": "e", "baseline": "a", "planned_trials": 4,
+        "experiment": "e",
+        "baseline": "a",
+        "planned_trials": 4,
         "config": {
             "arms": [{"name": "a"}, {"name": "b"}],
             "tasks": [{"id": "t1"}, {"id": "t2"}],
@@ -467,8 +472,13 @@ def test_records_outside_the_plan_are_ignored():
 
     def rec(task, arm, repeat=0, status="pass"):
         return TrialRecord(
-            trial_id=f"{task}__{arm}__r{repeat}", task=task, arm=arm, repeat=repeat,
-            attempt=0, status=status, passed=status == "pass",
+            trial_id=f"{task}__{arm}__r{repeat}",
+            task=task,
+            arm=arm,
+            repeat=repeat,
+            attempt=0,
+            status=status,
+            passed=status == "pass",
         )
 
     planned = [rec(t, a) for t in ("t1", "t2") for a in ("a", "b")]
@@ -477,3 +487,70 @@ def test_records_outside_the_plan_are_ignored():
     assert a.completed_trials == 4
     assert any("do not belong" in n for n in a.notes)
     assert {s.arm for s in a.arms} == {"a", "b"}
+
+
+# --------------------------------------------------------------------------- environment
+
+
+def init(model="claude-haiku-5-5", tools=("Bash", "Edit"), mcp=(), plugins=("p",)):
+    return {
+        "model": model,
+        "tools": list(tools),
+        "mcp_servers": [{"name": n, "status": "connected"} for n in mcp],
+        "plugins": list(plugins),
+        "skills": ["s1"],
+        "agents": [],
+    }
+
+
+def env_meta(requested=("haiku", "haiku")):
+    m = meta()
+    for cfg, model in zip(m["config"]["arms"], requested, strict=True):
+        cfg["agent"] = {"model": model}
+    return m
+
+
+def env_grid(**per_arm):
+    return [
+        rec(t, arm, **kw) for t in ("t1", "t2") for arm, kw in per_arm.items()
+    ]  # fmt: skip
+
+
+def test_analyze_environment_absent_for_old_records():
+    a = analyze(meta(), grid(2, 1, lambda *_: True), n_boot=100)
+    assert a.environment == []
+    assert not any("model" in n or "version" in n for n in a.notes)
+
+
+def test_analyze_environment_summarises_and_flags_confounds():
+    records = env_grid(
+        control=dict(models=["claude-haiku-4-5"], agent_version="2.1.1", agent_init=init()),
+        treat=dict(
+            models=["claude-haiku-4-5", "claude-sonnet-5-5"],
+            agent_version="2.1.2",
+            agent_init=init(tools=("Bash", "Edit", "Extra"), mcp=("web",), plugins=()),
+        ),
+    )
+    a = analyze(env_meta(("haiku", "opus")), records, n_boot=100)
+    control, treat = a.environment
+    assert control.requested_model == "haiku" and control.models == ["claude-haiku-4-5"]
+    assert control.versions == ["2.1.1"] and control.init_trials == 2
+    assert treat.mcp_servers == ["web"] and treat.tools == ["Bash", "Edit", "Extra"]
+    notes = "\n".join(a.notes)
+    assert "treat used more than one model" in notes
+    assert "treat requested model opus but ran" in notes
+    assert "control requested" not in notes  # alias "haiku" resolves to a haiku ID
+    assert "different agent versions" in notes
+    assert "differ in tools" in notes and "treat adds Extra" in notes
+    assert "differ in MCP servers" in notes and "treat adds web" in notes
+    assert "differ in plugins" in notes and "treat lacks p" in notes
+
+
+def test_analyze_environment_models_fall_back_to_init():
+    records = env_grid(
+        control=dict(agent_init=init(model="claude-haiku-4-5")),
+        treat=dict(agent_init=init(model="claude-haiku-4-5")),
+    )
+    a = analyze(env_meta(), records, n_boot=100)
+    assert [e.models for e in a.environment] == [["claude-haiku-4-5"]] * 2
+    assert not any("Arms differ" in n for n in a.notes)

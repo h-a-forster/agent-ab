@@ -49,12 +49,15 @@ binary instead of the shim, or avoid the characters.
 
 ## claude-code
 
-Runs Claude Code in print mode with JSON output. The prompt goes on stdin.
+Runs Claude Code in print mode. The prompt goes on stdin. By default the output is
+`stream-json`, which includes the session's init event; its last line is the same result
+object that `--output-format json` prints.
 
 ```text
-claude -p --output-format json --no-session-persistence --permission-mode <mode>
+claude -p --output-format stream-json --verbose --no-session-persistence
+       --permission-mode <mode>
        [--model M] [--effort E] [--max-budget-usd X] [--max-turns N]
-       [--safe-mode] [--bare] [--setting-sources S]
+       [--safe-mode] [--bare] [--setting-sources S] [--strict-mcp-config]
        [--append-system-prompt-file <attempt dir>/append_system_prompt.md]
        <args...>
 ```
@@ -71,15 +74,40 @@ claude -p --output-format json --no-session-persistence --permission-mode <mode>
 | `bare` | options | `false` | `--bare`: minimal mode. Changes how the CLI authenticates; see its help. |
 | `setting_sources` | options | none | `--setting-sources`: comma-separated `user`, `project`, `local`. |
 | `append_system_prompt` | options | none | Text written to a file and passed with `--append-system-prompt-file`. |
+| `capture_init` | options | `true` | Use `--output-format stream-json --verbose` and record the init event (see below). With `false` the CLI runs with `--output-format json` and no init data is recorded. |
+| `strict_mcp_config` | options | `true` | `--strict-mcp-config`: use only MCP servers named by `--mcp-config`. agent-ab passes none, so no MCP server (not even your own) is loaded unless you add `--mcp-config` through `args`. |
 
 agent-ab records cost (`total_cost_usd`), turns, tokens (including cache reads and writes)
 and the final message. Hitting `max_turns` or `max_budget_usd` is a fail. API statuses 401,
 403, 404, 408, 429 and 5xx are infrastructure errors.
 
+What is recorded about the agent itself:
+
+- `models`: the model IDs the CLI reports having used (the keys of `modelUsage` in the result),
+  sorted. Aliases such as `haiku` resolve to a dated ID, so this is the model actually run.
+- `agent_version`: the CLI version. agent-ab runs `<executable> --version` once per arm at the
+  start of a run (stored in `run.json` as `agent_versions`) and, when the init event is
+  captured, prefers the version the CLI reports during the trial. A failed probe leaves it
+  unknown.
+- `agent_init`: a compact summary of the init event: `model`, `claude_code_version`,
+  `permission_mode`, `api_key_source` and the names of `tools`, `mcp_servers` (with status),
+  `plugins`, `skills` and `agents`.
+- `init.json` in the attempt directory: the full init event, without `cwd`, `session_id`,
+  `uuid`, `scratchpad_path`, `messaging_socket_path`, `startup_timing` and any value that is
+  an absolute path. The event is read from the start of the output, so a long transcript does
+  not hide it.
+
+The report lists the models, versions and, when init data exists, the number of tools, MCP
+servers and plugins per arm, and notes arms that used more than one model, a model other than
+the one requested, or a different tool, MCP or plugin set (a confound unless that difference
+is what you are testing). Runs without this data produce the same report as before.
+
 Isolation: Claude Code also loads settings from your home directory. Set
 `setting_sources = "project"` so only workspace settings apply, which is what you want when
 the arm difference is a workspace file such as a `CLAUDE.md`. To compare a customised setup
-with a stock one, use an arm with `safe_mode = true` (or `bare = true`).
+with a stock one, use an arm with `safe_mode = true` (or `bare = true`). `strict_mcp_config`
+keeps your own MCP servers out, and the recorded init summary lets you check what was
+actually loaded: compare `tools`, `mcp_servers`, `plugins` and `skills` across arms.
 
 ```toml
 [agent]
@@ -194,6 +222,7 @@ keys. Missing keys and wrong types are recorded as unknown.
 
 ```python
 """Run my_agent.py for one trial and write usage.json."""
+
 import json, re, subprocess, sys
 from pathlib import Path
 
@@ -201,7 +230,8 @@ prompt_file, artifacts, model = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3
 agent = Path(__file__).with_name("my_agent.py")
 proc = subprocess.run(
     [sys.executable, str(agent), "--model", model, "--prompt-file", str(prompt_file)],
-    capture_output=True, text=True,
+    capture_output=True,
+    text=True,
 )
 sys.stdout.write(proc.stdout)
 sys.stderr.write(proc.stderr)

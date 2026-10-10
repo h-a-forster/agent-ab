@@ -1,0 +1,51 @@
+prompt = """
+`qs` parses and encodes query strings for the gateway, but it only handles flat keys and has
+decoding bugs. Make `qs.parse` and `qs.encode` handle nested data the way the web frameworks
+our clients use do. Public API: `parse(query, max_depth=5)`, `encode(data)`, `ParseError`
+(a `ValueError`). Touch `qs/codec.py`, `qs/tree.py`, `qs/parser.py`, `qs/encoder.py` as needed.
+
+Decoding (`codec.unquote_plus` / `quote`)
+- `+` means a space, applied to the raw text BEFORE `%XX` escapes are decoded (so `%2B` is a
+  literal `+`). Runs of `%XX` escapes are UTF-8 bytes: `%C3%A9` is `é`; invalid UTF-8 becomes
+  U+FFFD (Python's `errors="replace"`). A `%` not followed by two hex digits stays literal
+  (`100%`, `%zz`, `%4`).
+- `quote` percent-encodes the UTF-8 bytes of everything except `A-Za-z0-9-._~`, with upper-case
+  hex (`é` -> `%C3%A9`, space -> `%20`).
+
+Parsing
+- A leading `?` is dropped; the query is split on `&`; empty pairs and pairs with an empty raw
+  key are skipped; each pair splits at the FIRST `=` (no `=` means value `""`).
+- Structure is read from the RAW (not yet decoded) key: a key matching `name[seg][seg]...` (a
+  non-empty `name` without brackets followed by zero or more `[...]` groups with no brackets
+  inside) is nested; anything else (`[a]`, `a[b`, `a[b]c`, `a]`) is one literal key. Each
+  `name`/`seg` is then percent-decoded on its own, so `a%5Bb%5D=1` is the literal key `a[b]`,
+  never nesting. Values are decoded too.
+- `user[name]=x&user[age]=3` -> `{"user": {"name": "x", "age": "3"}}`; nesting of any shape
+  up to `max_depth` bracket groups (more raises `ParseError`).
+- A key ending in `[]` collects into a list even for a single value: `a[]=1` -> `{"a": ["1"]}`,
+  `a[b][]=1&a[b][]=2` -> `{"a": {"b": ["1", "2"]}}`. `[]` anywhere but at the very end
+  (`a[][b]`, `a[][]`) raises `ParseError`. Numeric segments are ordinary dict keys.
+- A repeated key (with or without `[]`, nested or not) accumulates values in order into a
+  list: `a=1&a=2` -> `["1", "2"]`, `a=1&a[]=2` -> `["1", "2"]`, `a[]=1&a=2` -> `["1", "2"]`,
+  `a[b]=1&a[b]=2` -> `{"a": {"b": ["1", "2"]}}`.
+- Conflicts raise `ParseError`: a key that is already a dict being given a plain value or list
+  value (`a[b]=1&a=2`, `a[b]=1&a[]=2`), and a key that already holds a string or list being
+  nested into (`a=1&a[b]=2`, `a[]=1&a[b]=2`).
+- Result dicts keep first-appearance key order. Values are always `str`.
+
+Encoding (`encode(data)`, the inverse of `parse` for such data)
+- `data` must be a dict (`TypeError` otherwise); keys must be non-empty `str` (`TypeError` for
+  non-str, `ValueError` for `""`, at any depth).
+- Nested dicts become `a[b][c]=v`; each key/segment is `quote`d on its own but the structural
+  brackets are literal, so a key containing `[` is written `%5B`. Lists (or tuples) of scalars
+  become one `key[]=v` pair per element, in order; an empty list or empty dict writes nothing;
+  a list element that is a dict/list raises `ValueError`.
+- Scalars: `str` as is, `bool` -> `true`/`false`, `int`/`float` -> `str(v)`, `None` -> empty
+  value; anything else raises `TypeError`. Values are `quote`d. Pairs are joined with `&` in
+  dict order.
+- This changes the old flat list encoding (`b=x&b=z`) to `b[]=x&b[]=z`; update the existing
+  visible test in `tests/test_qs.py` accordingly.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "bugfix", "multi-file", "hard"]

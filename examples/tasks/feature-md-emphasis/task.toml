@@ -1,0 +1,49 @@
+prompt = """
+`mdinline` renders a subset of inline Markdown but treats `*` and `_` as plain text. Implement
+emphasis and strong emphasis exactly as in the CommonMark spec 0.31.2 (section 6.2 "Emphasis
+and strong emphasis", rules 1-17, and the "process emphasis" delimiter-stack algorithm of the
+appendix). Everything the other inline constructs do today stays as is. Touch `scan.py`,
+`render.py`, `chars.py` and add what you need (e.g. `emphasis.py`).
+
+**Syntax in scope**: backslash escapes (`\\` before an ASCII punctuation character gives that
+character as plain text; before anything else the backslash is literal), code spans (as
+implemented today; their content is never scanned for emphasis), `*`/`_` delimiter runs, and plain
+text. There are no links, images, raw HTML, hard line breaks or entity references (so
+CommonMark's bracket/link interplay does not exist here). Newlines are kept as they are and count as
+whitespace.
+
+**Output**: `<em>...</em>` and `<strong>...</strong>` exactly as CommonMark's reference HTML (one
+`<em>` or `<strong>` per matched pair of 1 or 2 delimiters; `***a***` is `<em><strong>a</strong></em>`),
+text escaped as today (`& < > "`), code spans as `<code>..</code>`. Delimiters that stay unmatched are
+output as literal text (escaped as usual).
+
+**Details people get wrong** (all from the spec; also see the examples in the spec's section 6.2,
+which the hidden tests contain):
+- Delimiter run = maximal run of the same character (`*` or `_`) in the SOURCE text; escaped
+  characters are not part of a run, but they ARE the neighbouring character for the flanking test,
+  as is the backtick next to a code span. The start and the end of the text count as whitespace.
+- *Unicode whitespace* = category Zs or tab, line feed, form feed, carriage return. *Unicode
+  punctuation* (spec 0.31) = ASCII punctuation or any character in the Unicode categories P or S
+  (so `€`, `©`, `—`, `«`, `。` are punctuation, no-break space is whitespace). Use
+  `unicodedata.category`.
+- left-/right-flanking and `can_open`/`can_close` for `*` and `_` as in the spec (`_` additionally
+  needs `not right-flanking or preceded by punctuation` to open and the mirror condition to close).
+- Matching follows "process emphasis": for each potential closer (in order) look back for the
+  nearest potential opener of the same character; skip an opener if the "multiple of 3" rule
+  forbids it: if (the closer can also open OR the opener can also close) and the sum of the ORIGINAL
+  lengths of the two delimiter runs is a multiple of 3, then they only match if both original
+  lengths are multiples of 3. Use 2 delimiters (strong) when both sides still have at least 2, else
+  1 (em). Delimiters between a matched opener and closer are dropped from the stack; a closer
+  without opener that cannot open is removed; leftover delimiters are plain text.
+- `plain_text(text)` (used for table-of-contents titles) must now return the text content with the
+  emphasis markers consumed (`plain_text("*foo **bar** baz*") == "foo bar baz"`; unmatched markers
+  stay), and `render_document` / `outline` pick the new behaviour up through `render_inline` /
+  `plain_text`.
+- Large inputs: the algorithm must be linear-ish (use the spec's `openers_bottom` idea or
+  equivalent; inputs such as `"a* " * 40000` or `"*a**" * 20000` must finish within seconds) and
+  rendering/`plain_text` must not recurse deeper than Python allows for nesting depth: `"*" * 12000
+  + "x" + "*" * 12000` has to work (6,000 nested `<strong>`).
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file", "differential", "algorithm", "performance"]

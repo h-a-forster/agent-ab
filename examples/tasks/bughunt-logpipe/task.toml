@@ -1,0 +1,44 @@
+prompt = """
+`logpipe` (a small log-ingestion pipeline) has several reported bugs. Find and fix their causes;
+README.md documents the intended behaviour. Keep all other existing behaviour unchanged.
+
+1. Timestamps with a UTC offset are shifted the wrong way. `parse_timestamp("2024-03-10T12:00:00+05:30")`
+   returns 1710091800 but 12:00 at +05:30 is 06:30 UTC, i.e. 1710052200. Negative offsets are
+   wrong too (`-08:00` must be 20:00 UTC), as are the other spellings (`+0530`, `+05`) and the
+   same instants arriving through `parse_line`: logfmt / JSON `ts` values and the common-log
+   `[10/Oct/2023:13:55:36 +0200]` form.
+
+2. Percentiles are one rank too high. The 50th percentile of `[1, 2, 3, 4]` is returned as 3
+   (nearest-rank says 2); the 75th as 4 (should be 3), the 95th of 1..20 as 20 (should be 19).
+   `describe` and the latency statistics in `aggregate` rows inherit this.
+
+3. Window boundaries are rounded instead of floored. `bucket_start(59.6, 60)` returns 60 and
+   `bucket_start(90, 60)` returns 120; they must be 0 and 60 (the window containing the
+   timestamp, aligned to the epoch; negative timestamps floor too). `tumbling` and
+   `aggregate` put records into the wrong windows.
+
+4. The deduplicator suppresses a steady stream forever. `Deduper(10)` fed one message every 4
+   seconds (t = 0, 4, 8, ..., 40) lets only t=0 through; it must let through t = 0, 12, 24, 36
+   (a repeat is dropped only if the key was last *emitted* less than 10 s earlier, dropped
+   records do not extend the quiet period). `Pipeline` duplicate counts are affected.
+
+5. The last partial batch is lost. `MemorySink(batch_size=2)` fed 5 records through
+   `Pipeline.run` only contains 4: the final record is thrown away when the sink is closed.
+   `close()` (also via `with BatchSink(...)`) must write what is still buffered, exactly once.
+
+6. `min_level` compares level names as text. `min_level("WARN")` drops ERROR and FATAL records
+   (and `min_level("INFO")` drops ERROR) because "ERROR" sorts before "WARN"
+   alphabetically. Severity order is DEBUG < INFO < WARN < ERROR < FATAL.
+
+7. Enriched records share one fields dict. After enriching two records with different fields,
+   the first record shows the second one's fields too (and fields of earlier records leak into
+   later ones); the `Enricher`'s `defaults` get modified as a side effect. Each record must get
+   its own dict and the defaults must stay untouched.
+
+Hidden checks cover each symptom, close variants through the related code paths named above,
+and a broad regression suite of the current correct behaviour. Run the visible tests with
+`python -m unittest discover -s tests -t .`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "multi-file", "bughunt"]

@@ -1,0 +1,46 @@
+prompt = """
+Our bookkeeping library `ledgerlib` has several bugs that users reported. Please find and fix
+the causes. The documented conventions are in README.md. Keep all other existing behaviour
+unchanged.
+
+1. Splitting negative amounts hands the leftover cents to the wrong parts.
+   `Money(-100).allocate([1, 1, 1])` returns `[-33, -33, -34]` but should be `[-34, -33, -33]`
+   (the mirror image of `Money(100).allocate([1, 1, 1])`). `Money(-100).split(3)` and any
+   other negative allocation are affected; the parts still must sum to the original amount.
+
+2. Currency conversion does not round half away from zero. With 1 EUR = 0.5 USD,
+   converting `Money(25, "EUR")` gives 12 cents but should give 13, and `Money(-25, "EUR")`
+   should give -13. It also happens when converting through an inverse or triangulated rate,
+   and it affects everything that converts to the base currency (`Ledger.balance_in`,
+   `trial_balance`, `income_statement`).
+
+3. Rolled-up balances are too high for accounts that have postings of their own. With
+   `1000` (Assets) holding 700 itself and its child `1100` holding 300, `ledger.balance("1000",
+   rollup=True)` gives 1700 instead of 1000. `Chart.descendants("1000")` also seems to list
+   `1000` itself, and `format_tree` / `Chart.walk()` print some accounts twice.
+
+4. Leap years in century years are wrong. `month_range(2000, 2)` ends on 2000-02-28 instead of
+   2000-02-29, `fiscal_year_range(1999, 3)` ends on 2000-02-28, and importing a CSV row dated
+   `2000-02-29` fails with "bad date". (1900 and 2100 are not leap years, 2000 and 2400 are.)
+
+5. Entries posted without tags share one tag list: after `a.add_tag("audit")` on one entry, a
+   *different* entry posted without tags also reports `["audit"]`. This also happens through
+   `Ledger.post`, and a list passed in by the caller must not be modified or kept
+   by the entry either (mutating the caller's list later must not change the entry). A
+   reversal entry must also have its own tags list, independent of the original's.
+
+6. `parse_amount("-0.05")` returns 5 (positive) instead of -5. The same happens for any
+   negative amount below one unit, e.g. `"-0.5"`, `"-$0.99"`, and for CSV rows imported with
+   `import_csv`.
+
+7. After `ledger.reverse(entry_id)` (or `reverse_many`), `ledger.balance(...)` keeps returning
+   the old, cached figures until something else is posted. Reports built on balances are
+   affected too (`balance_in`, `trial_balance`, `balance_sheet`, rollups, `as_of` queries).
+
+Hidden checks cover each symptom above, close variants through the sibling APIs mentioned,
+and a broad regression suite of the current correct behaviour. Run the visible tests with
+`python -m unittest discover -s tests -t .`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["bugfix", "multi-file", "bughunt"]

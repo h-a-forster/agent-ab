@@ -16,7 +16,7 @@
 #  data you care about.
 # ============================================================================================
 #
-# Cost: 10 tasks x 2 arms x 3 repeats = 60 trials. budget_usd stops launching new trials once
+# Cost: 30 tasks x 2 arms x 3 repeats = 180 trials. budget_usd stops launching new trials once
 # the recorded spend reaches it; trials already running finish. Interrupted runs can be
 # continued with `agent-ab run ... --resume <run_dir>`.
 
@@ -47,6 +47,8 @@ permission_mode = "bypassPermissions"
 # setting_sources = "project"  # optional: comma-separated settings sources the CLI loads
 #                              # (user, project, local); "project" keeps your personal
 #                              # configuration out of the experiment
+# Defaults worth knowing: strict_mcp_config = true (no MCP servers, not even your own) and
+# capture_init = true (records the model, tools, MCP servers and plugins each trial ran with).
 
 [[arms]]
 name = "control"

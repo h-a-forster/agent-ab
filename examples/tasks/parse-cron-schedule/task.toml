@@ -1,0 +1,51 @@
+prompt = """
+`cronx` handles only the simplest cron expressions, and `next_after` gives up after a year
+and steps minute by minute. Make it behave like standard (Vixie) cron. Public API stays:
+`CronExpr.parse(text)` with the set attributes `minutes`, `hours`, `days`, `months`,
+`weekdays`; `matches`, `next_after`, `upcoming`; `CronError` (a `ValueError`). Work in
+`cronx/fields.py`, `expr.py` and `schedule.py` as needed.
+
+Syntax. An expression is five whitespace-separated fields `minute hour day-of-month month
+day-of-week` (surrounding whitespace is ignored) or one of the macros `@yearly`/`@annually`
+(`0 0 1 1 *`), `@monthly` (`0 0 1 * *`), `@weekly` (`0 0 * * 0`), `@daily`/`@midnight`
+(`0 0 * * *`), `@hourly` (`0 * * * *`), case-insensitive; any other `@word`, extra text after a
+macro, or a wrong field count is a `CronError`. A field is a comma-separated list (no empty
+elements) of items:
+- `*`; `N`; `A-B`; each optionally followed by `/S` (positive integer step, digits only,
+  ASCII only, no sign). `*/S` and `A-B/S` take every S-th value starting at the range start;
+  `N/S` means `N` up to the field maximum in steps of S (`5/20` in minutes is 5, 25, 45). A
+  step larger than the range is fine (`*/70` in minutes is just 0).
+- Ranges must not be reversed (`5-3` is an error; there is no wrap-around) and every value must
+  be inside the field's bounds: minute 0-59, hour 0-23, day-of-month 1-31, month 1-12,
+  day-of-week 0-7. Numbers are plain ASCII digits (no sign, no spaces).
+- Names: month fields accept `JAN`..`DEC` and day-of-week fields `SUN`..`SAT` (SUN = 0, SAT = 6),
+  case-insensitive, anywhere a number is allowed (including range ends and with steps:
+  `JAN-MAR`, `mon-fri/2`). Names are not accepted in other fields, and a month name in the
+  day-of-week field (or vice versa) is an error.
+- In day-of-week, `7` also means Sunday: the parsed `weekdays` set contains only 0-6 (`5-7` is
+  `{5, 6, 0}`, `0-7` is all seven days, `1-7/2` is `{1, 3, 5, 0}`).
+- `?` is accepted only as a whole item in the day-of-month and day-of-week fields and means the
+  same as `*` there.
+
+Day matching: a date matches the day fields as follows. If EITHER the day-of-month field or
+the day-of-week field begins with `*` (`*`, `*/2`, `*,5` ...) or is `?`, both must match
+(the star field accepts everything unless it has a step, e.g. `*/2` in day-of-month means odd
+days 1, 3, ..., 31). If both fields are restricted, the date matches when EITHER matches
+(`0 0 13 * 5` is the 13th of every month and also every Friday). The month field must always
+match. Months do not have clamped days: `31` never matches in a 30-day month and `29 2 *` only in
+leap years.
+
+Functions
+- `matches(expr, dt)`: seconds and microseconds of `dt` are ignored.
+- `next_after(expr, dt)`: the earliest matching minute `t` with `t > dt` (seconds of the result
+  are 0; for `dt` = 10:00:30 and an expression matching 10:00 the answer is a later minute).
+  The result keeps `dt.tzinfo` (calendar arithmetic on wall-clock fields, no DST handling). It
+  searches calendar years up to `dt.year + 10` (inclusive) and raises `CronError` if nothing
+  matches (e.g. `0 0 30 2 *`). It must not step minute by minute through years: rare schedules
+  such as `0 0 29 2 *` from March 2096 (next hit 2104) have to return quickly.
+- `upcoming(expr, start, count)`: the next `count` matches, each after the previous one;
+  `count == 0` gives `[]`, negative `count` raises `ValueError`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 60
+tags = ["feature", "multi-file", "hard"]
