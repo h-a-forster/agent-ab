@@ -1,0 +1,41 @@
+prompt = """
+The `recur` package (`recur/rule.py`, `recur/parse.py`, `recur/expand.py`) only supports DAILY
+and WEEKLY rules, one weekday per week, no exclusions. The calendar service needs more. Extend
+it, keeping the existing public API (`Rule`, `parse_rule`, `format_rule`, `occurrences`,
+`between`).
+
+Rule fields: add `byday` (a tuple of weekday numbers, Monday=0 .. Sunday=6) and `exdates` (a
+frozenset of `datetime.date`), both empty by default, after the existing fields.
+
+Text form (`parse_rule` / `format_rule`):
+- New `FREQ` values `MONTHLY` and `YEARLY`.
+- `BYDAY=MO,WE` (codes MO TU WE TH FR SA SU, case-insensitive) parses to a sorted,
+  de-duplicated tuple. A bad code, or BYDAY with a FREQ other than WEEKLY, is a `ValueError`
+  (the `Rule` constructor enforces this too).
+- `EXDATE=2024-01-05,2024-01-12` (comma-separated ISO dates); a bad date is a `ValueError`.
+- Existing error rules stay (empty text, missing FREQ, duplicate or unknown keys, empty
+  segments, COUNT with UNTIL, ...). Keys and FREQ remain case-insensitive.
+- `format_rule` emits, in this order, skipping what is default: `FREQ`, `INTERVAL` (only if
+  not 1), `BYDAY` (two-letter codes in weekday order), `COUNT`, `UNTIL`, `EXDATE` (ascending
+  ISO dates). `format_rule(parse_rule(s))` for a canonical `s` gives back `s`.
+
+Expansion (`occurrences(rule, start)`, still a lazy generator that must work for unbounded
+rules, and `between`, inclusive on both ends):
+- WEEKLY with `byday`: weeks run Monday to Sunday and `INTERVAL` counts weeks starting from
+  the week that contains `start`. Within a week the days come in ascending order. Dates in
+  that first week that are before `start` are skipped (they are not occurrences and do not
+  count towards COUNT). `start` itself is only an occurrence if its weekday is in `byday`.
+  Without `byday` the weekday of `start` is used, as today.
+- MONTHLY: every `INTERVAL` months on the day-of-month of `start`; when a month is too short
+  the date is clamped to that month's last day. Each month is computed from `start`'s day, not
+  from the previously clamped one (start Jan 31: Jan 31, Feb 29/28, Mar 31, Apr 30, ...).
+- YEARLY: every `INTERVAL` years on `start`'s month and day; Feb 29 is clamped to Feb 28 in
+  non-leap years (and is Feb 29 again in leap years).
+- `COUNT` limits the number of generated occurrences *before* `exdates` are removed, so an
+  excluded date still uses up one of the COUNT slots. `UNTIL` is inclusive. `exdates` that
+  are not occurrences have no effect.
+- Expansion simply ends instead of raising if dates would go beyond `date.max`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file"]

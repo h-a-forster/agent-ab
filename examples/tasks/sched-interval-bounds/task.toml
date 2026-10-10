@@ -1,0 +1,33 @@
+prompt = """
+The `ivl` package (`ivl/model.py`, `ivl/ops.py`, `ivl/text.py`) only knows half-open intervals
+`[lo, hi)`. The booking scheduler now needs intervals whose ends can be open or closed
+independently, e.g. a closed slot `[9, 10]` or a point-in-time `[5, 5]`. Please add that,
+keeping the existing public API and the default of `[lo, hi)`.
+
+- `Interval(lo, hi, lo_closed=True, hi_closed=False)` (frozen dataclass; the flags take part in
+  equality). It must contain at least one point: `lo < hi`, or `lo == hi` with both ends closed
+  (a single point `[5, 5]`). Anything else raises `ValueError`.
+- `contains(p)` honours the flags. `overlaps(other)` is true when the two intervals share at
+  least one point (`[1, 2)` and `[2, 3)` do not overlap; `[1, 2]` and `[2, 3)` do).
+- `intersect(a, b)` returns the common part with the correct flags (when both lower bounds are
+  equal the result is closed only if both are closed; same for upper bounds), or `None`.
+- `subtract(a, b)` returns the 0, 1 or 2 pieces of `a` not covered by `b`, sorted, with
+  flipped flags at the cut: `[0, 10) - [3, 5)` is `[0, 3)` and `[5, 10)`, while
+  `[0, 10) - (3, 5]` is `[0, 3]` and `(5, 10)`. Subtracting the point `[5, 5]` from `[0, 10)`
+  gives `[0, 5)` and `(5, 10)`.
+- `merge(intervals)` returns the union as a sorted list of disjoint intervals. Intervals are
+  joined when they overlap or leave no gap between them: `[1, 2)` + `[2, 3)` join, `[1, 2]` +
+  `(2, 3)` join, but `[1, 2)` + `(2, 3)` stay separate because the point 2 is not covered.
+  Sort order: by lower end, a closed lower end before an open one at the same value.
+- `gaps(intervals, window)` is the part of `window` not covered, as sorted pieces with the
+  correct flags (e.g. gaps of `[2, 4]` in `[0, 10)` are `[0, 2)` and `(4, 10)`).
+- `total_length(intervals)` is the measure of the union (open or closed ends make no
+  difference; points have length 0).
+- `str(interval)` and `format_interval` print `[1, 5)`, `(1, 5]`, `[3, 3]` etc. (bracket for
+  closed, parenthesis for open, `", "` between the values). `parse()` accepts the four bracket
+  combinations, still tolerates whitespace around tokens and keeps ints as ints and decimals
+  as floats; invalid text or an empty interval raises `ValueError`.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file"]

@@ -1,0 +1,42 @@
+prompt = """
+`ttlstore.TTLCache` is too basic for the pricing service. Extend it (changes are needed in
+`ttlstore/cache.py`, `ttlstore/entry.py` and `ttlstore/stats.py`), keeping the existing API
+and behaviour for existing uses. The clock is the injected zero-argument callable; the
+checks drive it manually.
+
+Expiry: an entry expires at `set_time + ttl`; it is expired when `now >= expires_at`
+(boundary inclusive). "Live" means not expired.
+
+1. `set(key, value, ttl=None, tags=())`: `ttl` overrides the cache default for this entry
+   (must be a positive number, else `ValueError`; `math.inf` means it never expires; the
+   constructor's `ttl` is validated the same way). `tags` is an iterable of hashable tags.
+   Setting an existing key replaces value, ttl, tags and expiry and makes it most recently
+   used.
+   Every `set()` first removes all expired entries (each counted once in `expirations`), then,
+   if the key is not present and the cache holds `capacity` entries, evicts the least recently
+   used one (`evictions`). Replacing an existing key never evicts.
+2. `TTLCache(capacity, ttl, clock=..., sliding=False)`: with `sliding=True` every successful
+   `get()` restarts the entry's expiry from now using that entry's own ttl.
+3. Read-only queries never remove entries and never change statistics or recency:
+   `len(cache)` and `key in cache` count only live entries; `keys()` lists live keys, least to
+   most recently used; `peek(key, default=None)` returns a live value without touching
+   recency or expiry; `ttl_remaining(key)` returns the seconds left (`math.inf` for a
+   never-expiring entry) or `None` if the key is absent or expired.
+4. `get(key, default=None)`: a live hit counts as a hit and makes the entry most recently
+   used; absent keys count as a miss; an expired entry is removed, counted once in
+   `expirations` and also counts as a miss.
+5. `touch(key, ttl=None)`: for a live entry, restarts its expiry from now (with the new `ttl`
+   if given, which then becomes the entry's ttl) and returns True, without changing recency
+   or hit/miss counters; for an absent key returns False; an expired entry is removed, counted
+   in `expirations`, and gives False. An invalid `ttl` raises `ValueError`.
+6. `delete(key)`: True if a live entry was removed (no statistics change); False otherwise
+   (an expired entry is still removed, and counted in `expirations`).
+7. `purge()` removes all expired entries, counts them in `expirations`, returns how many.
+8. `invalidate_tag(tag)` removes every entry that has the tag. It returns the number of
+   *live* entries removed, which are counted in the new `invalidations` statistic; expired
+   entries with the tag are removed too but counted in `expirations` instead.
+9. `Stats` gains a fifth field `invalidations` (default 0, after `expirations`).
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file"]

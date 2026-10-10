@@ -1,0 +1,43 @@
+prompt = """
+Our `hsm` machines are flat. The firmware simulator needs hierarchical (nested) states.
+Extend `hsm` (mainly `hsm/states.py` and `hsm/machine.py`) keeping the current flat behaviour and
+public API (`Machine`, `Transition`, `send`, `state`, `is_in`, `configuration`, the callback
+conventions in the README).
+
+Hierarchy:
+- State names are dotted paths: `"on.playing"` is a child of `"on"`. Every parent must be
+  declared in `states` too (else `ValueError`); duplicates are still an error.
+- `Machine(..., initials=None)` gets a new keyword argument: a dict mapping each composite state
+  (one that has children) to the full name of its default child, e.g. `{"on": "on.stopped"}`. A
+  composite state without an entry, or an entry that is not a direct child of that composite,
+  raises `ValueError`.
+- `machine.state` is always a leaf state (full dotted name). Entering a composite state (as
+  `initial` or as a transition target) continues into its default child, recursively, until a
+  leaf. `configuration()` returns the active chain from the outermost state to the leaf, e.g.
+  `["on", "on.playing"]`; `is_in(name)` is true for the leaf and each of its ancestors.
+- Construction runs the `on_enter` callbacks of the whole initial chain, outermost first, with
+  an empty payload.
+
+Event handling in `send(event, **payload)`:
+- Look for a transition for the event starting at the active leaf, then its parent, and so on
+  outward; at each state, try that state's transitions for the event in declaration order and
+  take the first whose guard passes (or has none). So inner states override outer ones, and a
+  failing guard falls through to the next candidate. If none fires, return False and change
+  nothing.
+- `target=None` is still an internal transition: only the action runs, no exit/enter
+  callbacks, the state is unchanged (also when it is declared on an ancestor of the leaf).
+- Any other transition is external. Let L be the deepest state that is a *proper* ancestor
+  of both the transition's `source` and its `target` (L may not exist, meaning the top level).
+  Order of events: `on_exit` callbacks for every active state from the leaf outward up to and
+  including the child of L that is on the path (so for a transition declared on an ancestor
+  A, all of the leaf's chain up to A and beyond to the child of L is exited, innermost first);
+  then the `action`; then `on_enter` callbacks from just below L inward to the target, and
+  then down the target's default-child chain to the new leaf. A self-transition (target ==
+  source) therefore exits and re-enters that state (and, for a composite, its active descendants and default
+  chain). A transition from a parent to its own child, or from a child to its parent, is
+  external as well, using the same rule for L.
+- Callbacks, guards and actions all receive the payload dict, as before.
+"""
+check = ["{python}", "-m", "unittest", "discover", "-s", "checks", "-t", "."]
+check_timeout_s = 120
+tags = ["feature", "hard", "multi-file"]
