@@ -18,6 +18,31 @@ Runs on Linux, macOS and Windows. Python 3.11+, no runtime dependencies.
 Example: [Claude Code with and without tests](docs/results.md), on Haiku and Sonnet. Skipping
 tests cut cost per trial by 21-44%. Ten tasks were too few to measure the effect on pass rate.
 
+## Findings
+
+From the [example results](docs/results.md). All runs used Claude Code with Python tasks.
+
+- **Skipping tests barely changed the pass rate.** On Claude Haiku 5.5, 50 tasks x 3 repeats:
+  95.3% with tests, 92.7% without, a difference of -2.7 pts [-7.3, +1.3]. A drop larger than
+  about 7 points is unlikely; a small one is not ruled out. Ceiling effects limit this.
+  [Details](docs/results.md#powered-experiment-no-tests-on-claude-haiku-55).
+- **Skipping tests halved the cost.** Cost per trial fell to x0.50 [0.40, 0.70] and time to
+  x0.64 [0.53, 0.74]. The instruction worked: the control wrote tests in 127/150 trials, the
+  `no-tests` arm in 3/150.
+  [Details](docs/results.md#manipulation-check).
+- **Sonnet 5.5 cost 3.6 times as much as Haiku 5.5 per trial for no detectable gain.**
+  Pass rate was 96.0% vs 94.0% (+2.0 pts [-4.0, +10.0]), cost x3.58 [2.35, 5.55], with one
+  repeat per task. Sonnet took about half the time.
+  [Details](docs/results.md#model-as-the-arm-haiku-55-vs-sonnet-55).
+- **Separate runs misled us about cost per pass.** The ten-task pilot suggested Sonnet
+  was cheaper per pass, but it compared different model generations in separate runs. The
+  paired model experiment reversed this ($0.041 vs $0.144 per pass).
+  [Details](docs/results.md#model-as-the-arm-haiku-55-vs-sonnet-55).
+- **Hard tasks with clear prompts are hard to write.** Haiku 5.5 passed 26/30 on the pilot
+  that included 20 deliberately harder tasks, and three of the four failures were unclear
+  prompts. The baseline stayed above the 40-80% target.
+  [Details](docs/results.md#task-calibration-pilots-on-claude-haiku-55).
+
 ## Install
 
 Not on PyPI yet. Install from GitHub:
@@ -155,6 +180,21 @@ format: [docs/tasks.md](docs/tasks.md). Codex and other agents:
   See [docs/power.md](docs/power.md).
 
 Details: [docs/statistics.md](docs/statistics.md).
+
+## Open questions
+
+- **Why does no-tests lose on specific tasks?** `data-interval-sets` fell from 3/3 to 1/3.
+  Start from `docs/results/haiku-5-5-no-tests/trials.jsonl` and `manipulation.jsonl` (made by
+  `docs/results/manipulation.py`).
+- **How do we keep headroom for Haiku 5.5 without underspecified prompts?** Start from
+  `docs/results/pilot2-haiku-5-5` and `examples/tasks/bughunt-*`.
+- **Do heterogeneous effects break the power model?** It assumes one effect across tasks.
+  Start from `docs/power.md` and the power code, `src/agent_ab/power.py`.
+- **Does Sonnet's speed advantage survive other concurrency settings?** Time ratios came from
+  6 and 4 trials at a time. Start from the `concurrency` field in `trials.jsonl`.
+- **Do environment-provided skills and plugins change results?** Every trial saw 3 plugins
+  and 21 skills. Start from the `agent_init` field in `trials.jsonl`; a new run also
+  saves each trial's full `init.json`.
 
 ## Safety
 
