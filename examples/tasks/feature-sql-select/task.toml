@@ -16,7 +16,8 @@ conversions are not tested. Identifiers and keywords are case-insensitive; strin
 - item: `*`, `alias.*`, or `expr [[AS] name]`. FROM is optional (`SELECT 1 + 1` is one row).
 - source: `table [[AS] alias]` followed by any number of `, table`, `[INNER] JOIN t ON e`,
   `LEFT [OUTER] JOIN t ON e`, `CROSS JOIN t` (no ON; `JOIN` without `ON` is allowed for
-  inner/cross, `LEFT JOIN` requires `ON`). Tables may be repeated under different aliases.
+  inner/cross, `LEFT JOIN` requires `ON`). Tables may be repeated under different aliases; using the same alias twice in one FROM is a
+  `SqlError`.
   Unqualified column names must be unambiguous (`SqlError` otherwise); `alias.col` and
   `table.col` (when the table has no alias) work.
 - expressions (highest to lowest precedence; all binary operators are left-associative):

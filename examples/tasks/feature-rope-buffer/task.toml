@@ -36,7 +36,8 @@ behind its back are not supported)
   clear the redo stack). `end_group()` without a matching `begin_group()`, and `undo()`/`redo()`
   while a group is open, raise `RuntimeError`. The context manager closes the group even if the
   body raises.
-- Recording an edit clears the redo stack (as today). Undo applies the inverse of each recorded
+- Recording an edit clears the redo stack (as today), at once: an edit recorded while a group is
+  open empties it straight away (`can_redo` is False after it), before the group closes. Undo applies the inverse of each recorded
   edit through `Buffer.replace` and redo re-applies each edit through `Buffer.replace`, so markers
   follow undo/redo exactly like they follow normal edits (e.g. undoing a deletion re-inserts the
   text at the deletion point: a `"left"` marker there stays before it, a `"right"` marker ends up after
