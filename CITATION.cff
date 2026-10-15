@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use agent-ab, please cite it as below."
+title: agent-ab
+abstract: >-
+  Controlled A/B experiments for coding-agent setups: instructions, skills, models, effort
+  and prompts, measured on hidden tests with paired statistics.
+type: software
+authors:
+  - alias: h-a-forster
+repository-code: "https://github.com/h-a-forster/agent-ab"
+license: MIT
+version: 0.1.0
+date-released: 2026-10-09
