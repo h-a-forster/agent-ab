@@ -31,7 +31,7 @@ Rules:
 | `max_retries` | integer >= 0 | `2` | Extra attempts after an infrastructure error. |
 | `timeout_is_failure` | boolean | `true` | An agent timeout is a fail, without running the check. If `false`, the check runs on what the agent left. |
 | `baseline` | string | first arm | Arm the others are compared with. |
-| `keep_workspaces` | boolean | `false` | Keep workspaces. The path is written to `workspace.txt` in the attempt directory. |
+| `keep_workspaces` | boolean | `false` | Keep workspaces. The paths are written to `workspace.txt` (the agent's) and `grade-workspace.txt` (the grading copy) in the attempt directory. |
 | `workspace_root` | string | system temp | Directory for workspaces. |
 
 Duplicate task ids and an empty task list are errors.

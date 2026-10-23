@@ -22,7 +22,8 @@ unique in the experiment.
   root, overwriting files at the same paths. So `checks/grade.py` lands at
   `<workspace>/grade.py`, and `checks/checks/test_x.py` lands at
   `<workspace>/checks/test_x.py`. The checks overlay is applied after the agent finishes,
-  so the agent never sees those files in its workspace.
+  to a clean copy of the workspace that holds only the agent's diff, so the agent never sees
+  those files in its workspace.
 - `solution/` is never shown to a real agent.
 
 ## `task.toml`
