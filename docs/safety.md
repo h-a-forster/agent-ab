@@ -41,7 +41,13 @@ closes these routes:
   a forged `.pyc` that Python would load instead of the source), files written after the diff
   was taken, or a tampered `.git`. git refuses patch paths outside the work tree. A diff that
   does not apply fails the trial. If the agent breaks the workspace's `.git` so that no diff
-  can be recorded, the trial fails rather than falling back to grading in place. Without git
+  can be recorded, the trial fails rather than falling back to grading in place; the error says
+  whether `.git` was missing or replaced or git itself could not record the changes. A failure
+  to write `diff.patch` into the run directory is an infrastructure error and is retried.
+  Nested git repositories the agent creates (a `git clone` to vendor a library, `git init` in a
+  subdirectory) are recorded as ordinary files: their `.git` metadata is moved aside while the
+  diff is taken and does not reach the grading copy. A stale `.git/index.lock`, left by a git
+  command killed with the agent, is removed first. Without git
   on the host there is no diff, and the checks run in the agent's workspace.
 - **Verified exit status.** Agent code can force the check's exit status: an `atexit` hook that
   calls `os._exit(0)`, or `sys.exit(0)` at import time. Argv checks of the form
@@ -60,9 +66,13 @@ closes these routes:
 
 Residual risks:
 
-- Agent code still runs inside the check process. It can monkeypatch `unittest` itself, or
-  inspect the runner's memory to find the report path and nonce. This takes code written
-  against agent-ab specifically; read the diffs of surprising passes.
+- The verified exit status stops generic exit forcing, not code aimed at agent-ab. Agent code
+  runs inside the check process, so it can monkeypatch `unittest`, or find the report path and
+  nonce and write a clean report itself: a few lines that walk the interpreter's stack frames
+  to the runner's locals are enough, and on Linux both values stay readable in
+  `/proc/self/environ` after they are removed from `os.environ`. Treat a clean report as
+  evidence against accidental or generic tampering only; real isolation needs a sandbox, and
+  the diffs of surprising passes should be read.
 - Modules the checks import after discovery can still be shadowed by workspace files of the same
   name.
 - An agent with full filesystem access can alter the interpreter's `site-packages`, the task

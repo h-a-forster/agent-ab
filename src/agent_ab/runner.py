@@ -24,7 +24,13 @@ from typing import Literal
 
 from agent_ab.adapters import get_adapter
 from agent_ab.adapters.base import Adapter
-from agent_ab.errors import AdapterError, AgentABError, RunStoreError, WorkspaceError
+from agent_ab.errors import (
+    AdapterError,
+    AgentABError,
+    GitDirAlteredError,
+    RunStoreError,
+    WorkspaceError,
+)
 from agent_ab.model import (
     AgentUsage,
     Experiment,
@@ -447,7 +453,17 @@ def _grade(
     task = spec.task
     # Measured before the checks are copied in so they never count as agent changes.
     patch = art / "diff.patch"
-    stats = diff_stats(ws, patch)
+    stats: tuple[int, int, int] | None = None
+    diff_problem: str | None = None
+    try:
+        stats = diff_stats(ws, patch)
+    except GitDirAlteredError:
+        diff_problem = "the agent's changes could not be recorded (its .git directory was altered)"
+    except WorkspaceError as e:
+        diff_problem = f"the agent's changes could not be recorded: {e}"
+    except OSError as e:
+        rec.error = f"cannot write the agent's diff: {e}"  # infrastructure, not the agent
+        return
     if stats is not None:
         rec.files_changed, rec.lines_added, rec.lines_removed = stats
 
@@ -459,10 +475,13 @@ def _grade(
     if ws.baseline_commit is None:
         _run_checks(exp, rec, art, ws, task, check_timeout, cancel)
         return
-    if stats is None:
-        # The baseline existed, so the agent broke the workspace's git directory.
+    if diff_problem is not None:
+        # The baseline existed and git works on the host, so the workspace's state is the cause.
         rec.status, rec.passed = "fail", False
-        rec.error = "the agent's changes could not be recorded (its .git directory was altered)"
+        rec.error = diff_problem
+        return
+    if stats is None:
+        rec.error = "git became unavailable before the agent's diff was taken"  # infrastructure
         return
 
     try:

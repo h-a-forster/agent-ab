@@ -762,6 +762,22 @@ def test_deleting_the_snapshot_repository_fails_the_trial(tmp_path):
     assert ws_left(tmp_path) == []
 
 
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_nested_repository_created_by_the_agent_is_graded(tmp_path):
+    # A vendored clone or `git init` in a subdirectory is ordinary work, not tampering.
+    script = (
+        "import os, subprocess\n"
+        "os.makedirs('vendor', exist_ok=True)\n"
+        "open(os.path.join('vendor', 'lib.py'), 'w').write('X = 1')\n"
+        "subprocess.run(['git', 'init', '-q', 'vendor'], check=True)\n"
+        "open('solution.txt', 'w').write('ok')\n"
+    )
+    rec = run_one(tmp_path, script)
+    assert rec.status == "pass", rec.error
+    assert rec.files_changed == 2
+    assert ws_left(tmp_path) == []
+
+
 def test_new_run_refuses_dir_with_stale_trial_log(tmp_path):
     run = tmp_path / "run"
     run.mkdir()

@@ -21,6 +21,10 @@ class WorkspaceError(AgentABError):
     """Preparing or inspecting a trial workspace failed (counts as an infrastructure error)."""
 
 
+class GitDirAlteredError(WorkspaceError):
+    """A workspace's ``.git`` directory is gone or was replaced, so its diff cannot be taken."""
+
+
 class AdapterError(AgentABError):
     """An agent adapter cannot run (missing executable, bad options)."""
 

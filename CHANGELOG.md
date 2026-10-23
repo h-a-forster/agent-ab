@@ -38,6 +38,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Files outside the diff (interpreter caches such as a forged `.pyc`, a tampered `.git`) no
   longer reach the checks. A trial whose diff cannot be recorded or applied fails. Setup now
   runs twice per trial; new artifacts `grade-setup.*`, `grade-workspace.txt`.
+- Diff recording tells its failures apart: a missing or replaced `.git` fails the trial as
+  tampering, a git error fails it with git's message, and a `diff.patch` that cannot be written
+  is an infrastructure error. Nested git repositories the agent creates are recorded as plain
+  files instead of an empty gitlink or a failed trial, and a stale `.git/index.lock` is removed
+  before the diff. `diff_stats` now raises (`GitDirAlteredError`, `WorkspaceError`, `OSError`)
+  instead of returning None for these cases.
+- `run_check` resolves a relative `report_path` before handing it to the check, which runs in
+  the workspace.
 - Argv checks of the form `{python} -m unittest ...` run under a verifying runner
   (`agent_ab.checkrun`) that records the outcome out of band with a one-time nonce
   (`check-report.json`). Agent code that forces the exit status (an `atexit` hook calling

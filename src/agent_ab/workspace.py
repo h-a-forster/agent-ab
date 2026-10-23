@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePath, PureWindowsPath
 
 from .config import expand_placeholders as _expand
-from .errors import WorkspaceError
+from .errors import GitDirAlteredError, WorkspaceError
 from .model import Arm, Command, ProcResult, Task
 from .proc import IS_WINDOWS, build_env, run_process
 
@@ -356,31 +356,107 @@ def rebaseline(ws: Workspace) -> None:
     ws.baseline_commit = out
 
 
+def _nested_git_entries(root: Path) -> list[Path]:
+    """Every ``.git`` entry below ``root`` except its own, without descending into links."""
+    found: list[Path] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        with os.scandir(current) as it:
+            for entry in it:
+                path = Path(entry.path)
+                if entry.name == ".git":
+                    if current != root:
+                        found.append(path)
+                    continue
+                if not _is_link(path) and entry.is_dir(follow_symlinks=False):
+                    stack.append(path)
+    return found
+
+
+@contextlib.contextmanager
+def _nested_repos_set_aside(ws: Path):
+    """Move nested ``.git`` entries out of the work tree for the duration of the block.
+
+    git records a directory holding a ``.git`` as a gitlink (or refuses it if the nested
+    repository has no commit), which would drop its files from the diff. With the metadata
+    moved aside, the files are staged as ordinary content. The entries are restored on exit.
+    """
+    try:
+        nested = _nested_git_entries(ws)
+    except OSError as e:
+        raise WorkspaceError(f"scanning the workspace for nested repositories failed: {e}") from e
+    if not nested:
+        yield
+        return
+    holding = Path(tempfile.mkdtemp(prefix=f".{ws.name}-nested-", dir=ws.parent))
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for i, path in enumerate(nested):
+            target = holding / str(i)
+            try:
+                os.replace(path, target)
+            except OSError as e:
+                rel = path.parent.relative_to(ws).as_posix()
+                raise WorkspaceError(
+                    f"the agent created a nested git repository at {rel}/ whose metadata "
+                    f"could not be set aside to record its files: {e}"
+                ) from e
+            moved.append((path, target))
+        yield
+    finally:
+        for path, target in reversed(moved):
+            with contextlib.suppress(OSError):
+                os.replace(target, path)
+        with contextlib.suppress(OSError):
+            _rmtree(holding)
+
+
 def diff_stats(ws: Workspace, patch_path: Path) -> tuple[int, int, int] | None:
     """Write the agent's changes since the baseline to ``patch_path`` and count them.
 
     Returns ``(files_changed, lines_added, lines_removed)``; binary files count as changed with
-    zero lines, and files ignored by the task's .gitignore count too. Returns None when there
-    is no baseline (git unavailable) or the workspace's git directory is gone or replaced
-    (e.g. the agent deleted ``.git``), since diff stats are informational. Call it before
-    ``install_checks`` so check files do not show up as agent changes.
+    zero lines, and files ignored by the task's .gitignore count too. Files inside a nested git
+    repository the agent created (``git clone``, ``git init`` in a subdirectory) are recorded as
+    ordinary files; the nested ``.git`` metadata is not. A stale ``.git/index.lock`` (left by a
+    git command killed with the agent) is removed first. Call it before ``install_checks`` so
+    check files do not show up as agent changes.
+
+    Returns None only when there is no baseline (git unavailable). Raises
+    ``GitDirAlteredError`` when the workspace's ``.git`` is gone or replaced (for example the
+    agent deleted it), ``WorkspaceError`` when git cannot record the changes, and ``OSError``
+    when ``patch_path`` cannot be written.
     """
     if ws.baseline_commit is None or _git() is None:
         return None
     git_dir = Path(ws.path) / ".git"
     if _is_link(git_dir) or not git_dir.is_dir():
-        return None  # a .git file or link would redirect git into another repository
+        # A .git file or link would redirect git into another repository.
+        raise GitDirAlteredError("the workspace's .git directory is missing or was replaced")
     base = ws.baseline_commit
     common = ("--no-renames", "--no-ext-diff", "--no-textconv")
-    try:
+    lock = git_dir / "index.lock"
+    if os.path.lexists(lock) and not _is_link(lock) and lock.is_file():
+        # The agent's processes are gone by now, so any lock is stale.
+        with contextlib.suppress(OSError):
+            lock.unlink()
+    patch_path = Path(patch_path)
+    patch_path.parent.mkdir(parents=True, exist_ok=True)
+    with _nested_repos_set_aside(Path(ws.path)):
         _run_git(ws.path, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
-        patch_path = Path(patch_path)
-        patch_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(patch_path, "wb") as fh:
-            _run_git(ws.path, "diff", "--cached", "--binary", *common, base, "--", stdout=fh)
-        raw = _run_git(ws.path, "diff", "--cached", "--numstat", "-z", *common, base, "--").stdout
-    except (WorkspaceError, OSError):
-        return None
+    raw_entries = _run_git(ws.path, "diff", "--cached", "--raw", "-z", *common, base, "--").stdout
+    # -z --raw without renames: ":<old mode> <new mode> <old> <new> <status>" NUL "<path>" NUL.
+    fields = raw_entries.split(b"\0")
+    for meta, path in zip(fields[0::2], fields[1::2], strict=False):
+        modes = meta.lstrip(b":").split(b" ")[:2]
+        if b"160000" in modes:
+            raise WorkspaceError(
+                f"the agent's changes include a git submodule entry at "
+                f"{path.decode('utf-8', 'replace')}, whose contents cannot be recorded"
+            )
+    with open(patch_path, "wb") as fh:
+        _run_git(ws.path, "diff", "--cached", "--binary", *common, base, "--", stdout=fh)
+    raw = _run_git(ws.path, "diff", "--cached", "--numstat", "-z", *common, base, "--").stdout
     files = added = removed = 0
     for record in raw.decode("utf-8", "replace").split("\0"):
         parts = record.split("\t", 2)

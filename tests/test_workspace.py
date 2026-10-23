@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -10,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from agent_ab import workspace as wsmod
-from agent_ab.errors import ConfigError, WorkspaceError
+from agent_ab.errors import ConfigError, GitDirAlteredError, WorkspaceError
 from agent_ab.model import AgentSpec, Arm, Task
 from agent_ab.proc import IS_WINDOWS
 from agent_ab.workspace import (
@@ -216,10 +217,56 @@ def test_diff_stats_add_modify_delete_binary(tmp_path, root, repo_task):
 
 
 @needs_git
-def test_diff_stats_none_when_git_dir_deleted(tmp_path, root, repo_task):
+def test_diff_stats_raises_when_git_dir_deleted(tmp_path, root, repo_task):
     with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
         wsmod._rmtree(ws.path / ".git")
-        assert diff_stats(ws, tmp_path / "d.patch") is None
+        with pytest.raises(GitDirAlteredError):
+            diff_stats(ws, tmp_path / "d.patch")
+
+
+def _git_in(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+         "-c", "commit.gpgsign=false", *args],
+        cwd=cwd, check=True, capture_output=True,
+    )  # fmt: skip
+
+
+@needs_git
+@pytest.mark.parametrize("committed", [False, True])
+def test_diff_stats_records_files_of_nested_repositories(tmp_path, root, repo_task, committed):
+    with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
+        _write(ws.path / "lib" / "util.py", "X = 1\n")
+        _git_in(ws.path / "lib", "init", "-q")
+        if committed:
+            _git_in(ws.path / "lib", "add", "-A")
+            _git_in(ws.path / "lib", "commit", "-q", "-m", "vendored")
+        patch = tmp_path / "d.patch"
+        assert diff_stats(ws, patch) == (1, 1, 0)
+        assert (ws.path / "lib" / ".git").is_dir()  # restored afterwards
+        assert [p.name for p in root.iterdir()] == [ws.path.name]  # no holding dir left
+        with create_workspace(repo_task, _arm(), root=root, label="y") as clean:
+            wsmod.apply_patch(clean, patch)
+            assert (clean.path / "lib" / "util.py").read_text(encoding="utf-8") == "X = 1\n"
+            assert not (clean.path / "lib" / ".git").exists()
+
+
+@needs_git
+def test_diff_stats_clears_a_stale_index_lock(tmp_path, root, repo_task):
+    with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
+        _write(ws.path / "new.txt", "one\n")
+        _write(ws.path / ".git" / "index.lock", "")
+        assert diff_stats(ws, tmp_path / "d.patch") == (1, 1, 0)
+
+
+@needs_git
+def test_diff_stats_patch_write_failure_is_an_os_error(tmp_path, root, repo_task):
+    blocker = _write(tmp_path / "blocker", "not a directory")
+    with (
+        create_workspace(repo_task, _arm(), root=root, label="x") as ws,
+        pytest.raises(OSError),
+    ):
+        diff_stats(ws, blocker / "d.patch")
 
 
 def test_diff_stats_none_without_baseline(tmp_path):
@@ -454,7 +501,7 @@ def test_snapshot_refuses_existing_git(tmp_path):
 
 
 @needs_git
-def test_diff_stats_none_when_agent_plants_git_file(tmp_path, root, repo_task):
+def test_diff_stats_raises_when_agent_plants_git_file(tmp_path, root, repo_task):
     import subprocess
 
     victim = tmp_path / "victim"
@@ -464,7 +511,8 @@ def test_diff_stats_none_when_agent_plants_git_file(tmp_path, root, repo_task):
     with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
         wsmod._rmtree(ws.path / ".git")
         _write(ws.path / ".git", f"gitdir: {(victim / '.git').as_posix()}\n")
-        assert diff_stats(ws, tmp_path / "p.patch") is None
+        with pytest.raises(GitDirAlteredError):
+            diff_stats(ws, tmp_path / "p.patch")
     assert _git_tree(victim / ".git") == before
 
 
