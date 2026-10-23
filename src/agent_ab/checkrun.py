@@ -10,6 +10,10 @@ the environment. After the run it writes the outcome, with the nonce, to that pa
 accepts a zero exit status only together with a report that carries the nonce and a clean
 result, so cutting the process short or forcing its exit status no longer fakes a pass.
 
+This is a speed bump against generic exit forcing, not a security boundary. Test code shares
+the process: it can walk the interpreter's frames to these locals, and on Linux the values stay
+in ``/proc/self/environ`` after they leave ``os.environ``. Real isolation needs a sandbox.
+
 A clean result means at least one test ran and none failed, errored, succeeded unexpectedly or
 was skipped. Skips count against the run because the agent's code can raise ``SkipTest``.
 """

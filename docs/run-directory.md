@@ -83,7 +83,7 @@ anywhere else is an error.
 | `agent_version` | string or null | Agent CLI version: the one the agent reported during the trial if it did, else the per-arm probe. |
 | `agent_init` | object or null | Compact summary of the agent's init event: `model`, `claude_code_version`, `permission_mode`, `api_key_source`, and names of `tools`, `mcp_servers`, `plugins`, `skills`, `agents`. |
 | `prompt_sha256` | string or null | SHA-256 (hex) of the UTF-8 prompt text sent to the agent: `prompt.md` without its final newline. Null for attempts that ended before the agent was built. |
-| `instructions_sha256` | object or null | SHA-256 per instruction file the agent received. Workspace files the agent reads on its own (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`, `AGENTS.md`), hashed after setup, are keyed by relative path; files an adapter passes from outside the workspace are keyed `agent:<name>` (claude-code: `agent:append_system_prompt.md`). Null when there are none. |
+| `instructions_sha256` | object or null | SHA-256 per instruction file the agent received. Workspace files the agent reads on its own (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`, `AGENTS.md`), hashed after setup, are keyed by relative path; files an adapter passes from outside the workspace are keyed `agent:<name>` (claude-code: `agent:append_system_prompt.md`). Null when there are none. Not covered: user-level and parent-directory instruction files (such as `~/.claude/CLAUDE.md`), which the agent may still load unless the arm restricts its setting sources. |
 | `schema` | integer | Record schema version (`1`). |
 
 `null` means unknown, never zero. Statistics skip unknown values.

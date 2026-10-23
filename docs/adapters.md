@@ -94,8 +94,12 @@ What is recorded about the agent itself:
   `plugins`, `skills` and `agents`.
 - `prompt_sha256` and `instructions_sha256`: hashes of the exact prompt and of the instruction
   files (`CLAUDE.md` and friends in the workspace, and `append_system_prompt.md` when set), so
-  two runs can be checked for identical instructions. Recorded for every adapter; see
-  [run-directory.md](run-directory.md#trialsjsonl).
+  two runs can be checked for identical workspace and adapter instructions. Recorded for every
+  adapter; see [run-directory.md](run-directory.md#trialsjsonl). Instruction files outside the
+  workspace are not hashed: Claude Code also loads user memory (`~/.claude/CLAUDE.md`),
+  `CLAUDE.md` files in parent directories, rules and settings unless the arm restricts them
+  (`setting_sources`, `bare`). Equal hashes therefore mean identical instructions only for arms
+  that exclude those sources.
 - `init.json` in the attempt directory: the full init event, without `cwd`, `session_id`,
   `uuid`, `scratchpad_path`, `messaging_socket_path`, `startup_timing` and any value that is
   an absolute path. The event is read from the start of the output, so a long transcript does

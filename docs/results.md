@@ -124,11 +124,13 @@ be harder, then ran control-only pilots on Claude Haiku 5.5 (`claude-haiku-5-5`,
 - Three of the four failures traced to underspecified prompts: `feature-uri-resolve`,
   `feature-sql-select` and `feature-rope-buffer`. We clarified those prompts before the main
   run. `bughunt-textadv` was a genuine miss. Even after its clarification, `feature-uri-resolve`
-  failed in all 8 later trials (both arms of the main run and both models). The cause was a
+  failed in all 8 later trials (both arms of the main run and both models). A likely cause is a
   conflict between prompt and check: the prompt keeps the hex digits of percent encodings in a
   host uppercase (as RFC 3986 section 6.2.2.1 recommends), while the hidden oracle and the
   reference solution lowercased the whole host. The oracle and reference solution now follow
-  the prompt, and the check has an explicit case for it. All published results predate this
+  the prompt, and the check has an explicit case for it. A solution written to the prompt fails
+  the old oracle, but the agents' diffs from those trials were not kept, so we cannot confirm
+  that every one of the 8 failures came from this conflict rather than other bugs. All published results predate this
   fix, so `feature-uri-resolve` counts as a failure in every run below. As a tie in every
   pairing it does not bias the effects, but it lowers each arm's pass rate by up to one task
   in 50 (2 points).
