@@ -9,8 +9,10 @@ autocrlf, templates) can neither break nor slow the snapshot.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
+import secrets
 import shlex
 import shutil
 import stat
@@ -392,6 +394,24 @@ def diff_stats(ws: Workspace, patch_path: Path) -> tuple[int, int, int] | None:
     return files, added, removed
 
 
+def apply_patch(ws: Workspace, patch_path: Path) -> None:
+    """Apply a patch written by ``diff_stats`` to a fresh workspace.
+
+    Used to grade in a clean copy: the agent's recorded changes go onto a new workspace built
+    from the pristine task, so nothing outside that diff (interpreter caches, files written
+    after the diff, a tampered ``.git``) reaches the checks. git refuses paths outside the
+    work tree and writes through symlinks. An empty patch is a no-op. Raises
+    ``WorkspaceError`` if the patch does not apply.
+    """
+    patch_path = Path(patch_path)
+    try:
+        if patch_path.stat().st_size == 0:
+            return
+    except OSError as e:
+        raise WorkspaceError(f"cannot read the agent's diff: {e}") from e
+    _run_git(ws.path, "apply", "--binary", "--whitespace=nowarn", str(patch_path.resolve()))
+
+
 def install_checks(ws: Workspace, task: Task) -> None:
     """Copy the task's hidden ``checks/`` over the workspace root, overwriting agent files.
 
@@ -506,6 +526,66 @@ def run_command(
 # first on sys.path, where an agent-written `unittest/` package would shadow the stdlib.
 CHECK_ENV = {"PYTHONSAFEPATH": "1"}
 
+# Argv checks that start like this run under agent-ab's verifying unittest runner.
+_UNITTEST_PREFIX = ("{python}", "-m", "unittest")
+_VERIFYING_MODULE = "agent_ab.checkrun"
+
+
+@dataclass
+class CheckResult:
+    """Outcome of a check command.
+
+    ``verified`` is True when the check ran under the verifying runner (see
+    ``agent_ab.checkrun``); then ``report`` holds the counts it recorded, if any. ``problem``
+    explains why a zero exit status is not accepted as a pass.
+    """
+
+    proc: ProcResult
+    verified: bool = False
+    report: dict | None = None
+    problem: str | None = None
+
+    @property
+    def passed(self) -> bool:
+        return self.proc.exit_code == 0 and self.problem is None
+
+
+def uses_verifying_runner(cmd: Command) -> bool:
+    """True for argv checks of the form ``{python} -m unittest ...``."""
+    if isinstance(cmd, str):
+        return False
+    return tuple(str(part) for part in cmd[:3]) == _UNITTEST_PREFIX
+
+
+def _read_report(path: Path, nonce: str) -> tuple[dict | None, str | None]:
+    """Load the verifying runner's report; return ``(report, problem)``."""
+    from .checkrun import REPORT_MAX_BYTES
+
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(REPORT_MAX_BYTES + 1)
+    except FileNotFoundError:
+        return None, "the check exited 0 without recording a result (the process was cut short)"
+    except OSError as e:
+        return None, f"the check result could not be read: {e}"
+    if len(raw) > REPORT_MAX_BYTES:
+        return None, "the check result is too large"
+    try:
+        report = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None, "the check result is not valid JSON"
+    if not isinstance(report, dict) or report.get("nonce") != nonce:
+        return None, "the check result does not come from this check run"
+    report.pop("nonce", None)
+    if report.get("ok") is not True:
+        counts = ", ".join(
+            f"{k}={report[k]}"
+            for k in ("tests_run", "failures", "errors", "skipped", "unexpected_successes")
+            if k in report
+        )
+        return report, f"the check exited 0 but its tests did not pass ({counts})"
+    return report, None
+
 
 def run_check(
     cmd: Command,
@@ -514,15 +594,34 @@ def run_check(
     timeout_s: float | None,
     stdout_path: Path,
     stderr_path: Path,
+    report_path: Path | None = None,
     cancel: threading.Event | None = None,
-) -> ProcResult:
-    """Run a task's check command in the workspace with the hardened ``CHECK_ENV``."""
-    return run_command(
-        cmd,
-        ws,
-        timeout_s=timeout_s,
-        stdout_path=stdout_path,
-        stderr_path=stderr_path,
-        env=CHECK_ENV,
-        cancel=cancel,
-    )
+) -> CheckResult:
+    """Run a task's check command in the workspace with the hardened ``CHECK_ENV``.
+
+    An argv check of the form ``{python} -m unittest ...`` runs under the verifying runner
+    instead, which records its outcome out of band at ``report_path`` (default: next to
+    ``stdout_path``) with a one-time nonce. A zero exit status then counts only when that
+    record exists, carries the nonce and shows a clean run, so agent code that forces the exit
+    status (``atexit`` hooks, ``os._exit``) cannot fake a pass.
+    """
+    kw = {"timeout_s": timeout_s, "stdout_path": stdout_path, "stderr_path": stderr_path}
+    if not uses_verifying_runner(cmd):
+        proc = run_command(cmd, ws, env=CHECK_ENV, cancel=cancel, **kw)
+        return CheckResult(proc=proc)
+
+    from .checkrun import NONCE_ENV, REPORT_ENV
+
+    if report_path is None:
+        report_path = Path(stdout_path).with_name("check-report.json")
+    report_path = Path(report_path)
+    with contextlib.suppress(FileNotFoundError):
+        report_path.unlink()
+    nonce = secrets.token_hex(16)
+    env = {**CHECK_ENV, REPORT_ENV: str(report_path), NONCE_ENV: nonce}
+    argv = [cmd[0], "-m", _VERIFYING_MODULE, *cmd[3:]]
+    proc = run_command(argv, ws, env=env, cancel=cancel, **kw)
+    result = CheckResult(proc=proc, verified=True)
+    if proc.exit_code == 0:
+        result.report, result.problem = _read_report(report_path, nonce)
+    return result

@@ -428,9 +428,16 @@ def test_keep_workspaces(tmp_path):
     exp = make_exp(tmp_path, arms=[fake_arm("a")])
     run_experiment(exp, tmp_path / "run", options=RunOptions(keep_workspaces=True))
     (rec,) = records(tmp_path / "run")
-    kept = Path((tmp_path / "run" / rec.artifacts / "workspace.txt").read_text("utf-8").strip())
+    art = tmp_path / "run" / rec.artifacts
+    kept = Path((art / "workspace.txt").read_text("utf-8").strip())
     assert kept.is_dir() and (kept / "solution.txt").is_file()
-    assert ws_left(tmp_path) == [kept]
+    graded = ws_left(tmp_path)
+    if HAS_GIT:
+        grade = Path((art / "grade-workspace.txt").read_text("utf-8").strip())
+        assert (grade / "solution.txt").is_file()
+        assert sorted(graded) == sorted([kept, grade])
+    else:
+        assert graded == [kept]
 
 
 # --------------------------------------------------------------------------- scheduling
@@ -721,9 +728,9 @@ def test_agent_link_over_checks_dir_is_replaced(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     # The agent swaps a checks path for a link (a junction on Windows) to a directory
-    # outside the workspace and deletes the snapshot repository.
+    # outside the workspace.
     script = (
-        "import os, shutil, subprocess, sys; shutil.rmtree('.git', ignore_errors=True);"
+        "import os, subprocess, sys;"
         f"target = {str(outside)!r};"
         "subprocess.run(['cmd', '/c', 'mklink', '/J', 'sub', target], check=True,"
         " capture_output=True) if sys.platform == 'win32' else os.symlink(target, 'sub');"
@@ -734,6 +741,24 @@ def test_agent_link_over_checks_dir_is_replaced(tmp_path):
     (rec,) = records(tmp_path / "run")
     assert rec.status == "pass", rec.error
     assert list(outside.iterdir()) == []  # nothing written through the link
+    assert ws_left(tmp_path) == []
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_deleting_the_snapshot_repository_fails_the_trial(tmp_path):
+    # Without its diff the agent's work cannot be graded in a clean copy; grading in place
+    # instead would reopen every workspace-level exploit.
+    script = (
+        "import os, shutil, stat\n"
+        "def unlock(func, path, _):\n"
+        "    os.chmod(path, stat.S_IWRITE)\n"
+        "    func(path)\n"
+        "shutil.rmtree('.git', onerror=unlock)\n"
+        "open('solution.txt', 'w').write('ok')\n"
+    )
+    rec = run_one(tmp_path, script)
+    assert rec.status == "fail" and rec.passed is False
+    assert "could not be recorded" in rec.error
     assert ws_left(tmp_path) == []
 
 
@@ -778,6 +803,8 @@ def test_leaked_workspace_is_noted(tmp_path, monkeypatch):
     run_experiment(exp, tmp_path / "run")
     (rec,) = records(tmp_path / "run")
     note = tmp_path / "run" / rec.artifacts / "workspace-leaked.txt"
-    (leaked,) = ws_left(tmp_path)
-    assert note.read_text(encoding="utf-8").strip() == str(leaked)
-    shutil.rmtree(leaked, ignore_errors=True)
+    leaked = ws_left(tmp_path)
+    assert len(leaked) == (2 if HAS_GIT else 1)  # the agent's workspace and the grading copy
+    assert sorted(note.read_text(encoding="utf-8").split()) == sorted(map(str, leaked))
+    for path in leaked:
+        shutil.rmtree(path, ignore_errors=True)

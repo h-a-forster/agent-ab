@@ -31,26 +31,49 @@ is visible to every agent.
 
 ## Grading integrity
 
-The check runs in the workspace the agent edited, so the agent's files can try to influence it.
-Two routes are closed:
+The checks import the agent's code, so the agent's files can try to influence grading. agent-ab
+closes these routes:
 
-- Every check command runs with `PYTHONSAFEPATH=1` (the environment form of `python -P`), so
-  `python -m ...` and script runs do not put the workspace first on `sys.path`. An agent-written
-  `unittest/` package can no longer shadow the standard library.
-- Before the hidden `checks/` are copied in, every top-level entry of them that is absent from the
-  task's `repo/` is removed from the workspace (links are unlinked, not followed). A file the
-  agent planted next to the real checks, such as `checks/test_aaa.py`, does not run.
+- **Clean copy.** The checks never run in the workspace the agent edited. agent-ab builds a fresh
+  workspace from the pristine task (the arm's removals and overlay, then the task's `setup`),
+  applies the agent's recorded diff (`diff.patch`) with `git apply`, and copies the hidden
+  `checks/` on top. Nothing outside that diff reaches the checks: interpreter caches (including
+  a forged `.pyc` that Python would load instead of the source), files written after the diff
+  was taken, or a tampered `.git`. git refuses patch paths outside the work tree. A diff that
+  does not apply fails the trial. If the agent breaks the workspace's `.git` so that no diff
+  can be recorded, the trial fails rather than falling back to grading in place. Without git
+  on the host there is no diff, and the checks run in the agent's workspace.
+- **Verified exit status.** Agent code can force the check's exit status: an `atexit` hook that
+  calls `os._exit(0)`, or `sys.exit(0)` at import time. Argv checks of the form
+  `["{python}", "-m", "unittest", ...]` therefore run under `agent_ab.checkrun`, a drop-in for
+  `python -m unittest`. Before any test code is imported it takes a report path and a one-time
+  nonce out of its environment; after the run it writes the counts and the nonce to the
+  attempt's `check-report.json`. A zero exit status passes only with a report that carries the
+  nonce and shows at least one test run and no failures, errors, unexpected successes or skips
+  (agent code can raise `SkipTest`). Other check commands are judged by exit status alone.
+- **Safe path.** Every check command runs with `PYTHONSAFEPATH=1` (the environment form of
+  `python -P`), so `python -m ...` and script runs do not put the workspace first on `sys.path`.
+  An agent-written `unittest/` package cannot shadow the standard library.
+- **Check-only paths.** Before the hidden `checks/` are copied in, every top-level entry of
+  them that is absent from the task's `repo/` is removed (links are unlinked, not followed). A
+  file the agent planted next to the real checks, such as `checks/test_aaa.py`, does not run.
 
 Residual risks:
 
-- The checks import the agent's own code, which can exit the process or monkeypatch things at
-  import time.
+- Agent code still runs inside the check process. It can monkeypatch `unittest` itself, or
+  inspect the runner's memory to find the report path and nonce. This takes code written
+  against agent-ab specifically; read the diffs of surprising passes.
 - Modules the checks import after discovery can still be shadowed by workspace files of the same
   name.
-- An agent with full filesystem access can alter the interpreter's `site-packages`.
+- An agent with full filesystem access can alter the interpreter's `site-packages`, the task
+  directory or agent-ab itself.
 
 Mitigate these with a sandbox (see below) and by reading the diffs of passing trials, especially
 surprising passes.
+
+The published results in [results.md](results.md) predate the clean copy and the verified exit
+status: their checks ran in the agent's workspace, judged by exit status. They have not been
+re-graded.
 
 ## Use a container or VM
 

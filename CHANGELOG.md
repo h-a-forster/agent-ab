@@ -30,6 +30,16 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Grading runs in a clean copy: a fresh workspace from the pristine task (arm files and task
+  setup included) with only the agent's recorded diff applied and the hidden checks on top.
+  Files outside the diff (interpreter caches such as a forged `.pyc`, a tampered `.git`) no
+  longer reach the checks. A trial whose diff cannot be recorded or applied fails. Setup now
+  runs twice per trial; new artifacts `grade-setup.*`, `grade-workspace.txt`.
+- Argv checks of the form `{python} -m unittest ...` run under a verifying runner
+  (`agent_ab.checkrun`) that records the outcome out of band with a one-time nonce
+  (`check-report.json`). Agent code that forces the exit status (an `atexit` hook calling
+  `os._exit(0)`, `sys.exit(0)` at import, `SkipTest` at import) no longer fakes a pass. Skipped
+  hidden tests and runs with no tests now count as failures.
 - Hardened grading: checks run with `PYTHONSAFEPATH=1`, and check-only paths are cleared before
   checks are installed, so agent-planted files cannot shadow the standard library or add tests.
 - `run.json` no longer leaks absolute home-directory paths.

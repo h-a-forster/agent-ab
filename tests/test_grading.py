@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from test_runner import fake_arm, make_exp
 
 from agent_ab import adapters
-from agent_ab.model import Task
+from agent_ab.model import AgentSpec, Arm, Task
 from agent_ab.runner import run_experiment
 from agent_ab.store import RunStore
+from agent_ab.workspace import create_workspace, install_checks, run_check
 
+HAS_GIT = shutil.which("git") is not None
 CHECK = ("{python}", "-m", "unittest", "discover", "-s", "checks", "-t", ".")
 GOOD = "open('answer.py', 'w').write('VALUE = 2\\n')"
 BAD = "open('answer.py', 'w').write('VALUE = 1\\n')"
@@ -85,4 +91,87 @@ def test_shadow_package_would_win_without_safe_path(tmp_path, monkeypatch):
     from agent_ab import workspace
 
     monkeypatch.setattr(workspace, "CHECK_ENV", {})
+    monkeypatch.setattr(workspace, "uses_verifying_runner", lambda cmd: False)
     assert _grade(tmp_path, BAD + "\n" + SHADOW).status == "pass"
+
+
+# Agent code that the checks import and that forces the check's exit status.
+ATEXIT = (
+    "open('answer.py', 'w').write("
+    "'import atexit, os\\natexit.register(os._exit, 0)\\nVALUE = 1\\n')"
+)
+IMPORT_EXIT = "open('answer.py', 'w').write('import os\\nos._exit(0)\\n')"
+IMPORT_SYS_EXIT = "open('answer.py', 'w').write('raise SystemExit(0)\\n')"
+IMPORT_SKIP = "open('answer.py', 'w').write('import unittest\\nraise unittest.SkipTest(\"x\")\\n')"
+# A stale bytecode file that Python loads without looking at the source (unchecked hash), so
+# the module that runs differs from the source in the agent's diff.
+FORGED_PYC = (
+    "import importlib.util, py_compile\n"
+    "open('answer.py', 'w').write('VALUE = 2\\n')\n"
+    "py_compile.compile('answer.py', importlib.util.cache_from_source('answer.py'),\n"
+    "                   invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)\n"
+    "open('answer.py', 'w').write('VALUE = 1\\n')\n"
+)
+
+
+@pytest.mark.parametrize(
+    "script",
+    [ATEXIT, IMPORT_EXIT, IMPORT_SYS_EXIT, IMPORT_SKIP],
+    ids=["atexit", "import-os-exit", "import-sys-exit", "import-skip"],
+)
+def test_forced_exit_status_cannot_fake_a_pass(tmp_path, script):
+    rec = _grade(tmp_path, script)
+    assert rec.status == "fail" and rec.passed is False
+
+
+def test_atexit_hook_fails_with_its_own_reason(tmp_path):
+    rec = _grade(tmp_path, ATEXIT)
+    assert rec.check_exit_code == 0  # the hook did force the exit status
+    assert "did not pass" in rec.error and "failures=1" in rec.error
+
+
+def test_atexit_hook_would_win_without_the_verifying_runner(tmp_path, monkeypatch):
+    # Guards the tests above: judged by exit status alone, the hook really does fake a pass.
+    from agent_ab import workspace
+
+    monkeypatch.setattr(workspace, "uses_verifying_runner", lambda cmd: False)
+    assert _grade(tmp_path, ATEXIT).status == "pass"
+
+
+def test_check_report_is_saved(tmp_path):
+    rec = _grade(tmp_path, GOOD)
+    report = json.loads((tmp_path / "run" / rec.artifacts / "check-report.json").read_text())
+    assert report["ok"] is True and report["tests_run"] == 1
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="grading in a clean copy needs git")
+def test_forged_bytecode_cannot_fake_a_pass(tmp_path):
+    rec = _grade(tmp_path, FORGED_PYC)
+    assert rec.status == "fail" and rec.passed is False
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="grading in a clean copy needs git")
+def test_forged_bytecode_would_win_in_place(tmp_path):
+    # Guards the test above: graded in the agent's own workspace, the stale bytecode wins.
+    task = _task(tmp_path)
+    arm = Arm(name="a", agent=AgentSpec(adapter="mock"))
+    with create_workspace(task, arm, root=tmp_path / "ws", label="x") as ws:
+        subprocess.run([sys.executable, "-c", FORGED_PYC], cwd=ws.path, check=True)
+        install_checks(ws, task)
+        out = tmp_path / "out"
+        out.mkdir()
+        kw = {"timeout_s": 60, "stdout_path": out / "o", "stderr_path": out / "e"}
+        assert run_check(CHECK, ws, **kw).passed
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="grading in a clean copy needs git")
+def test_files_outside_the_diff_do_not_reach_the_checks(tmp_path):
+    # Interpreter caches are not part of the recorded diff, so the clean copy never has them.
+    script = (
+        GOOD
+        + "\nimport os; os.makedirs('__pycache__', exist_ok=True)\n"
+        + ("open('__pycache__/marker.txt', 'w').write('x')\n")
+    )
+    rec = _grade(tmp_path, script)
+    assert rec.status == "pass"
+    assert "__pycache__" not in (tmp_path / "run" / rec.artifacts / "diff.patch").read_text()

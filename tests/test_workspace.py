@@ -609,4 +609,103 @@ def test_run_check_sets_safe_path(tmp_path, root, repo_task):
     with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
         kw = {"timeout_s": 30, "stdout_path": tmp_path / "o", "stderr_path": tmp_path / "e"}
         assert run_command(cmd, ws, **kw).exit_code == 1
-        assert wsmod.run_check(cmd, ws, **kw).exit_code == 0
+        assert wsmod.run_check(cmd, ws, **kw).proc.exit_code == 0
+
+
+# --------------------------------------------------------------------------- verified checks
+
+
+def test_verifying_runner_is_used_only_for_unittest_argv():
+    assert wsmod.uses_verifying_runner(("{python}", "-m", "unittest", "discover"))
+    assert wsmod.uses_verifying_runner(["{python}", "-m", "unittest"])
+    assert not wsmod.uses_verifying_runner("{python} -m unittest discover")
+    assert not wsmod.uses_verifying_runner(("{python}", "-m", "pytest"))
+    assert not wsmod.uses_verifying_runner(("python", "-m", "unittest"))
+
+
+@pytest.mark.parametrize(
+    ("content", "problem"),
+    [
+        (None, "cut short"),
+        (b"not json", "not valid JSON"),
+        (b'{"nonce": "other", "ok": true}', "does not come from this check run"),
+        (b"[1]", "does not come from this check run"),
+        (b'{"nonce": "n1", "ok": false, "tests_run": 3, "failures": 1}', "failures=1"),
+        (b'{"nonce": "n1", "ok": true}' + b" " * (70 * 1024), "too large"),
+    ],
+    ids=["missing", "garbage", "wrong-nonce", "not-object", "failed", "too-large"],
+)
+def test_read_report_rejects_bad_reports(tmp_path, content, problem):
+    path = tmp_path / "report.json"
+    if content is not None:
+        path.write_bytes(content)
+    _, found = wsmod._read_report(path, "n1")
+    assert found is not None and problem in found
+
+
+def test_read_report_accepts_a_clean_run(tmp_path):
+    path = _write(tmp_path / "report.json", '{"nonce": "n1", "ok": true, "tests_run": 2}')
+    report, problem = wsmod._read_report(path, "n1")
+    assert problem is None and report == {"ok": True, "tests_run": 2}
+
+
+def test_checkrun_summary_counts_skips_and_empty_runs_as_not_ok():
+    import unittest
+
+    from agent_ab.checkrun import summarize
+
+    class T(unittest.TestCase):
+        def test_ok(self):
+            pass
+
+        def test_skip(self):
+            self.skipTest("x")
+
+    def run(*names):
+        result = unittest.TestResult()
+        unittest.TestSuite(T(n) for n in names).run(result)
+        return summarize(result)
+
+    assert run("test_ok")["ok"] is True
+    skipped = run("test_ok", "test_skip")
+    assert skipped["ok"] is False and skipped["skipped"] == 1
+    assert run()["ok"] is False
+
+
+@needs_git
+def test_apply_patch_rebuilds_the_agent_changes(tmp_path, root, repo_task):
+    with create_workspace(repo_task, _arm(), root=root, label="a") as ws:
+        _write(ws.path / "new.txt", "new\n")
+        _write(ws.path / "blob.bin", bytes(range(256)))
+        first = next(p for p in sorted(ws.path.iterdir()) if p.is_file())
+        rel = first.name
+        first.unlink()
+        patch = tmp_path / "diff.patch"
+        assert diff_stats(ws, patch) is not None
+        with create_workspace(repo_task, _arm(), root=root, label="b") as clean:
+            wsmod.apply_patch(clean, patch)
+            assert (clean.path / "new.txt").read_text() == "new\n"
+            assert (clean.path / "blob.bin").read_bytes() == bytes(range(256))
+            assert not (clean.path / rel).exists()
+
+
+@needs_git
+def test_apply_patch_empty_is_a_noop_and_conflicts_raise(tmp_path, root, repo_task):
+    empty = _write(tmp_path / "empty.patch", "")
+    bad = _write(
+        tmp_path / "bad.patch",
+        "diff --git a/missing.txt b/missing.txt\n--- a/missing.txt\n+++ b/missing.txt\n"
+        "@@ -1 +1 @@\n-old\n+new\n",
+    )
+    escape = _write(
+        tmp_path / "escape.patch",
+        "diff --git a/../evil.txt b/../evil.txt\nnew file mode 100644\n--- /dev/null\n"
+        "+++ b/../evil.txt\n@@ -0,0 +1 @@\n+x\n",
+    )
+    with create_workspace(repo_task, _arm(), root=root, label="a") as ws:
+        wsmod.apply_patch(ws, empty)
+        with pytest.raises(WorkspaceError):
+            wsmod.apply_patch(ws, bad)
+        with pytest.raises(WorkspaceError):
+            wsmod.apply_patch(ws, escape)
+    assert not (root / "evil.txt").exists()

@@ -16,16 +16,20 @@ Each `agent-ab run` writes one run directory. The default is
     agent.stdout, agent.stderr
     setup.stdout, setup.stderr      if the task has setup
     check.stdout, check.stderr
+    check-report.json      outcome recorded by the verifying unittest runner
+    grade-setup.stdout, grade-setup.stderr   setup of the grading copy, if the task has setup
     diff.patch             the agent's changes (git diff against the starting snapshot)
     init.json              the agent's scrubbed init event (claude-code, capture_init)
     usage.json             usage written by the agent (command and mock adapters)
     record.json            this attempt's record
     workspace.txt          kept workspace path (keep_workspaces only)
+    grade-workspace.txt    kept grading-copy path (keep_workspaces only)
   report.html, report.md, analysis.json     written at the end of run
 ```
 
 Files that do not apply are absent. Some adapters and failure paths add more, for example
-`append_system_prompt.md` (claude-code) or `traceback.txt`.
+`append_system_prompt.md` (claude-code), `traceback.txt` or `workspace-leaked.txt` (one
+line per workspace that could not be deleted).
 
 The trial id is `<task>__<arm>__r<repeat>`, for example `fix-slugify__tdd__r2`. Repeats and
 attempts count from 0.
