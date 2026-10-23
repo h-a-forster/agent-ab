@@ -12,6 +12,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Per trial: the models actually used, the CLI version and a scrubbed summary of the agent's
   init event (saved as `init.json`); reports show them per arm and flag differences.
 - Per-trial record of how many trials were in flight at its start.
+- Per trial: `prompt_sha256` (the exact prompt sent) and `instructions_sha256` (workspace
+  instruction files such as `CLAUDE.md` and `AGENTS.md`, and adapter files such as the
+  claude-code system-prompt file), next to the CLI version.
 - One-arm runs, for pilots that measure baseline difficulty.
 - Manipulation check script, `docs/results/manipulation.py`.
 

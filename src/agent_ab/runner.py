@@ -8,6 +8,7 @@ a budget stops new launches; Ctrl-C kills running agents and records nothing hal
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import math
 import random
@@ -267,6 +268,42 @@ def _copy_identity(rec: TrialRecord, usage: AgentUsage) -> None:
             rec.agent_init = init
 
 
+# Instruction files coding agents read from the workspace on their own (Claude Code, Codex and
+# other AGENTS.md readers). Hashed after setup, as the agent finds them.
+INSTRUCTION_FILES = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md")
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _file_sha256(path: Path) -> str | None:
+    try:
+        if not path.is_file():
+            return None
+        digest = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 16), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _instruction_hashes(ws: Workspace, extra: list[Path]) -> dict[str, str]:
+    """SHA-256 of each instruction file the agent receives, keyed by where it comes from."""
+    found: dict[str, str] = {}
+    for rel in INSTRUCTION_FILES:
+        digest = _file_sha256(ws.path / rel)
+        if digest is not None:
+            found[rel] = digest
+    for path in extra:
+        digest = _file_sha256(Path(path))
+        if digest is not None:
+            found[f"agent:{Path(path).name}"] = digest
+    return found
+
+
 def _write_usage_warning(art: Path, notes: list[str]) -> None:
     with (
         contextlib.suppress(OSError),
@@ -345,6 +382,8 @@ def _execute(
         root=exp.root,
     )  # fmt: skip
     inv = adapter.build(ctx)
+    rec.prompt_sha256 = _sha256(prompt.encode("utf-8"))
+    rec.instructions_sha256 = _instruction_hashes(ws, inv.instruction_files) or None
     result = run_process(
         inv.argv,
         cwd=inv.cwd or ws.path,

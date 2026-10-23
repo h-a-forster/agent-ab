@@ -808,3 +808,42 @@ def test_leaked_workspace_is_noted(tmp_path, monkeypatch):
     assert sorted(note.read_text(encoding="utf-8").split()) == sorted(map(str, leaked))
     for path in leaked:
         shutil.rmtree(path, ignore_errors=True)
+
+
+def test_record_hashes_prompt_and_instruction_files(tmp_path):
+    import hashlib
+
+    overlay = tmp_path / "overlay"
+    (overlay / ".claude").mkdir(parents=True)
+    (overlay / "CLAUDE.md").write_bytes(b"Write tests first.\n")
+    (overlay / ".claude" / "CLAUDE.md").write_bytes(b"nested\n")
+    exp = make_exp(
+        tmp_path,
+        arms=[fake_arm("a"), fake_arm("b", overlay=overlay, prompt_prefix="Be careful.")],
+    )
+    run_experiment(exp, tmp_path / "run")
+    final = RunStore.open(tmp_path / "run").final_records()
+    a, b = final["t1__a__r0"], final["t1__b__r0"]
+    for rec in (a, b):
+        sent = (tmp_path / "run" / rec.artifacts / "prompt.md").read_bytes()
+        assert sent.endswith(b"\n")
+        assert rec.prompt_sha256 == hashlib.sha256(sent[:-1]).hexdigest()
+    assert a.prompt_sha256 != b.prompt_sha256
+    assert a.instructions_sha256 is None
+    assert b.instructions_sha256 == {
+        "CLAUDE.md": hashlib.sha256(b"Write tests first.\n").hexdigest(),
+        ".claude/CLAUDE.md": hashlib.sha256(b"nested\n").hexdigest(),
+    }
+
+
+def test_instruction_hashes_include_adapter_files(tmp_path):
+    from agent_ab.runner import _instruction_hashes
+    from agent_ab.workspace import Workspace
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "AGENTS.md").write_text("a\n", encoding="utf-8")
+    extra = tmp_path / "append_system_prompt.md"
+    extra.write_text("b", encoding="utf-8")
+    found = _instruction_hashes(Workspace(path=ws), [extra, tmp_path / "missing.md"])
+    assert sorted(found) == ["AGENTS.md", "agent:append_system_prompt.md"]

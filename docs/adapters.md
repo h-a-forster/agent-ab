@@ -92,6 +92,10 @@ What is recorded about the agent itself:
 - `agent_init`: a compact summary of the init event: `model`, `claude_code_version`,
   `permission_mode`, `api_key_source` and the names of `tools`, `mcp_servers` (with status),
   `plugins`, `skills` and `agents`.
+- `prompt_sha256` and `instructions_sha256`: hashes of the exact prompt and of the instruction
+  files (`CLAUDE.md` and friends in the workspace, and `append_system_prompt.md` when set), so
+  two runs can be checked for identical instructions. Recorded for every adapter; see
+  [run-directory.md](run-directory.md#trialsjsonl).
 - `init.json` in the attempt directory: the full init event, without `cwd`, `session_id`,
   `uuid`, `scratchpad_path`, `messaging_socket_path`, `startup_timing` and any value that is
   an absolute path. The event is read from the start of the output, so a long transcript does
