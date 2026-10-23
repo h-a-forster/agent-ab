@@ -40,6 +40,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`check-report.json`). Agent code that forces the exit status (an `atexit` hook calling
   `os._exit(0)`, `sys.exit(0)` at import, `SkipTest` at import) no longer fakes a pass. Skipped
   hidden tests and runs with no tests now count as failures.
+- `feature-uri-resolve`: the hidden oracle and the reference solution lowercased percent-encoding
+  hex digits in a host, contradicting the prompt (and RFC 3986 section 6.2.2.1). They now keep
+  them uppercase, and the check has an explicit case. Published results predate the fix.
 - Hardened grading: checks run with `PYTHONSAFEPATH=1`, and check-only paths are cleared before
   checks are installed, so agent-planted files cannot shadow the standard library or add tests.
 - `run.json` no longer leaks absolute home-directory paths.
