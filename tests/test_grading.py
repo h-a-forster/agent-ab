@@ -175,3 +175,20 @@ def test_files_outside_the_diff_do_not_reach_the_checks(tmp_path):
     rec = _grade(tmp_path, script)
     assert rec.status == "pass"
     assert "__pycache__" not in (tmp_path / "run" / rec.artifacts / "diff.patch").read_text()
+
+
+def test_relative_report_path_is_resolved_against_the_caller(tmp_path, monkeypatch):
+    # The check runs with the workspace as its cwd; a relative report path must still land
+    # where the caller reads it.
+    task = _task(tmp_path)
+    arm = Arm(name="a", agent=AgentSpec(adapter="mock"))
+    with create_workspace(task, arm, root=tmp_path / "ws", label="x") as ws:
+        subprocess.run([sys.executable, "-c", GOOD], cwd=ws.path, check=True)
+        install_checks(ws, task)
+        out = tmp_path / "out"
+        out.mkdir()
+        monkeypatch.chdir(tmp_path)
+        kw = {"timeout_s": 60, "stdout_path": Path("out/o"), "stderr_path": Path("out/e")}
+        result = run_check(CHECK, ws, **kw)
+        assert result.passed, result.problem
+        assert (out / "check-report.json").is_file()

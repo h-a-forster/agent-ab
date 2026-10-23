@@ -690,7 +690,7 @@ def run_check(
 
     if report_path is None:
         report_path = Path(stdout_path).with_name("check-report.json")
-    report_path = Path(report_path)
+    report_path = Path(report_path).resolve()  # the check runs with cwd=workspace
     with contextlib.suppress(FileNotFoundError):
         report_path.unlink()
     nonce = secrets.token_hex(16)
