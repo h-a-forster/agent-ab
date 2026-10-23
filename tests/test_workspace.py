@@ -252,6 +252,30 @@ def test_diff_stats_records_files_of_nested_repositories(tmp_path, root, repo_ta
 
 
 @needs_git
+def test_rebaseline_records_nested_repositories_setup_created(tmp_path, root, repo_task):
+    with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
+        # Setup clones a dependency: a nested repository with a commit.
+        _write(ws.path / "dep" / "d.py", "D = 1\n")
+        _git_in(ws.path / "dep", "init", "-q")
+        _git_in(ws.path / "dep", "add", "-A")
+        _git_in(ws.path / "dep", "commit", "-q", "-m", "dep")
+        wsmod.rebaseline(ws)
+        assert (ws.path / "dep" / ".git").is_dir()  # restored afterwards
+        tree = subprocess.run(
+            ["git", f"--git-dir={ws.path / '.git'}", "ls-tree", "-r", ws.baseline_commit],
+            capture_output=True,
+            check=True,
+        ).stdout
+        assert b"160000" not in tree and b"dep/d.py" in tree
+        # The agent edits a file inside the nested repository.
+        _write(ws.path / "dep" / "d.py", "D = 2\n")
+        patch = tmp_path / "d.patch"
+        assert diff_stats(ws, patch) == (1, 1, 1)
+        assert "dep/d.py" in patch.read_text(encoding="utf-8")
+        assert [p.name for p in root.iterdir()] == [ws.path.name]  # no holding dir left
+
+
+@needs_git
 def test_diff_stats_clears_a_stale_index_lock(tmp_path, root, repo_task):
     with create_workspace(repo_task, _arm(), root=root, label="x") as ws:
         _write(ws.path / "new.txt", "one\n")

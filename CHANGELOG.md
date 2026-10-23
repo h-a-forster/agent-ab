@@ -40,8 +40,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   runs twice per trial; new artifacts `grade-setup.*`, `grade-workspace.txt`.
 - Diff recording tells its failures apart: a missing or replaced `.git` fails the trial as
   tampering, a git error fails it with git's message, and a `diff.patch` that cannot be written
-  is an infrastructure error. Nested git repositories the agent creates are recorded as plain
-  files instead of an empty gitlink or a failed trial, and a stale `.git/index.lock` is removed
+  is an infrastructure error. Nested git repositories, whether the agent or the task's setup
+  creates them, are recorded as plain files (in the setup baseline and in the agent's diff)
+  instead of a gitlink that hides edits inside them, and a stale `.git/index.lock` is removed
   before the diff. `diff_stats` now raises (`GitDirAlteredError`, `WorkspaceError`, `OSError`)
   instead of returning None for these cases.
 - `run_check` resolves a relative `report_path` before handing it to the check, which runs in

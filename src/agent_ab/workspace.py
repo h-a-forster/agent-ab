@@ -344,11 +344,15 @@ def rebaseline(ws: Workspace) -> None:
     """Commit the workspace as it is now and make that the baseline.
 
     Called after the task's setup command, so files setup creates (installed packages,
-    generated sources) are not counted as the agent's changes. A no-op without git.
+    generated sources) are not counted as the agent's changes. Nested git repositories setup
+    created (a cloned dependency) are staged as ordinary files, the same way ``diff_stats``
+    records them, so agent edits inside them show up in the diff instead of hiding behind an
+    unchanging gitlink. A no-op without git.
     """
     if ws.baseline_commit is None or _git() is None:
         return
-    _run_git(ws.path, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
+    with _nested_repos_set_aside(Path(ws.path)):
+        _run_git(ws.path, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
     _run_git(ws.path, "commit", "-q", "--no-verify", "--allow-empty", "-m", "agent-ab setup")
     out = _run_git(ws.path, "rev-parse", "HEAD").stdout.decode("ascii", "replace").strip()
     if not out:
@@ -399,8 +403,8 @@ def _nested_repos_set_aside(ws: Path):
             except OSError as e:
                 rel = path.parent.relative_to(ws).as_posix()
                 raise WorkspaceError(
-                    f"the agent created a nested git repository at {rel}/ whose metadata "
-                    f"could not be set aside to record its files: {e}"
+                    f"the nested git repository at {rel}/ could not have its metadata "
+                    f"set aside to record its files: {e}"
                 ) from e
             moved.append((path, target))
         yield
