@@ -114,6 +114,8 @@ FORGED_PYC = (
 )
 
 
+# Regression cases. Only some of them need the verifying runner: with this discovery-style check,
+# unittest's loader already reports `raise SystemExit(0)` at import as an error.
 @pytest.mark.parametrize(
     "script",
     [ATEXIT, IMPORT_EXIT, IMPORT_SYS_EXIT, IMPORT_SKIP],

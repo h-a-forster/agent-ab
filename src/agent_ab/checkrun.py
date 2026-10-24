@@ -2,8 +2,9 @@
 
 agent-ab runs argv checks of the form ``{python} -m unittest ...`` through this module. The
 checks import the agent's code, which shares the process and can force its exit status: an
-``atexit`` hook that calls ``os._exit(0)``, or ``sys.exit(0)`` at import time. The exit status
-alone therefore cannot be trusted.
+``atexit`` hook that calls ``os._exit(0)``, or ``sys.exit(0)`` while a test module named on the
+command line is imported (unittest's discovery already reports that as an error). The exit
+status alone therefore cannot be trusted.
 
 Before any test code is imported, this module removes a report path and a one-time nonce from
 the environment. After the run it writes the outcome, with the nonce, to that path. The grader

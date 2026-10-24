@@ -93,10 +93,12 @@ What is recorded about the agent itself:
   `permission_mode`, `api_key_source` and the names of `tools`, `mcp_servers` (with status),
   `plugins`, `skills` and `agents`.
 - `prompt_sha256` and `instructions_sha256`: hashes of the exact prompt and of the instruction
-  files (`CLAUDE.md` and friends in the workspace, and `append_system_prompt.md` when set), so
-  two runs can be checked for identical workspace and adapter instructions. Recorded for every
-  adapter; see [run-directory.md](run-directory.md#trialsjsonl). Instruction files outside the
-  workspace are not hashed: Claude Code also loads user memory (`~/.claude/CLAUDE.md`),
+  files (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` and `AGENTS.md` at the workspace
+  root, and `append_system_prompt.md` when set), so two runs can be checked for identical
+  copies of those files. Recorded for every adapter; see
+  [run-directory.md](run-directory.md#trialsjsonl). Other workspace files (`.claude/rules/`,
+  skills, settings, `CLAUDE.md` in subdirectories, `AGENTS.override.md`) and instruction files
+  outside the workspace are not hashed: Claude Code also loads user memory (`~/.claude/CLAUDE.md`),
   `CLAUDE.md` files in parent directories, rules and settings unless the arm restricts them
   (`setting_sources`, `bare`). Equal hashes therefore mean identical instructions only for arms
   that exclude those sources.

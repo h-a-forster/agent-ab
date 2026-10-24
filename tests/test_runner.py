@@ -1,5 +1,6 @@
 import json
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -776,6 +777,100 @@ def test_nested_repository_created_by_the_agent_is_graded(tmp_path):
     assert rec.status == "pass", rec.error
     assert rec.files_changed == 2
     assert ws_left(tmp_path) == []
+
+
+CHECK_VENDORED = (
+    PY,
+    "-c",
+    "import os, sys; sys.exit(0 if os.path.exists('solution.txt') "
+    "and open(os.path.join('vendor', 'lib.py')).read() == 'X = 1' else 1)",
+)
+AGENT_GIT = (
+    "g = ['git', '-c', 'user.name=x', '-c', 'user.email=x@x', '-c', 'commit.gpgsign=false']\n"
+)
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_nested_repository_staged_by_the_agent_is_graded(tmp_path):
+    # The agent commits in the nested repository and then stages everything in the workspace,
+    # which leaves a gitlink in the index; its files must still reach the grading copy.
+    script = (
+        "import os, subprocess\n" + AGENT_GIT + "os.makedirs('vendor', exist_ok=True)\n"
+        "open(os.path.join('vendor', 'lib.py'), 'w').write('X = 1')\n"
+        "subprocess.run(g + ['init', '-q', 'vendor'], check=True)\n"
+        "subprocess.run(g + ['-C', 'vendor', 'add', '.'], check=True)\n"
+        "subprocess.run(g + ['-C', 'vendor', 'commit', '-qm', 'v'], check=True)\n"
+        "open('solution.txt', 'w').write('ok')\n"
+        "subprocess.run(g + ['add', '-A'], check=True)\n"
+        "subprocess.run(g + ['commit', '-qm', 'work'], check=True)\n"
+    )
+    rec = run_one(tmp_path, script, task_kw={"check": CHECK_VENDORED}, max_retries=0)
+    assert rec.status == "pass", rec.error
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_submodule_added_by_the_agent_is_graded(tmp_path):
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    (upstream / "lib.py").write_text("X = 1", encoding="utf-8")
+    git = ["git", "-c", "user.name=x", "-c", "user.email=x@x", "-c", "commit.gpgsign=false"]
+    subprocess.run([*git, "init", "-q", str(upstream)], check=True)
+    subprocess.run([*git, "-C", str(upstream), "add", "."], check=True)
+    subprocess.run([*git, "-C", str(upstream), "commit", "-qm", "v"], check=True)
+    script = (
+        "import subprocess\n" + AGENT_GIT + "subprocess.run(g + "
+        "['-c', 'protocol.file.allow=always', "
+        f"'submodule', 'add', '-q', {upstream.as_posix()!r}, 'vendor'], check=True)\n"
+        "open('solution.txt', 'w').write('ok')\n"
+    )
+    rec = run_one(tmp_path, script, task_kw={"check": CHECK_VENDORED}, max_retries=0)
+    assert rec.status == "pass", rec.error
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_agent_configured_git_filter_does_not_run_while_recording(tmp_path):
+    # A clean filter named in .gitattributes would otherwise run agent code inside agent-ab's
+    # own `git add`, after the agent's processes were killed.
+    marker = tmp_path / "filter-ran.txt"
+    filt = tmp_path / "filt.py"
+    filt.write_text(
+        "import sys\n"
+        f"open({str(marker)!r}, 'w').write('x')\n"
+        "sys.stdout.buffer.write(sys.stdin.buffer.read())\n",
+        encoding="utf-8",
+    )
+    cmd = f'"{Path(PY).as_posix()}" "{filt.as_posix()}"'
+    script = (
+        "import subprocess\n"
+        "open('solution.txt', 'w').write('ok')\n"
+        "open('.gitattributes', 'w').write('solution.txt filter=x\\n')\n"
+        f"subprocess.run(['git', 'config', 'filter.x.clean', {cmd!r}], check=True)\n"
+    )
+    rec = run_one(tmp_path, script, max_retries=0)
+    assert rec.status == "pass", rec.error
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_grading_copy_snapshot_failure_is_an_infrastructure_error(tmp_path, monkeypatch):
+    # The grading copy is pristine, so failing to snapshot it after setup is not the agent's.
+    from agent_ab import runner
+    from agent_ab.errors import WorkspaceError
+
+    real = runner.rebaseline
+    calls = []
+
+    def flaky(ws):
+        calls.append(ws)
+        if len(calls) == 2:  # the grading copy's rebaseline
+            raise WorkspaceError("disk full")
+        real(ws)
+
+    monkeypatch.setattr(runner, "rebaseline", flaky)
+    setup = (PY, "-c", "open('gen.txt', 'w').write('x')")
+    rec = run_one(tmp_path, SOLVE, task_kw={"setup": setup}, max_retries=0)
+    assert rec.status == "error", rec.error
+    assert "grading copy" in rec.error and "disk full" in rec.error
 
 
 def test_new_run_refuses_dir_with_stale_trial_log(tmp_path):

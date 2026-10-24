@@ -274,8 +274,9 @@ def _copy_identity(rec: TrialRecord, usage: AgentUsage) -> None:
             rec.agent_init = init
 
 
-# Instruction files coding agents read from the workspace on their own (Claude Code, Codex and
-# other AGENTS.md readers). Hashed after setup, as the agent finds them.
+# Root-level instruction files coding agents read from the workspace on their own (Claude Code,
+# Codex and other AGENTS.md readers). Hashed after setup, as the agent finds them. Not a
+# complete list: rules, skills, settings and nested instruction files are not hashed.
 INSTRUCTION_FILES = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md")
 
 
@@ -493,7 +494,11 @@ def _grade(
         return
     try:
         if keep:
-            _write_text(art / "grade-workspace.txt", str(grade_ws.path) + "\n")
+            try:
+                _write_text(art / "grade-workspace.txt", str(grade_ws.path) + "\n")
+            except OSError as e:
+                rec.error = f"cannot write grade-workspace.txt: {e}"  # infrastructure
+                return
         if task.setup is not None:
             r = run_command(
                 task.setup, grade_ws, timeout_s=agent_timeout,
@@ -511,7 +516,12 @@ def _grade(
                 # The grading copy is pristine, so this is not the agent's doing.
                 rec.error = problem
                 return
-            rebaseline(grade_ws)
+            try:
+                rebaseline(grade_ws)
+            except WorkspaceError as e:
+                # Still the pristine copy: an infrastructure error, retried like one.
+                rec.error = f"cannot snapshot the grading copy after setup: {e}"
+                return
         try:
             apply_patch(grade_ws, patch)
         except WorkspaceError as e:

@@ -12,9 +12,11 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Per trial: the models actually used, the CLI version and a scrubbed summary of the agent's
   init event (saved as `init.json`); reports show them per arm and flag differences.
 - Per-trial record of how many trials were in flight at its start.
-- Per trial: `prompt_sha256` (the exact prompt sent) and `instructions_sha256` (workspace
-  instruction files such as `CLAUDE.md` and `AGENTS.md`, and adapter files such as the
-  claude-code system-prompt file), next to the CLI version.
+- Per trial: `prompt_sha256` (the exact prompt sent) and `instructions_sha256` (the workspace
+  files `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` and `AGENTS.md`, and adapter files
+  such as the claude-code system-prompt file), next to the CLI version. Other files agents
+  read from the workspace (`.claude/rules/`, skills, settings, `CLAUDE.md` in subdirectories,
+  `AGENTS.override.md`) are not hashed.
 - One-arm runs, for pilots that measure baseline difficulty.
 - Manipulation check script, `docs/results/manipulation.py`.
 
@@ -35,22 +37,30 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Grading runs in a clean copy: a fresh workspace from the pristine task (arm files and task
   setup included) with only the agent's recorded diff applied and the hidden checks on top.
-  Files outside the diff (interpreter caches such as a forged `.pyc`, a tampered `.git`) no
-  longer reach the checks. A trial whose diff cannot be recorded or applied fails. Setup now
-  runs twice per trial; new artifacts `grade-setup.*`, `grade-workspace.txt`.
+  Files outside the diff (interpreter caches such as a forged `.pyc`, the agent's `.git`) no
+  longer reach the checks. A trial whose diff cannot be recorded or applied fails; a grading
+  copy that cannot be set up or snapshotted is an infrastructure error. Setup now runs twice
+  per trial; new artifacts `grade-setup.*`, `grade-workspace.txt`. Only what git records
+  reaches the checks: empty directories do not, and on case-insensitive filesystems (Windows,
+  macOS) a case-only rename is lost. A file git cannot read (for example unreadable on POSIX)
+  fails the trial; before, such trials were graded in place.
 - Diff recording tells its failures apart: a missing or replaced `.git` fails the trial as
   tampering, a git error fails it with git's message, and a `diff.patch` that cannot be written
   is an infrastructure error. Nested git repositories, whether the agent or the task's setup
   creates them, are recorded as plain files (in the setup baseline and in the agent's diff)
-  instead of a gitlink that hides edits inside them, and a stale `.git/index.lock` is removed
-  before the diff. `diff_stats` now raises (`GitDirAlteredError`, `WorkspaceError`, `OSError`)
+  instead of a gitlink that hides edits inside them, also when the agent staged them or added
+  them with `git submodule add`. A stale `.git/index.lock` is removed before the diff, and the
+  workspace's repository config is reset to agent-ab's copy, so a git filter the agent
+  configured does not run inside agent-ab's own `git add`. `diff_stats` now raises (`GitDirAlteredError`, `WorkspaceError`, `OSError`)
   instead of returning None for these cases.
 - `run_check` resolves a relative `report_path` before handing it to the check, which runs in
   the workspace.
 - Argv checks of the form `{python} -m unittest ...` run under a verifying runner
   (`agent_ab.checkrun`) that records the outcome out of band with a one-time nonce
   (`check-report.json`). Agent code that forces the exit status (an `atexit` hook calling
-  `os._exit(0)`, `sys.exit(0)` at import, `SkipTest` at import) no longer fakes a pass. Skipped
+  `os._exit(0)`, `SkipTest` at import, `sys.exit(0)` at import of a test module named on the
+  command line) no longer fakes a pass; with discovery, unittest already reported
+  `sys.exit(0)` at import as an error. Skipped
   hidden tests and runs with no tests now count as failures.
 - `feature-uri-resolve`: the hidden oracle and the reference solution lowercased percent-encoding
   hex digits in a host, contradicting the prompt (and RFC 3986 section 6.2.2.1). They now keep

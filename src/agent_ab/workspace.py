@@ -57,6 +57,7 @@ class Workspace:
 
     path: Path
     baseline_commit: str | None = None  # None when git is unavailable
+    git_config: bytes | None = None  # .git/config after snapshot/setup, restored before diffs
 
     def __enter__(self) -> Workspace:
         return self
@@ -334,6 +335,10 @@ def create_workspace(task: Task, arm: Arm, *, root: Path | None, label: str) -> 
             _copy_into(Path(arm.overlay), path, "overlay")
         if _git() is not None:
             ws.baseline_commit = _snapshot(path)
+            try:
+                ws.git_config = (path / ".git" / "config").read_bytes()
+            except OSError as e:
+                raise WorkspaceError(f"cannot read the snapshot's git config: {e}") from e
     except BaseException:
         destroy_workspace(ws)
         raise
@@ -351,13 +356,16 @@ def rebaseline(ws: Workspace) -> None:
     """
     if ws.baseline_commit is None or _git() is None:
         return
-    with _nested_repos_set_aside(Path(ws.path)):
-        _run_git(ws.path, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
+    _stage_work_tree(Path(ws.path))
     _run_git(ws.path, "commit", "-q", "--no-verify", "--allow-empty", "-m", "agent-ab setup")
     out = _run_git(ws.path, "rev-parse", "HEAD").stdout.decode("ascii", "replace").strip()
     if not out:
         raise WorkspaceError("git rev-parse returned no commit")
     ws.baseline_commit = out
+    try:
+        ws.git_config = (Path(ws.path) / ".git" / "config").read_bytes()
+    except OSError as e:
+        raise WorkspaceError(f"cannot read the workspace's git config: {e}") from e
 
 
 def _nested_git_entries(root: Path) -> list[Path]:
@@ -416,14 +424,72 @@ def _nested_repos_set_aside(ws: Path):
             _rmtree(holding)
 
 
+def _drop_gitlinks(ws: Path) -> None:
+    """Remove submodule (gitlink) entries from the index.
+
+    An agent that stages a nested repository (``git add`` after ``git init`` in a subdirectory,
+    or ``git submodule add``) leaves a gitlink in the index, which ``git add -A`` keeps even
+    with the nested ``.git`` moved aside. Dropping it lets the directory's files be staged as
+    ordinary content. The baseline never holds gitlinks, so nothing of the task's is lost.
+    """
+    listing = _run_git(ws, "ls-files", "-s", "-z").stdout
+    # "<mode> <object> <stage>\t<path>" NUL ...
+    paths = [
+        record.split(b"\t", 1)[1]
+        for record in listing.split(b"\0")
+        if record.startswith(b"160000 ") and b"\t" in record
+    ]
+    if paths:
+        _run_git(
+            ws, "update-index", "--force-remove", "--",
+            *(p.decode("utf-8", "surrogateescape") for p in paths),
+        )  # fmt: skip
+
+
+def _restore_git_config(ws: Path, config: bytes) -> None:
+    """Put back the repository config agent-ab recorded, discarding what the agent added.
+
+    ``git add`` runs clean filters named in ``.gitattributes`` with commands taken from the
+    repository config, so an agent could otherwise make agent-ab run its code while recording
+    the diff, after the agent's own processes were killed. Without the agent's config entries
+    the filter driver is undefined and git stages the file as is. Files that would point git at
+    other config or attributes (``config.worktree``, ``commondir``, ``info/attributes``) are
+    removed; agent-ab's repository never has them.
+    """
+    git_dir = ws / ".git"
+    try:
+        for rel in ("config.worktree", "commondir", "config"):
+            _remove_path(git_dir / rel)
+        info = git_dir / "info"
+        if _is_link(info):
+            _unlink_link(info)
+        else:
+            _remove_path(info / "attributes")
+        (git_dir / "config").write_bytes(config)
+    except OSError as e:
+        raise WorkspaceError(f"cannot restore the workspace's git config: {e}") from e
+
+
+def _stage_work_tree(ws: Path, config: bytes | None = None) -> None:
+    """Stage every file of the work tree, nested repositories included, as plain content."""
+    if config is not None:
+        _restore_git_config(ws, config)
+    with _nested_repos_set_aside(ws):
+        _drop_gitlinks(ws)
+        _run_git(ws, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
+
+
 def diff_stats(ws: Workspace, patch_path: Path) -> tuple[int, int, int] | None:
     """Write the agent's changes since the baseline to ``patch_path`` and count them.
 
     Returns ``(files_changed, lines_added, lines_removed)``; binary files count as changed with
     zero lines, and files ignored by the task's .gitignore count too. Files inside a nested git
     repository the agent created (``git clone``, ``git init`` in a subdirectory) are recorded as
-    ordinary files; the nested ``.git`` metadata is not. A stale ``.git/index.lock`` (left by a
-    git command killed with the agent) is removed first. Call it before ``install_checks`` so
+    ordinary files; the nested ``.git`` metadata is not, and gitlink entries the agent staged
+    for them are dropped from the index. A stale ``.git/index.lock`` (left by a git command
+    killed with the agent) is removed first, and the repository config is reset to the one
+    recorded after the snapshot (and setup), so filter drivers the agent configured do not
+    run. Call it before ``install_checks`` so
     check files do not show up as agent changes.
 
     Returns None only when there is no baseline (git unavailable). Raises
@@ -446,8 +512,7 @@ def diff_stats(ws: Workspace, patch_path: Path) -> tuple[int, int, int] | None:
             lock.unlink()
     patch_path = Path(patch_path)
     patch_path.parent.mkdir(parents=True, exist_ok=True)
-    with _nested_repos_set_aside(Path(ws.path)):
-        _run_git(ws.path, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
+    _stage_work_tree(Path(ws.path), config=ws.git_config)
     raw_entries = _run_git(ws.path, "diff", "--cached", "--raw", "-z", *common, base, "--").stdout
     # -z --raw without renames: ":<old mode> <new mode> <old> <new> <status>" NUL "<path>" NUL.
     fields = raw_entries.split(b"\0")
@@ -479,7 +544,7 @@ def apply_patch(ws: Workspace, patch_path: Path) -> None:
 
     Used to grade in a clean copy: the agent's recorded changes go onto a new workspace built
     from the pristine task, so nothing outside that diff (interpreter caches, files written
-    after the diff, a tampered ``.git``) reaches the checks. git refuses paths outside the
+    after the diff, the agent's ``.git``) reaches the checks. git refuses paths outside the
     work tree and writes through symlinks. An empty patch is a no-op. Raises
     ``WorkspaceError`` if the patch does not apply.
     """
