@@ -103,8 +103,12 @@ The run directory under `runs/` also gets `report.html`, `report.md` and `analys
 3. It runs the task's `setup` command, then the agent with the prompt and a timeout.
 4. It records cost, tokens, turns and the agent's diff, and kills any processes the agent
    left behind.
-5. It copies the task's hidden `checks/` over the workspace and runs the `check` command.
-   Exit code 0 is a pass.
+5. It grades in a clean copy: a fresh workspace built from the pristine task (with the arm's
+   files and the task's `setup`), the agent's recorded diff applied, and the hidden `checks/`
+   copied on top. Exit code 0 is a pass; `{python} -m unittest` checks must also record a
+   clean run out of band, so agent code that merely forces the exit status does not pass. This
+   is a speed bump, not isolation: code written against agent-ab can still forge the report
+   (see [Grading integrity](docs/safety.md#grading-integrity)).
 6. It appends the record to `trials.jsonl`, deletes the workspace, and, after the last
    trial, compares each arm with the baseline over paired tasks.
 

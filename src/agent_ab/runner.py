@@ -8,6 +8,7 @@ a budget stops new launches; Ctrl-C kills running agents and records nothing hal
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import math
 import random
@@ -23,7 +24,13 @@ from typing import Literal
 
 from agent_ab.adapters import get_adapter
 from agent_ab.adapters.base import Adapter
-from agent_ab.errors import AdapterError, AgentABError, RunStoreError
+from agent_ab.errors import (
+    AdapterError,
+    AgentABError,
+    GitDirAlteredError,
+    RunStoreError,
+    WorkspaceError,
+)
 from agent_ab.model import (
     AgentUsage,
     Experiment,
@@ -45,6 +52,7 @@ from agent_ab.store import (
 )
 from agent_ab.workspace import (
     Workspace,
+    apply_patch,
     create_workspace,
     destroy_workspace,
     diff_stats,
@@ -156,9 +164,13 @@ def _exception_summary(e: BaseException) -> str:
 
 def _note_leak(art: Path | None, ws: Workspace) -> None:
     # Something still holds files in the workspace; leave a pointer so it can be cleaned up.
+    # One line per workspace: the agent's and the grading copy can both leak.
     if art is not None and art.is_dir():
-        with contextlib.suppress(OSError):
-            _write_text(art / "workspace-leaked.txt", str(ws.path) + "\n")
+        with (
+            contextlib.suppress(OSError),
+            open(art / "workspace-leaked.txt", "a", encoding="utf-8", newline="\n") as f,
+        ):
+            f.write(str(ws.path) + "\n")
 
 
 def _remove_dir(path: Path) -> None:
@@ -262,6 +274,43 @@ def _copy_identity(rec: TrialRecord, usage: AgentUsage) -> None:
             rec.agent_init = init
 
 
+# Root-level instruction files coding agents read from the workspace on their own (Claude Code,
+# Codex and other AGENTS.md readers). Hashed after setup, as the agent finds them. Not a
+# complete list: rules, skills, settings and nested instruction files are not hashed.
+INSTRUCTION_FILES = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md")
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _file_sha256(path: Path) -> str | None:
+    try:
+        if not path.is_file():
+            return None
+        digest = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 16), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _instruction_hashes(ws: Workspace, extra: list[Path]) -> dict[str, str]:
+    """SHA-256 of each instruction file the agent receives, keyed by where it comes from."""
+    found: dict[str, str] = {}
+    for rel in INSTRUCTION_FILES:
+        digest = _file_sha256(ws.path / rel)
+        if digest is not None:
+            found[rel] = digest
+    for path in extra:
+        digest = _file_sha256(Path(path))
+        if digest is not None:
+            found[f"agent:{Path(path).name}"] = digest
+    return found
+
+
 def _write_usage_warning(art: Path, notes: list[str]) -> None:
     with (
         contextlib.suppress(OSError),
@@ -308,6 +357,7 @@ def _execute(
     art: Path,
     ws: Workspace,
     cancel: threading.Event,
+    keep: bool = False,
 ) -> None:
     """The attempt pipeline after the workspace exists. Fills ``rec`` in place."""
     task, arm = spec.task, spec.arm
@@ -339,6 +389,8 @@ def _execute(
         root=exp.root,
     )  # fmt: skip
     inv = adapter.build(ctx)
+    rec.prompt_sha256 = _sha256(prompt.encode("utf-8"))
+    rec.instructions_sha256 = _instruction_hashes(ws, inv.instruction_files) or None
     result = run_process(
         inv.argv,
         cwd=inv.cwd or ws.path,
@@ -365,7 +417,7 @@ def _execute(
         return
 
     try:
-        _grade(exp, rec, art, ws, task, result, agent_timeout, check_timeout, cancel)
+        _grade(exp, rec, art, ws, spec, result, agent_timeout, check_timeout, cancel, keep)
     except _Cancelled:
         raise
     except Exception as e:
@@ -385,15 +437,34 @@ def _grade(
     rec: TrialRecord,
     art: Path,
     ws: Workspace,
-    task: Task,
+    spec: TrialSpec,
     result: ProcResult,
     agent_timeout: float,
     check_timeout: float,
     cancel: threading.Event,
+    keep: bool,
 ) -> None:
-    """Diff, install the hidden checks and run them. Fills ``rec`` in place."""
+    """Diff, rebuild a clean copy with the agent's diff, install the checks and run them.
+
+    Fills ``rec`` in place. The checks never run in the workspace the agent edited: a fresh
+    workspace is built from the pristine task (with the arm's removals and overlay and the
+    task's setup), the agent's recorded diff is applied to it, and the hidden checks go on
+    top. Without git there is no diff to apply, and the checks run in the agent's workspace.
+    """
+    task = spec.task
     # Measured before the checks are copied in so they never count as agent changes.
-    stats = diff_stats(ws, art / "diff.patch")
+    patch = art / "diff.patch"
+    stats: tuple[int, int, int] | None = None
+    diff_problem: str | None = None
+    try:
+        stats = diff_stats(ws, patch)
+    except GitDirAlteredError:
+        diff_problem = "the agent's changes could not be recorded (its .git directory was altered)"
+    except WorkspaceError as e:
+        diff_problem = f"the agent's changes could not be recorded: {e}"
+    except OSError as e:
+        rec.error = f"cannot write the agent's diff: {e}"  # infrastructure, not the agent
+        return
     if stats is not None:
         rec.files_changed, rec.lines_added, rec.lines_removed = stats
 
@@ -402,11 +473,84 @@ def _grade(
         rec.error = f"agent timed out after {agent_timeout:g}s"
         return
 
+    if ws.baseline_commit is None:
+        _run_checks(exp, rec, art, ws, task, check_timeout, cancel)
+        return
+    if diff_problem is not None:
+        # The baseline existed and git works on the host, so the workspace's state is the cause.
+        rec.status, rec.passed = "fail", False
+        rec.error = diff_problem
+        return
+    if stats is None:
+        rec.error = "git became unavailable before the agent's diff was taken"  # infrastructure
+        return
+
+    try:
+        grade_ws = create_workspace(
+            task, spec.arm, root=exp.workspace_root, label=f"{spec.id}-a{rec.attempt}-grade"
+        )
+    except WorkspaceError as e:
+        rec.error = f"cannot create the grading copy: {e}"  # infrastructure, not the agent
+        return
+    try:
+        if keep:
+            try:
+                _write_text(art / "grade-workspace.txt", str(grade_ws.path) + "\n")
+            except OSError as e:
+                rec.error = f"cannot write grade-workspace.txt: {e}"  # infrastructure
+                return
+        if task.setup is not None:
+            r = run_command(
+                task.setup, grade_ws, timeout_s=agent_timeout,
+                stdout_path=art / "grade-setup.stdout", stderr_path=art / "grade-setup.stderr",
+                cancel=cancel,
+            )  # fmt: skip
+            _check_cancel(cancel, r)
+            problem = _proc_failure("setup of the grading copy", r, agent_timeout)
+            if problem is None and r.exit_code != 0:
+                problem = (
+                    f"setup of the grading copy failed with exit code {r.exit_code} "
+                    "(see grade-setup.stderr)"
+                )
+            if problem:
+                # The grading copy is pristine, so this is not the agent's doing.
+                rec.error = problem
+                return
+            try:
+                rebaseline(grade_ws)
+            except WorkspaceError as e:
+                # Still the pristine copy: an infrastructure error, retried like one.
+                rec.error = f"cannot snapshot the grading copy after setup: {e}"
+                return
+        try:
+            apply_patch(grade_ws, patch)
+        except WorkspaceError as e:
+            rec.status, rec.passed = "fail", False
+            rec.error = f"the agent's diff does not apply to a clean copy of the task: {e}"
+            return
+        _run_checks(exp, rec, art, grade_ws, task, check_timeout, cancel)
+    finally:
+        if (cancel.is_set() or not keep) and not destroy_workspace(grade_ws):
+            _note_leak(art, grade_ws)
+
+
+def _run_checks(
+    exp: Experiment,
+    rec: TrialRecord,
+    art: Path,
+    ws: Workspace,
+    task: Task,
+    check_timeout: float,
+    cancel: threading.Event,
+) -> None:
+    """Install the hidden checks in ``ws`` and run them. Fills ``rec`` in place."""
     install_checks(ws, task)
-    check = run_check(
+    outcome = run_check(
         task.check, ws, timeout_s=check_timeout,
-        stdout_path=art / "check.stdout", stderr_path=art / "check.stderr", cancel=cancel,
+        stdout_path=art / "check.stdout", stderr_path=art / "check.stderr",
+        report_path=art / "check-report.json", cancel=cancel,
     )  # fmt: skip
+    check = outcome.proc
     _check_cancel(cancel, check)
     rec.check_exit_code = check.exit_code
     rec.check_timed_out = check.timed_out
@@ -421,7 +565,9 @@ def _grade(
         rec.status, rec.passed = "fail", False
         rec.error = f"check timed out after {check_timeout:g}s"
         return
-    rec.status = "pass" if check.exit_code == 0 else "fail"
+    if outcome.problem:
+        rec.error = outcome.problem
+    rec.status = "pass" if outcome.passed else "fail"
     rec.passed = rec.status == "pass"
 
 
@@ -463,7 +609,7 @@ def run_trial(
         )
         if keep:
             _write_text(art / "workspace.txt", str(ws.path) + "\n")
-        _execute(exp, spec, attempt, rec, art, ws, cancel)
+        _execute(exp, spec, attempt, rec, art, ws, cancel, keep)
     except _Cancelled:
         cancelled = True
     except Exception as e:  # an attempt must never take the run down with it

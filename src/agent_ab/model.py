@@ -159,6 +159,9 @@ class AgentInvocation:
     env: dict[str, str] = field(default_factory=dict)  # additions to the inherited environment
     stdin: str | None = None
     cwd: Path | None = None  # default: the workspace
+    # Files outside the workspace that instruct the agent (e.g. a system-prompt file); their
+    # SHA-256 is recorded with the trial.
+    instruction_files: list[Path] = field(default_factory=list)
 
 
 @dataclass
@@ -215,6 +218,10 @@ class TrialRecord:
     models: list[str] | None = None  # model IDs the agent reported using, sorted
     agent_version: str | None = None  # agent CLI version (as reported during the trial if possible)
     agent_init: dict[str, Any] | None = None  # compact summary of the agent's start-up event
+    prompt_sha256: str | None = None  # SHA-256 of the UTF-8 prompt text sent to the agent
+    # SHA-256 per instruction file the agent received: workspace files by relative path,
+    # adapter files (outside the workspace) as "agent:<name>"
+    instructions_sha256: dict[str, str] | None = None
     schema: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:

@@ -560,16 +560,18 @@ def _check_phase(
         install_checks(ws, task)
         timeout = task.check_timeout_s if task.check_timeout_s is not None else exp.check_timeout_s
         out, err = logs / f"{phase}-check.stdout", logs / f"{phase}-check.stderr"
-        r = run_check(
-            task.check, ws, timeout_s=timeout, stdout_path=out, stderr_path=err, cancel=cancel
-        )
+        checked = run_check(
+            task.check, ws, timeout_s=timeout, stdout_path=out, stderr_path=err,
+            report_path=logs / f"{phase}-check-report.json", cancel=cancel,
+        )  # fmt: skip
+        r = checked.proc
         if r.start_error:
             return "error", f"check could not start: {r.start_error}"
         if r.timed_out:
             return "timeout", f"check timed out after {timeout:g}s ({phase})"
         if r.exit_code is None:
             return "cancelled", "cancelled"
-        outcome = "pass" if r.exit_code == 0 else "fail"
+        outcome = "pass" if checked.passed else "fail"
         if with_solution and outcome == "fail":
             detail = _tail(err) or _tail(out)
             return outcome, "check fails with the solution applied" + (

@@ -1,5 +1,6 @@
 import json
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -428,9 +429,16 @@ def test_keep_workspaces(tmp_path):
     exp = make_exp(tmp_path, arms=[fake_arm("a")])
     run_experiment(exp, tmp_path / "run", options=RunOptions(keep_workspaces=True))
     (rec,) = records(tmp_path / "run")
-    kept = Path((tmp_path / "run" / rec.artifacts / "workspace.txt").read_text("utf-8").strip())
+    art = tmp_path / "run" / rec.artifacts
+    kept = Path((art / "workspace.txt").read_text("utf-8").strip())
     assert kept.is_dir() and (kept / "solution.txt").is_file()
-    assert ws_left(tmp_path) == [kept]
+    graded = ws_left(tmp_path)
+    if HAS_GIT:
+        grade = Path((art / "grade-workspace.txt").read_text("utf-8").strip())
+        assert (grade / "solution.txt").is_file()
+        assert sorted(graded) == sorted([kept, grade])
+    else:
+        assert graded == [kept]
 
 
 # --------------------------------------------------------------------------- scheduling
@@ -721,9 +729,9 @@ def test_agent_link_over_checks_dir_is_replaced(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     # The agent swaps a checks path for a link (a junction on Windows) to a directory
-    # outside the workspace and deletes the snapshot repository.
+    # outside the workspace.
     script = (
-        "import os, shutil, subprocess, sys; shutil.rmtree('.git', ignore_errors=True);"
+        "import os, subprocess, sys;"
         f"target = {str(outside)!r};"
         "subprocess.run(['cmd', '/c', 'mklink', '/J', 'sub', target], check=True,"
         " capture_output=True) if sys.platform == 'win32' else os.symlink(target, 'sub');"
@@ -735,6 +743,134 @@ def test_agent_link_over_checks_dir_is_replaced(tmp_path):
     assert rec.status == "pass", rec.error
     assert list(outside.iterdir()) == []  # nothing written through the link
     assert ws_left(tmp_path) == []
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_deleting_the_snapshot_repository_fails_the_trial(tmp_path):
+    # Without its diff the agent's work cannot be graded in a clean copy; grading in place
+    # instead would reopen every workspace-level exploit.
+    script = (
+        "import os, shutil, stat\n"
+        "def unlock(func, path, _):\n"
+        "    os.chmod(path, stat.S_IWRITE)\n"
+        "    func(path)\n"
+        "shutil.rmtree('.git', onerror=unlock)\n"
+        "open('solution.txt', 'w').write('ok')\n"
+    )
+    rec = run_one(tmp_path, script)
+    assert rec.status == "fail" and rec.passed is False
+    assert "could not be recorded" in rec.error
+    assert ws_left(tmp_path) == []
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_nested_repository_created_by_the_agent_is_graded(tmp_path):
+    # A vendored clone or `git init` in a subdirectory is ordinary work, not tampering.
+    script = (
+        "import os, subprocess\n"
+        "os.makedirs('vendor', exist_ok=True)\n"
+        "open(os.path.join('vendor', 'lib.py'), 'w').write('X = 1')\n"
+        "subprocess.run(['git', 'init', '-q', 'vendor'], check=True)\n"
+        "open('solution.txt', 'w').write('ok')\n"
+    )
+    rec = run_one(tmp_path, script)
+    assert rec.status == "pass", rec.error
+    assert rec.files_changed == 2
+    assert ws_left(tmp_path) == []
+
+
+CHECK_VENDORED = (
+    PY,
+    "-c",
+    "import os, sys; sys.exit(0 if os.path.exists('solution.txt') "
+    "and open(os.path.join('vendor', 'lib.py')).read() == 'X = 1' else 1)",
+)
+AGENT_GIT = (
+    "g = ['git', '-c', 'user.name=x', '-c', 'user.email=x@x', '-c', 'commit.gpgsign=false']\n"
+)
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_nested_repository_staged_by_the_agent_is_graded(tmp_path):
+    # The agent commits in the nested repository and then stages everything in the workspace,
+    # which leaves a gitlink in the index; its files must still reach the grading copy.
+    script = (
+        "import os, subprocess\n" + AGENT_GIT + "os.makedirs('vendor', exist_ok=True)\n"
+        "open(os.path.join('vendor', 'lib.py'), 'w').write('X = 1')\n"
+        "subprocess.run(g + ['init', '-q', 'vendor'], check=True)\n"
+        "subprocess.run(g + ['-C', 'vendor', 'add', '.'], check=True)\n"
+        "subprocess.run(g + ['-C', 'vendor', 'commit', '-qm', 'v'], check=True)\n"
+        "open('solution.txt', 'w').write('ok')\n"
+        "subprocess.run(g + ['add', '-A'], check=True)\n"
+        "subprocess.run(g + ['commit', '-qm', 'work'], check=True)\n"
+    )
+    rec = run_one(tmp_path, script, task_kw={"check": CHECK_VENDORED}, max_retries=0)
+    assert rec.status == "pass", rec.error
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_submodule_added_by_the_agent_is_graded(tmp_path):
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    (upstream / "lib.py").write_text("X = 1", encoding="utf-8")
+    git = ["git", "-c", "user.name=x", "-c", "user.email=x@x", "-c", "commit.gpgsign=false"]
+    subprocess.run([*git, "init", "-q", str(upstream)], check=True)
+    subprocess.run([*git, "-C", str(upstream), "add", "."], check=True)
+    subprocess.run([*git, "-C", str(upstream), "commit", "-qm", "v"], check=True)
+    script = (
+        "import subprocess\n" + AGENT_GIT + "subprocess.run(g + "
+        "['-c', 'protocol.file.allow=always', "
+        f"'submodule', 'add', '-q', {upstream.as_posix()!r}, 'vendor'], check=True)\n"
+        "open('solution.txt', 'w').write('ok')\n"
+    )
+    rec = run_one(tmp_path, script, task_kw={"check": CHECK_VENDORED}, max_retries=0)
+    assert rec.status == "pass", rec.error
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_agent_configured_git_filter_does_not_run_while_recording(tmp_path):
+    # A clean filter named in .gitattributes would otherwise run agent code inside agent-ab's
+    # own `git add`, after the agent's processes were killed.
+    marker = tmp_path / "filter-ran.txt"
+    filt = tmp_path / "filt.py"
+    filt.write_text(
+        "import sys\n"
+        f"open({str(marker)!r}, 'w').write('x')\n"
+        "sys.stdout.buffer.write(sys.stdin.buffer.read())\n",
+        encoding="utf-8",
+    )
+    cmd = f'"{Path(PY).as_posix()}" "{filt.as_posix()}"'
+    script = (
+        "import subprocess\n"
+        "open('solution.txt', 'w').write('ok')\n"
+        "open('.gitattributes', 'w').write('solution.txt filter=x\\n')\n"
+        f"subprocess.run(['git', 'config', 'filter.x.clean', {cmd!r}], check=True)\n"
+    )
+    rec = run_one(tmp_path, script, max_retries=0)
+    assert rec.status == "pass", rec.error
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_grading_copy_snapshot_failure_is_an_infrastructure_error(tmp_path, monkeypatch):
+    # The grading copy is pristine, so failing to snapshot it after setup is not the agent's.
+    from agent_ab import runner
+    from agent_ab.errors import WorkspaceError
+
+    real = runner.rebaseline
+    calls = []
+
+    def flaky(ws):
+        calls.append(ws)
+        if len(calls) == 2:  # the grading copy's rebaseline
+            raise WorkspaceError("disk full")
+        real(ws)
+
+    monkeypatch.setattr(runner, "rebaseline", flaky)
+    setup = (PY, "-c", "open('gen.txt', 'w').write('x')")
+    rec = run_one(tmp_path, SOLVE, task_kw={"setup": setup}, max_retries=0)
+    assert rec.status == "error", rec.error
+    assert "grading copy" in rec.error and "disk full" in rec.error
 
 
 def test_new_run_refuses_dir_with_stale_trial_log(tmp_path):
@@ -778,6 +914,47 @@ def test_leaked_workspace_is_noted(tmp_path, monkeypatch):
     run_experiment(exp, tmp_path / "run")
     (rec,) = records(tmp_path / "run")
     note = tmp_path / "run" / rec.artifacts / "workspace-leaked.txt"
-    (leaked,) = ws_left(tmp_path)
-    assert note.read_text(encoding="utf-8").strip() == str(leaked)
-    shutil.rmtree(leaked, ignore_errors=True)
+    leaked = ws_left(tmp_path)
+    assert len(leaked) == (2 if HAS_GIT else 1)  # the agent's workspace and the grading copy
+    assert sorted(note.read_text(encoding="utf-8").split()) == sorted(map(str, leaked))
+    for path in leaked:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def test_record_hashes_prompt_and_instruction_files(tmp_path):
+    import hashlib
+
+    overlay = tmp_path / "overlay"
+    (overlay / ".claude").mkdir(parents=True)
+    (overlay / "CLAUDE.md").write_bytes(b"Write tests first.\n")
+    (overlay / ".claude" / "CLAUDE.md").write_bytes(b"nested\n")
+    exp = make_exp(
+        tmp_path,
+        arms=[fake_arm("a"), fake_arm("b", overlay=overlay, prompt_prefix="Be careful.")],
+    )
+    run_experiment(exp, tmp_path / "run")
+    final = RunStore.open(tmp_path / "run").final_records()
+    a, b = final["t1__a__r0"], final["t1__b__r0"]
+    for rec in (a, b):
+        sent = (tmp_path / "run" / rec.artifacts / "prompt.md").read_bytes()
+        assert sent.endswith(b"\n")
+        assert rec.prompt_sha256 == hashlib.sha256(sent[:-1]).hexdigest()
+    assert a.prompt_sha256 != b.prompt_sha256
+    assert a.instructions_sha256 is None
+    assert b.instructions_sha256 == {
+        "CLAUDE.md": hashlib.sha256(b"Write tests first.\n").hexdigest(),
+        ".claude/CLAUDE.md": hashlib.sha256(b"nested\n").hexdigest(),
+    }
+
+
+def test_instruction_hashes_include_adapter_files(tmp_path):
+    from agent_ab.runner import _instruction_hashes
+    from agent_ab.workspace import Workspace
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "AGENTS.md").write_text("a\n", encoding="utf-8")
+    extra = tmp_path / "append_system_prompt.md"
+    extra.write_text("b", encoding="utf-8")
+    found = _instruction_hashes(Workspace(path=ws), [extra, tmp_path / "missing.md"])
+    assert sorted(found) == ["AGENTS.md", "agent:append_system_prompt.md"]

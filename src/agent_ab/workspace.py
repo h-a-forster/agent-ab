@@ -9,8 +9,10 @@ autocrlf, templates) can neither break nor slow the snapshot.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
+import secrets
 import shlex
 import shutil
 import stat
@@ -24,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePath, PureWindowsPath
 
 from .config import expand_placeholders as _expand
-from .errors import WorkspaceError
+from .errors import GitDirAlteredError, WorkspaceError
 from .model import Arm, Command, ProcResult, Task
 from .proc import IS_WINDOWS, build_env, run_process
 
@@ -55,6 +57,7 @@ class Workspace:
 
     path: Path
     baseline_commit: str | None = None  # None when git is unavailable
+    git_config: bytes | None = None  # .git/config after snapshot/setup, restored before diffs
 
     def __enter__(self) -> Workspace:
         return self
@@ -332,6 +335,10 @@ def create_workspace(task: Task, arm: Arm, *, root: Path | None, label: str) -> 
             _copy_into(Path(arm.overlay), path, "overlay")
         if _git() is not None:
             ws.baseline_commit = _snapshot(path)
+            try:
+                ws.git_config = (path / ".git" / "config").read_bytes()
+            except OSError as e:
+                raise WorkspaceError(f"cannot read the snapshot's git config: {e}") from e
     except BaseException:
         destroy_workspace(ws)
         raise
@@ -342,43 +349,183 @@ def rebaseline(ws: Workspace) -> None:
     """Commit the workspace as it is now and make that the baseline.
 
     Called after the task's setup command, so files setup creates (installed packages,
-    generated sources) are not counted as the agent's changes. A no-op without git.
+    generated sources) are not counted as the agent's changes. Nested git repositories setup
+    created (a cloned dependency) are staged as ordinary files, the same way ``diff_stats``
+    records them, so agent edits inside them show up in the diff instead of hiding behind an
+    unchanging gitlink. A no-op without git.
     """
     if ws.baseline_commit is None or _git() is None:
         return
-    _run_git(ws.path, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
+    _stage_work_tree(Path(ws.path))
     _run_git(ws.path, "commit", "-q", "--no-verify", "--allow-empty", "-m", "agent-ab setup")
     out = _run_git(ws.path, "rev-parse", "HEAD").stdout.decode("ascii", "replace").strip()
     if not out:
         raise WorkspaceError("git rev-parse returned no commit")
     ws.baseline_commit = out
+    try:
+        ws.git_config = (Path(ws.path) / ".git" / "config").read_bytes()
+    except OSError as e:
+        raise WorkspaceError(f"cannot read the workspace's git config: {e}") from e
+
+
+def _nested_git_entries(root: Path) -> list[Path]:
+    """Every ``.git`` entry below ``root`` except its own, without descending into links."""
+    found: list[Path] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        with os.scandir(current) as it:
+            for entry in it:
+                path = Path(entry.path)
+                if entry.name == ".git":
+                    if current != root:
+                        found.append(path)
+                    continue
+                if not _is_link(path) and entry.is_dir(follow_symlinks=False):
+                    stack.append(path)
+    return found
+
+
+@contextlib.contextmanager
+def _nested_repos_set_aside(ws: Path):
+    """Move nested ``.git`` entries out of the work tree for the duration of the block.
+
+    git records a directory holding a ``.git`` as a gitlink (or refuses it if the nested
+    repository has no commit), which would drop its files from the diff. With the metadata
+    moved aside, the files are staged as ordinary content. The entries are restored on exit.
+    """
+    try:
+        nested = _nested_git_entries(ws)
+    except OSError as e:
+        raise WorkspaceError(f"scanning the workspace for nested repositories failed: {e}") from e
+    if not nested:
+        yield
+        return
+    holding = Path(tempfile.mkdtemp(prefix=f".{ws.name}-nested-", dir=ws.parent))
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for i, path in enumerate(nested):
+            target = holding / str(i)
+            try:
+                os.replace(path, target)
+            except OSError as e:
+                rel = path.parent.relative_to(ws).as_posix()
+                raise WorkspaceError(
+                    f"the nested git repository at {rel}/ could not have its metadata "
+                    f"set aside to record its files: {e}"
+                ) from e
+            moved.append((path, target))
+        yield
+    finally:
+        for path, target in reversed(moved):
+            with contextlib.suppress(OSError):
+                os.replace(target, path)
+        with contextlib.suppress(OSError):
+            _rmtree(holding)
+
+
+def _drop_gitlinks(ws: Path) -> None:
+    """Remove submodule (gitlink) entries from the index.
+
+    An agent that stages a nested repository (``git add`` after ``git init`` in a subdirectory,
+    or ``git submodule add``) leaves a gitlink in the index, which ``git add -A`` keeps even
+    with the nested ``.git`` moved aside. Dropping it lets the directory's files be staged as
+    ordinary content. The baseline never holds gitlinks, so nothing of the task's is lost.
+    """
+    listing = _run_git(ws, "ls-files", "-s", "-z").stdout
+    # "<mode> <object> <stage>\t<path>" NUL ...
+    paths = [
+        record.split(b"\t", 1)[1]
+        for record in listing.split(b"\0")
+        if record.startswith(b"160000 ") and b"\t" in record
+    ]
+    if paths:
+        _run_git(
+            ws, "update-index", "--force-remove", "--",
+            *(p.decode("utf-8", "surrogateescape") for p in paths),
+        )  # fmt: skip
+
+
+def _restore_git_config(ws: Path, config: bytes) -> None:
+    """Put back the repository config agent-ab recorded, discarding what the agent added.
+
+    ``git add`` runs clean filters named in ``.gitattributes`` with commands taken from the
+    repository config, so an agent could otherwise make agent-ab run its code while recording
+    the diff, after the agent's own processes were killed. Without the agent's config entries
+    the filter driver is undefined and git stages the file as is. Files that would point git at
+    other config or attributes (``config.worktree``, ``commondir``, ``info/attributes``) are
+    removed; agent-ab's repository never has them.
+    """
+    git_dir = ws / ".git"
+    try:
+        for rel in ("config.worktree", "commondir", "config"):
+            _remove_path(git_dir / rel)
+        info = git_dir / "info"
+        if _is_link(info):
+            _unlink_link(info)
+        else:
+            _remove_path(info / "attributes")
+        (git_dir / "config").write_bytes(config)
+    except OSError as e:
+        raise WorkspaceError(f"cannot restore the workspace's git config: {e}") from e
+
+
+def _stage_work_tree(ws: Path, config: bytes | None = None) -> None:
+    """Stage every file of the work tree, nested repositories included, as plain content."""
+    if config is not None:
+        _restore_git_config(ws, config)
+    with _nested_repos_set_aside(ws):
+        _drop_gitlinks(ws)
+        _run_git(ws, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
 
 
 def diff_stats(ws: Workspace, patch_path: Path) -> tuple[int, int, int] | None:
     """Write the agent's changes since the baseline to ``patch_path`` and count them.
 
     Returns ``(files_changed, lines_added, lines_removed)``; binary files count as changed with
-    zero lines, and files ignored by the task's .gitignore count too. Returns None when there
-    is no baseline (git unavailable) or the workspace's git directory is gone or replaced
-    (e.g. the agent deleted ``.git``), since diff stats are informational. Call it before
-    ``install_checks`` so check files do not show up as agent changes.
+    zero lines, and files ignored by the task's .gitignore count too. Files inside a nested git
+    repository the agent created (``git clone``, ``git init`` in a subdirectory) are recorded as
+    ordinary files; the nested ``.git`` metadata is not, and gitlink entries the agent staged
+    for them are dropped from the index. A stale ``.git/index.lock`` (left by a git command
+    killed with the agent) is removed first, and the repository config is reset to the one
+    recorded after the snapshot (and setup), so filter drivers the agent configured do not
+    run. Call it before ``install_checks`` so
+    check files do not show up as agent changes.
+
+    Returns None only when there is no baseline (git unavailable). Raises
+    ``GitDirAlteredError`` when the workspace's ``.git`` is gone or replaced (for example the
+    agent deleted it), ``WorkspaceError`` when git cannot record the changes, and ``OSError``
+    when ``patch_path`` cannot be written.
     """
     if ws.baseline_commit is None or _git() is None:
         return None
     git_dir = Path(ws.path) / ".git"
     if _is_link(git_dir) or not git_dir.is_dir():
-        return None  # a .git file or link would redirect git into another repository
+        # A .git file or link would redirect git into another repository.
+        raise GitDirAlteredError("the workspace's .git directory is missing or was replaced")
     base = ws.baseline_commit
     common = ("--no-renames", "--no-ext-diff", "--no-textconv")
-    try:
-        _run_git(ws.path, "add", "-A", "--force", "--", ".", *_CACHE_EXCLUDES)
-        patch_path = Path(patch_path)
-        patch_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(patch_path, "wb") as fh:
-            _run_git(ws.path, "diff", "--cached", "--binary", *common, base, "--", stdout=fh)
-        raw = _run_git(ws.path, "diff", "--cached", "--numstat", "-z", *common, base, "--").stdout
-    except (WorkspaceError, OSError):
-        return None
+    lock = git_dir / "index.lock"
+    if os.path.lexists(lock) and not _is_link(lock) and lock.is_file():
+        # The agent's processes are gone by now, so any lock is stale.
+        with contextlib.suppress(OSError):
+            lock.unlink()
+    patch_path = Path(patch_path)
+    patch_path.parent.mkdir(parents=True, exist_ok=True)
+    _stage_work_tree(Path(ws.path), config=ws.git_config)
+    raw_entries = _run_git(ws.path, "diff", "--cached", "--raw", "-z", *common, base, "--").stdout
+    # -z --raw without renames: ":<old mode> <new mode> <old> <new> <status>" NUL "<path>" NUL.
+    fields = raw_entries.split(b"\0")
+    for meta, path in zip(fields[0::2], fields[1::2], strict=False):
+        modes = meta.lstrip(b":").split(b" ")[:2]
+        if b"160000" in modes:
+            raise WorkspaceError(
+                f"the agent's changes include a git submodule entry at "
+                f"{path.decode('utf-8', 'replace')}, whose contents cannot be recorded"
+            )
+    with open(patch_path, "wb") as fh:
+        _run_git(ws.path, "diff", "--cached", "--binary", *common, base, "--", stdout=fh)
+    raw = _run_git(ws.path, "diff", "--cached", "--numstat", "-z", *common, base, "--").stdout
     files = added = removed = 0
     for record in raw.decode("utf-8", "replace").split("\0"):
         parts = record.split("\t", 2)
@@ -390,6 +537,24 @@ def diff_stats(ws: Workspace, patch_path: Path) -> tuple[int, int, int] | None:
         if parts[1].isdigit():
             removed += int(parts[1])
     return files, added, removed
+
+
+def apply_patch(ws: Workspace, patch_path: Path) -> None:
+    """Apply a patch written by ``diff_stats`` to a fresh workspace.
+
+    Used to grade in a clean copy: the agent's recorded changes go onto a new workspace built
+    from the pristine task, so nothing outside that diff (interpreter caches, files written
+    after the diff, the agent's ``.git``) reaches the checks. git refuses paths outside the
+    work tree and writes through symlinks. An empty patch is a no-op. Raises
+    ``WorkspaceError`` if the patch does not apply.
+    """
+    patch_path = Path(patch_path)
+    try:
+        if patch_path.stat().st_size == 0:
+            return
+    except OSError as e:
+        raise WorkspaceError(f"cannot read the agent's diff: {e}") from e
+    _run_git(ws.path, "apply", "--binary", "--whitespace=nowarn", str(patch_path.resolve()))
 
 
 def install_checks(ws: Workspace, task: Task) -> None:
@@ -506,6 +671,66 @@ def run_command(
 # first on sys.path, where an agent-written `unittest/` package would shadow the stdlib.
 CHECK_ENV = {"PYTHONSAFEPATH": "1"}
 
+# Argv checks that start like this run under agent-ab's verifying unittest runner.
+_UNITTEST_PREFIX = ("{python}", "-m", "unittest")
+_VERIFYING_MODULE = "agent_ab.checkrun"
+
+
+@dataclass
+class CheckResult:
+    """Outcome of a check command.
+
+    ``verified`` is True when the check ran under the verifying runner (see
+    ``agent_ab.checkrun``); then ``report`` holds the counts it recorded, if any. ``problem``
+    explains why a zero exit status is not accepted as a pass.
+    """
+
+    proc: ProcResult
+    verified: bool = False
+    report: dict | None = None
+    problem: str | None = None
+
+    @property
+    def passed(self) -> bool:
+        return self.proc.exit_code == 0 and self.problem is None
+
+
+def uses_verifying_runner(cmd: Command) -> bool:
+    """True for argv checks of the form ``{python} -m unittest ...``."""
+    if isinstance(cmd, str):
+        return False
+    return tuple(str(part) for part in cmd[:3]) == _UNITTEST_PREFIX
+
+
+def _read_report(path: Path, nonce: str) -> tuple[dict | None, str | None]:
+    """Load the verifying runner's report; return ``(report, problem)``."""
+    from .checkrun import REPORT_MAX_BYTES
+
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(REPORT_MAX_BYTES + 1)
+    except FileNotFoundError:
+        return None, "the check exited 0 without recording a result (the process was cut short)"
+    except OSError as e:
+        return None, f"the check result could not be read: {e}"
+    if len(raw) > REPORT_MAX_BYTES:
+        return None, "the check result is too large"
+    try:
+        report = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None, "the check result is not valid JSON"
+    if not isinstance(report, dict) or report.get("nonce") != nonce:
+        return None, "the check result does not come from this check run"
+    report.pop("nonce", None)
+    if report.get("ok") is not True:
+        counts = ", ".join(
+            f"{k}={report[k]}"
+            for k in ("tests_run", "failures", "errors", "skipped", "unexpected_successes")
+            if k in report
+        )
+        return report, f"the check exited 0 but its tests did not pass ({counts})"
+    return report, None
+
 
 def run_check(
     cmd: Command,
@@ -514,15 +739,34 @@ def run_check(
     timeout_s: float | None,
     stdout_path: Path,
     stderr_path: Path,
+    report_path: Path | None = None,
     cancel: threading.Event | None = None,
-) -> ProcResult:
-    """Run a task's check command in the workspace with the hardened ``CHECK_ENV``."""
-    return run_command(
-        cmd,
-        ws,
-        timeout_s=timeout_s,
-        stdout_path=stdout_path,
-        stderr_path=stderr_path,
-        env=CHECK_ENV,
-        cancel=cancel,
-    )
+) -> CheckResult:
+    """Run a task's check command in the workspace with the hardened ``CHECK_ENV``.
+
+    An argv check of the form ``{python} -m unittest ...`` runs under the verifying runner
+    instead, which records its outcome out of band at ``report_path`` (default: next to
+    ``stdout_path``) with a one-time nonce. A zero exit status then counts only when that
+    record exists, carries the nonce and shows a clean run, so agent code that forces the exit
+    status (``atexit`` hooks, ``os._exit``) cannot fake a pass.
+    """
+    kw = {"timeout_s": timeout_s, "stdout_path": stdout_path, "stderr_path": stderr_path}
+    if not uses_verifying_runner(cmd):
+        proc = run_command(cmd, ws, env=CHECK_ENV, cancel=cancel, **kw)
+        return CheckResult(proc=proc)
+
+    from .checkrun import NONCE_ENV, REPORT_ENV
+
+    if report_path is None:
+        report_path = Path(stdout_path).with_name("check-report.json")
+    report_path = Path(report_path).resolve()  # the check runs with cwd=workspace
+    with contextlib.suppress(FileNotFoundError):
+        report_path.unlink()
+    nonce = secrets.token_hex(16)
+    env = {**CHECK_ENV, REPORT_ENV: str(report_path), NONCE_ENV: nonce}
+    argv = [cmd[0], "-m", _VERIFYING_MODULE, *cmd[3:]]
+    proc = run_command(argv, ws, env=env, cancel=cancel, **kw)
+    result = CheckResult(proc=proc, verified=True)
+    if proc.exit_code == 0:
+        result.report, result.problem = _read_report(report_path, nonce)
+    return result

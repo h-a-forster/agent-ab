@@ -124,8 +124,16 @@ be harder, then ran control-only pilots on Claude Haiku 5.5 (`claude-haiku-5-5`,
 - Three of the four failures traced to underspecified prompts: `feature-uri-resolve`,
   `feature-sql-select` and `feature-rope-buffer`. We clarified those prompts before the main
   run. `bughunt-textadv` was a genuine miss. Even after its clarification, `feature-uri-resolve`
-  failed in all 8 later trials (both arms of the main run and both models), so its spec may
-  still have a gap; as a tie in every pairing it does not bias the effects.
+  failed in all 8 later trials (both arms of the main run and both models). A likely cause is a
+  conflict between prompt and check: the prompt keeps the hex digits of percent encodings in a
+  host uppercase (as RFC 3986 section 6.2.2.1 recommends), while the hidden oracle and the
+  reference solution lowercased the whole host. The oracle and reference solution now follow
+  the prompt, and the check has an explicit case for it. A solution written to the prompt fails
+  the old oracle, but the agents' diffs from those trials were not kept, so we cannot confirm
+  that every one of the 8 failures came from this conflict rather than other bugs. All published results predate this
+  fix, so `feature-uri-resolve` counts as a failure in every run below. As a tie in every
+  pairing it does not bias the effects, but it lowers each arm's pass rate by up to one task
+  in 50 (2 points).
 
 The target baseline of 40-80% was not reached. Haiku 5.5 is near the ceiling of the tasks we
 could write with fully specified prompts.
@@ -224,6 +232,9 @@ model $8.82), inside the USD 60 cap.
 - Costs are the CLI's list-price estimates.
 - There is no joint correction across pass rate, cost and time.
 - One CLI version (2.1.296). Python tasks only.
+- Grading ran in the agent's workspace and trusted the check's exit status. agent-ab now grades
+  in a clean copy and verifies `unittest` outcomes out of band
+  ([safety.md](safety.md#grading-integrity)). These runs were not re-graded.
 
 ## Files
 

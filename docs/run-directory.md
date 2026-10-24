@@ -16,16 +16,20 @@ Each `agent-ab run` writes one run directory. The default is
     agent.stdout, agent.stderr
     setup.stdout, setup.stderr      if the task has setup
     check.stdout, check.stderr
+    check-report.json      outcome recorded by the verifying unittest runner
+    grade-setup.stdout, grade-setup.stderr   setup of the grading copy, if the task has setup
     diff.patch             the agent's changes (git diff against the starting snapshot)
     init.json              the agent's scrubbed init event (claude-code, capture_init)
     usage.json             usage written by the agent (command and mock adapters)
     record.json            this attempt's record
     workspace.txt          kept workspace path (keep_workspaces only)
+    grade-workspace.txt    kept grading-copy path (keep_workspaces only)
   report.html, report.md, analysis.json     written at the end of run
 ```
 
 Files that do not apply are absent. Some adapters and failure paths add more, for example
-`append_system_prompt.md` (claude-code) or `traceback.txt`.
+`append_system_prompt.md` (claude-code), `traceback.txt` or `workspace-leaked.txt` (one
+line per workspace that could not be deleted).
 
 The trial id is `<task>__<arm>__r<repeat>`, for example `fix-slugify__tdd__r2`. Repeats and
 attempts count from 0.
@@ -78,6 +82,8 @@ anywhere else is an error.
 | `models` | array of strings or null | Model IDs the agent reported using, sorted (claude-code: keys of `modelUsage`). |
 | `agent_version` | string or null | Agent CLI version: the one the agent reported during the trial if it did, else the per-arm probe. |
 | `agent_init` | object or null | Compact summary of the agent's init event: `model`, `claude_code_version`, `permission_mode`, `api_key_source`, and names of `tools`, `mcp_servers`, `plugins`, `skills`, `agents`. |
+| `prompt_sha256` | string or null | SHA-256 (hex) of the UTF-8 prompt text sent to the agent: `prompt.md` without its final newline. Null for attempts that ended before the agent was built. |
+| `instructions_sha256` | object or null | SHA-256 of a fixed set of instruction files. The workspace files `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` and `AGENTS.md`, hashed after setup, are keyed by relative path; files an adapter passes from outside the workspace are keyed `agent:<name>` (claude-code: `agent:append_system_prompt.md`). Null when there are none. Not covered: other workspace files agents read (`.claude/rules/`, skills, agents and settings under `.claude/`, `CLAUDE.md` in subdirectories, Codex's `AGENTS.override.md`), and user-level and parent-directory instruction files (such as `~/.claude/CLAUDE.md`), which the agent may still load unless the arm restricts its setting sources. Arms that differ only in uncovered files hash as identical. |
 | `schema` | integer | Record schema version (`1`). |
 
 `null` means unknown, never zero. Statistics skip unknown values.

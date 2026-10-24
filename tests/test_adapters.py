@@ -1163,3 +1163,14 @@ def test_claude_batch_shim_end_to_end(tmp_path):
 @pytest.mark.skipif(os.name != "nt", reason="needs cmd.exe")
 def test_real_windows_flag_matches_platform():
     assert base.IS_WINDOWS is True and command_mod.IS_WINDOWS is True
+
+
+def test_claude_reports_its_system_prompt_file_as_an_instruction_file(tmp_path):
+    spec = AgentSpec(
+        adapter="claude-code",
+        options={"executable": "definitely-not-a-real-claude", "append_system_prompt": "Hi."},
+    )
+    inv = ClaudeCodeAdapter().build(make_ctx(tmp_path, spec, prompt="x"))
+    assert [p.name for p in inv.instruction_files] == [SYSTEM_PROMPT_FILE]
+    plain = AgentSpec(adapter="claude-code", options={"executable": "definitely-not-a-real-claude"})
+    assert ClaudeCodeAdapter().build(make_ctx(tmp_path, plain, prompt="x")).instruction_files == []

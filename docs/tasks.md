@@ -22,7 +22,8 @@ unique in the experiment.
   root, overwriting files at the same paths. So `checks/grade.py` lands at
   `<workspace>/grade.py`, and `checks/checks/test_x.py` lands at
   `<workspace>/checks/test_x.py`. The checks overlay is applied after the agent finishes,
-  so the agent never sees those files in its workspace.
+  to a clean copy of the workspace that holds only the agent's diff, so the agent never sees
+  those files in its workspace.
 - `solution/` is never shown to a real agent.
 
 ## `task.toml`
@@ -31,8 +32,8 @@ unique in the experiment.
 |---|---|---|---|
 | `prompt` | string | | Task description sent to the agent. |
 | `prompt_file` | string | | File in the task directory holding the prompt. Set exactly one of `prompt` and `prompt_file`. |
-| `check` | list or string | required | Hidden check. Runs in the workspace after the checks overlay. Exit code 0 is a pass. |
-| `setup` | list or string | none | Runs in the workspace before the agent. Failure or timeout is an infrastructure error. |
+| `check` | list or string | required | Hidden check. Runs in a clean copy of the workspace (pristine task plus the agent's diff) after the checks overlay. Exit code 0 is a pass; see [Hidden checks](#hidden-checks) for `unittest` checks. |
+| `setup` | list or string | none | Runs in the workspace before the agent, and again in the grading copy. Failure or timeout is an infrastructure error. Keep it deterministic: the agent's diff is applied on top of its output. |
 | `timeout_s` | number | experiment value | Agent time limit for this task. |
 | `check_timeout_s` | number | experiment value | Check time limit. A timeout is a fail. |
 | `tags` | list of strings | `[]` | Labels for your own use. |
@@ -69,6 +70,12 @@ every platform you use. Write a `solution/` for every task.
 - Visible tests in `repo/` are fine; the hidden check should cover more.
 - The files are hidden from the workspace, not from the machine. An agent with full
   permissions can read the task directory. See [safety.md](safety.md).
+- Prefer the argv form `["{python}", "-m", "unittest", ...]`. agent-ab runs it under its
+  verifying runner (`agent_ab.checkrun`), a drop-in for `python -m unittest` that records the
+  outcome outside the process's exit status. A zero exit then counts only if at least one test
+  ran and none failed, errored or was skipped. Do not skip tests in hidden checks: a skip counts
+  against the trial, because the agent's code can raise `SkipTest`. Other check commands are
+  judged by exit status alone.
 
 ## Flaky and slow checks
 

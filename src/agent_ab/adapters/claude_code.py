@@ -6,6 +6,7 @@ import contextlib
 import json
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from agent_ab.adapters.base import (
@@ -383,7 +384,11 @@ class ClaudeCodeAdapter(Adapter):
         argv = self._argv(spec, _resolve(exe) or exe, system_prompt_file)
         check_batch_argv(argv)
         # The prompt goes on stdin: no argv length limits or Windows quoting pitfalls.
-        return AgentInvocation(argv=argv, env=dict(spec.env), stdin=ctx.prompt, cwd=ctx.workspace)
+        files = [Path(system_prompt_file)] if system_prompt_file is not None else []
+        return AgentInvocation(
+            argv=argv, env=dict(spec.env), stdin=ctx.prompt, cwd=ctx.workspace,
+            instruction_files=files,
+        )  # fmt: skip
 
     def parse(self, ctx: TrialContext, result: ProcResult) -> AgentUsage:
         if result.start_error:

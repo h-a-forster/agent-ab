@@ -31,26 +31,68 @@ is visible to every agent.
 
 ## Grading integrity
 
-The check runs in the workspace the agent edited, so the agent's files can try to influence it.
-Two routes are closed:
+The checks import the agent's code, so the agent's files can try to influence grading. agent-ab
+closes these routes:
 
-- Every check command runs with `PYTHONSAFEPATH=1` (the environment form of `python -P`), so
-  `python -m ...` and script runs do not put the workspace first on `sys.path`. An agent-written
-  `unittest/` package can no longer shadow the standard library.
-- Before the hidden `checks/` are copied in, every top-level entry of them that is absent from the
-  task's `repo/` is removed from the workspace (links are unlinked, not followed). A file the
-  agent planted next to the real checks, such as `checks/test_aaa.py`, does not run.
+- **Clean copy.** The checks never run in the workspace the agent edited. agent-ab builds a fresh
+  workspace from the pristine task (the arm's removals and overlay, then the task's `setup`),
+  applies the agent's recorded diff (`diff.patch`) with `git apply`, and copies the hidden
+  `checks/` on top. Nothing outside that diff reaches the checks: interpreter caches (including
+  a forged `.pyc` that Python would load instead of the source), files written after the diff
+  was taken, or the agent's `.git`. git refuses patch paths outside the work tree. A diff that
+  does not apply fails the trial. If the agent breaks the workspace's `.git` so that no diff
+  can be recorded, the trial fails rather than falling back to grading in place; the error says
+  whether `.git` was missing or replaced or git itself could not record the changes. A failure
+  to write `diff.patch` into the run directory is an infrastructure error and is retried.
+  Nested git repositories the agent creates (a `git clone` to vendor a library, `git init` in a
+  subdirectory) are recorded as ordinary files: their `.git` metadata is moved aside while the
+  diff is taken and does not reach the grading copy, and gitlink entries the agent staged for
+  them (`git add` of a nested repository, `git submodule add`) are dropped from the index. A
+  stale `.git/index.lock`, left by a git command killed with the agent, is removed first. Only
+  what git records reaches the checks: empty directories do not, a case-only rename is lost on
+  case-insensitive filesystems (Windows, macOS), and a file git cannot read fails the trial.
+  Without git on the host there is no diff, and the checks run in the agent's workspace.
+- **Verified exit status.** Agent code can force the check's exit status: an `atexit` hook that
+  calls `os._exit(0)`, or `sys.exit(0)` while a test module named on the command line is
+  imported (unittest's discovery already reports that as an error). Argv checks of the form
+  `["{python}", "-m", "unittest", ...]` therefore run under `agent_ab.checkrun`, a drop-in for
+  `python -m unittest`. Before any test code is imported it takes a report path and a one-time
+  nonce out of its environment; after the run it writes the counts and the nonce to the
+  attempt's `check-report.json`. A zero exit status passes only with a report that carries the
+  nonce and shows at least one test run and no failures, errors, unexpected successes or skips
+  (agent code can raise `SkipTest`). Other check commands are judged by exit status alone.
+- **Safe path.** Every check command runs with `PYTHONSAFEPATH=1` (the environment form of
+  `python -P`), so `python -m ...` and script runs do not put the workspace first on `sys.path`.
+  An agent-written `unittest/` package cannot shadow the standard library.
+- **Check-only paths.** Before the hidden `checks/` are copied in, every top-level entry of
+  them that is absent from the task's `repo/` is removed (links are unlinked, not followed). A
+  file the agent planted next to the real checks, such as `checks/test_aaa.py`, does not run.
 
 Residual risks:
 
-- The checks import the agent's own code, which can exit the process or monkeypatch things at
-  import time.
+- The verified exit status stops generic exit forcing, not code aimed at agent-ab. Agent code
+  runs inside the check process, so it can monkeypatch `unittest`, or find the report path and
+  nonce and write a clean report itself: a few lines that walk the interpreter's stack frames
+  to the runner's locals are enough, and on Linux both values stay readable in
+  `/proc/self/environ` after they are removed from `os.environ`. Treat a clean report as
+  evidence against accidental or generic tampering only; real isolation needs a sandbox, and
+  the diffs of surprising passes should be read.
+- agent-ab records the diff with git commands run on the agent's own `.git`, outside the agent's
+  process cleanup. Before recording, it resets the repository config and removes
+  `.git/info/attributes`, so a filter driver the agent configured (a `.gitattributes` entry
+  plus a `filter.*.clean` command) does not run. That covers this known route, not every way
+  an agent that edits `.git` internals could target agent-ab's git commands.
 - Modules the checks import after discovery can still be shadowed by workspace files of the same
   name.
-- An agent with full filesystem access can alter the interpreter's `site-packages`.
+- An agent with full filesystem access can alter the interpreter's `site-packages`, the task
+  directory or agent-ab itself.
 
 Mitigate these with a sandbox (see below) and by reading the diffs of passing trials, especially
 surprising passes.
+
+The published results in [results.md](results.md) predate the clean copy and the verified exit
+status: their checks ran in the agent's workspace, judged by exit status. They have not been
+re-graded.
 
 ## Use a container or VM
 
