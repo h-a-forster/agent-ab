@@ -57,19 +57,15 @@ Done:
   pilots, the 50-task x 3-repeat no-tests experiment, Haiku 5.5 vs Sonnet 5.5).
 - Headline numbers in `README.md` and `docs/results.md` re-checked against the committed
   reports and `manipulation.jsonl` files on 2026-10-30.
+- The no-tests experiment re-run on 2026-10-30 with the current grader and Claude Code 2.1.308
+  (`docs/results/haiku-5-5-no-tests-rerun`); its headline replicated.
 
 Open:
-1. All published Claude Haiku/Sonnet 5.5 results predate the clean-copy grader and the
-   `feature-uri-resolve` oracle fix. A re-run of the no-tests experiment is prepared, not
-   run: `tmp/longrun-2026-10-30.sh` (local, gitignored; uses the published config
-   unchanged; smoke-tested on one task x one repeat x both arms with Claude Code 2.1.308;
-   estimate ~$10 and ~3 h). After it runs, copy the run into `docs/results/`, run
-   `docs/results/manipulation.py`, and update `docs/results.md` and the README findings.
-2. The pilots and the Haiku-vs-Sonnet comparison were not re-graded either; re-run them only
-   if they are still cited.
-3. Tag v0.1.1 and publish a GitHub release from `docs/release-notes-0.1.1.md` (owner).
-4. Research questions listed under "Open questions" in `README.md` (task headroom for Haiku
+1. The pilots and the Haiku-vs-Sonnet comparison predate the clean-copy grader; re-run them
+   only if they are still cited.
+2. Tag v0.1.1 and publish a GitHub release from `docs/release-notes-0.1.1.md` (owner).
+3. Research questions listed under "Open questions" in `README.md` (task headroom for Haiku
    5.5, heterogeneous effects in the power model, concurrency and time ratios).
-5. Remote branches `claude/audit-fixes-2026-10-10`, `claude/hygiene-2026-10-15` and
+4. Remote branches `claude/audit-fixes-2026-10-10`, `claude/hygiene-2026-10-15` and
    `upgrades-2026-10-23` are merged or superseded by `main`; delete them (owner).
-6. Not published to PyPI; install is from GitHub.
+5. Not published to PyPI; install is from GitHub.

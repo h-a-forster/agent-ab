@@ -20,17 +20,22 @@ Haiku 5.5 against Sonnet 5.5. See Findings below.
 
 ## Findings
 
-From the [example results](docs/results.md). All runs used Claude Code with Python tasks
-and were graded before the clean-copy grader and the `feature-uri-resolve` oracle fix
+From the [example results](docs/results.md). All runs used Claude Code with Python tasks.
+The no-tests experiment was re-run with the clean-copy grader and the fixed
+`feature-uri-resolve` oracle; the other runs predate both
 ([limitations](docs/results.md#limitations-of-the-new-runs)).
 
 - **No detectable effect of skipping tests on pass rate.** On Claude Haiku 5.5, 50 tasks x 3 repeats:
   95.3% with tests, 92.7% without, a difference of -2.7 pts [-7.3, +1.3]. A drop larger than
   about 7 points is unlikely; a small one is not ruled out. Ceiling effects limit this.
-  [Details](docs/results.md#powered-experiment-no-tests-on-claude-haiku-55).
-- **Skipping tests halved the cost.** Cost per trial fell to x0.50 [0.40, 0.70] and time to
-  x0.64 [0.53, 0.74]. The instruction worked: the control wrote tests in 127/150 trials, the
-  `no-tests` arm in 3/150.
+  A re-run with the current grader and a newer Claude Code gave the same difference: 96.7% vs
+  94.0%, -2.7 pts [-6.7, +1.3].
+  [Details](docs/results.md#powered-experiment-no-tests-on-claude-haiku-55),
+  [re-run](docs/results.md#re-run-with-the-current-grader).
+- **Skipping tests cut the cost by about half.** Cost per trial fell to x0.50 [0.40, 0.70]
+  (re-run x0.58 [0.50, 0.65]) and time to x0.64 [0.53, 0.74] (re-run x0.60 [0.53, 0.67]).
+  The instruction worked: the control wrote tests in 127/150 trials (re-run 149/150), the
+  `no-tests` arm in 3/150 (re-run 3/150).
   [Details](docs/results.md#manipulation-check).
 - **Sonnet 5.5 cost 3.6 times as much as Haiku 5.5 per trial for no detectable gain.**
   Pass rate was 96.0% vs 94.0% (+2.0 pts [-4.0, +10.0]), cost x3.58 [2.35, 5.55], with one
@@ -190,9 +195,10 @@ Details: [docs/statistics.md](docs/statistics.md).
 
 ## Open questions
 
-- **Why does no-tests lose on specific tasks?** `data-interval-sets` fell from 3/3 to 1/3.
-  Start from `docs/results/haiku-5-5-no-tests/trials.jsonl` and `manipulation.jsonl` (made by
-  `docs/results/manipulation.py`).
+- **Does no-tests lose on specific tasks?** `data-interval-sets` fell from 3/3 to 1/3, but
+  tied at 2/3 in the re-run, where `config-validation-errors` fell instead. Start from
+  `trials.jsonl` and `manipulation.jsonl` (made by `docs/results/manipulation.py`) in
+  `docs/results/haiku-5-5-no-tests` and `docs/results/haiku-5-5-no-tests-rerun`.
 - **How do we keep headroom for Haiku 5.5 without underspecified prompts?** Start from
   `docs/results/pilot2-haiku-5-5` and `examples/tasks/bughunt-*`.
 - **Do heterogeneous effects break the power model?** It assumes one effect across tasks.

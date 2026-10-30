@@ -3,7 +3,8 @@
 The first experiment, run on 2026-10-09 with the [10 example tasks](../examples/tasks), is a
 pilot. It cannot answer its question: it has too few tasks, and Sonnet passes all of them. The
 sections after the pilot report the follow-up: [task calibration](#task-calibration-pilots-on-claude-haiku-55),
-a [powered experiment](#powered-experiment-no-tests-on-claude-haiku-55) and a
+a [powered experiment](#powered-experiment-no-tests-on-claude-haiku-55) with a
+[re-run under the current grader](#re-run-with-the-current-grader), and a
 [model comparison](#model-as-the-arm-haiku-55-vs-sonnet-55). These results show what agent-ab
 reports for real agents. They are not a benchmark.
 
@@ -130,10 +131,11 @@ be harder, then ran control-only pilots on Claude Haiku 5.5 (`claude-haiku-5-5`,
   reference solution lowercased the whole host. The oracle and reference solution now follow
   the prompt, and the check has an explicit case for it. A solution written to the prompt fails
   the old oracle, but the agents' diffs from those trials were not kept, so we cannot confirm
-  that every one of the 8 failures came from this conflict rather than other bugs. All published results predate this
-  fix, so `feature-uri-resolve` counts as a failure in every run below. As a tie in every
-  pairing it does not bias the effects, but it lowers each arm's pass rate by up to one task
-  in 50 (2 points).
+  that every one of the 8 failures came from this conflict rather than other bugs. All results
+  below except the [re-run](#re-run-with-the-current-grader) predate this fix, so
+  `feature-uri-resolve` counts as a failure in them. As a tie in every pairing it does not bias
+  the effects, but it lowers each arm's pass rate by up to one task in 50 (2 points). With the
+  fixed oracle, the re-run passed it in 4 of 6 trials.
 
 The target baseline of 40-80% was not reached. Haiku 5.5 is near the ceiling of the tasks we
 could write with fully specified prompts.
@@ -189,6 +191,44 @@ environment that ran the trials (built-in plugins and environment-provided skill
 identical across arms, so they do not confound the comparison. They are part of the setup
 measured.
 
+### Re-run with the current grader
+
+On 2026-10-30 we re-ran this experiment with the published config unchanged:
+[haiku-5-5-no-tests-rerun](results/haiku-5-5-no-tests-rerun)
+([report](results/haiku-5-5-no-tests-rerun/report.md)). It is a replication with known
+differences, not a replacement:
+
+- Grading: the clean-copy grader with verified `unittest` outcomes, and the fixed
+  `feature-uri-resolve` oracle. Task prompts and the other checks are unchanged.
+- Claude Code 2.1.308 instead of 2.1.296. Model `claude-haiku-5-5` in every trial.
+- A local Windows machine instead of the cloud environment. The init event lists 31 tools,
+  3 plugins and 22 skills (39, 3 and 21 before), identical across arms. The tool sets differ:
+  the re-run has `Glob`, `Grep` and `PowerShell` and lacks the cloud's connector, plugin,
+  skill-search and notification tools.
+- 300/300 trials completed, 0 errors, 6 at a time. One control trial (`feature-minire`) hit
+  the 30-minute timeout and counts as a failure. Total cost $10.88.
+
+| | Published | Re-run |
+|---|---:|---:|
+| control pass rate | 95.3% (90.0%-99.3%) | 96.7% (94.0%-99.3%) |
+| no-tests pass rate | 92.7% (86.7%-97.3%) | 94.0% (90.0%-98.0%) |
+| Pass-rate diff | -2.7 pts [-7.3, +1.3], p 0.40 | -2.7 pts [-6.7, +1.3], p 0.36 |
+| Cost ratio | x0.50 [0.40, 0.70] | x0.58 [0.50, 0.65] |
+| Time ratio | x0.64 [0.53, 0.74] | x0.60 [0.53, 0.67] |
+| Cost/trial, control / no-tests | $0.0439 / $0.0220 | $0.0459 / $0.0266 |
+| Tasks better / worse / tied | 3 / 6 / 41 | 2 / 5 / 43 |
+| Wrote tests, control / no-tests | 127/150 / 3/150 | 149/150 / 3/150 |
+| Ran tests, control / no-tests | 150/150 / 0/150 | 148/150 / 1/150 |
+
+- **The headline replicates.** The pass-rate difference is again -2.7 points with an interval
+  that includes zero and rules out a drop larger than about 7 points. Skipping tests again cut
+  cost and time, with both intervals excluding 1.
+- **The task-level losses do not.** `data-interval-sets` passed 2/3 in both arms (3/3 vs 1/3
+  before). The re-run's losses fell on other tasks: `config-validation-errors` went from 3/3
+  to 1/3 and four tasks lost one repeat each. Per-task differences of this size look like
+  noise.
+- Times come from different machines; compare the ratios, not the absolute times.
+
 ## Model as the arm: Haiku 5.5 vs Sonnet 5.5
 
 The pilot found Sonnet cheaper per pass, but it compared separate runs of different
@@ -231,10 +271,11 @@ model $8.82), inside the USD 60 cap.
   run. The arms of a task now run side by side, and each trial record stores its concurrency.
 - Costs are the CLI's list-price estimates.
 - There is no joint correction across pass rate, cost and time.
-- One CLI version (2.1.296). Python tasks only.
+- One CLI version per run (2.1.296; the re-run 2.1.308). Python tasks only.
 - Grading ran in the agent's workspace and trusted the check's exit status. agent-ab now grades
   in a clean copy and verifies `unittest` outcomes out of band
-  ([safety.md](safety.md#grading-integrity)). These runs were not re-graded.
+  ([safety.md](safety.md#grading-integrity)). Only the no-tests experiment was re-run under
+  it ([re-run](#re-run-with-the-current-grader)); the pilots and the model experiment were not.
 
 ## Files
 
@@ -252,6 +293,8 @@ The new runs live in these directories, each with the same files plus `manipulat
 - [pilot-haiku-5-5](results/pilot-haiku-5-5): pilot 1.
 - [pilot2-haiku-5-5](results/pilot2-haiku-5-5): pilot 2.
 - [haiku-5-5-no-tests](results/haiku-5-5-no-tests): the powered no-tests experiment.
+- [haiku-5-5-no-tests-rerun](results/haiku-5-5-no-tests-rerun): its re-run with the current
+  grader.
 - [haiku-vs-sonnet-5-5](results/haiku-vs-sonnet-5-5): the model experiment.
 
 Their `run.json` files were written by the new code with relative paths, with no hand

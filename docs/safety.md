@@ -90,9 +90,9 @@ Residual risks:
 Mitigate these with a sandbox (see below) and by reading the diffs of passing trials, especially
 surprising passes.
 
-The published results in [results.md](results.md) predate the clean copy and the verified exit
-status: their checks ran in the agent's workspace, judged by exit status. They have not been
-re-graded.
+Apart from the no-tests re-run, the published results in [results.md](results.md) predate the
+clean copy and the verified exit status: their checks ran in the agent's workspace, judged by
+exit status. They have not been re-graded.
 
 ## Use a container or VM
 

@@ -30,8 +30,10 @@ Released 2026-10-30. Full list: [CHANGELOG.md](../CHANGELOG.md#011---2026-10-30)
   a Haiku 5.5 vs Sonnet 5.5 comparison ([docs/results.md](results.md)).
 - `feature-uri-resolve`: the hidden oracle and reference solution now follow the prompt.
 
-The published results were produced before the clean-copy grader and the
-`feature-uri-resolve` fix, and have not been re-graded.
+The no-tests experiment was re-run with the clean-copy grader, the `feature-uri-resolve` fix
+and Claude Code 2.1.308, and its headline replicated: -2.7 pts [-6.7, +1.3], against
+-2.7 pts [-7.3, +1.3] in the original run. The pilots and the model comparison predate the
+new grader and have not been re-graded.
 
 ## Install
 
