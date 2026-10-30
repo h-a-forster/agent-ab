@@ -5,6 +5,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## 0.1.1 - 2026-10-30
+
 ### Added
 
 - 40 example tasks (50 in total): 20 round-1 tasks, 10 bug hunts and 10 large features.
