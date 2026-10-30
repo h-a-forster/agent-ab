@@ -108,7 +108,10 @@ effort = "medium"        # low | medium | high | xhigh | max
 
 [agent.options]
 permission_mode = "bypassPermissions"   # nobody is there to approve tool calls
-setting_sources = "project"   # project settings only; user memory may still load (docs/adapters.md)
+setting_sources = "project"   # project settings only
+# isolation = true (default): each trial gets an empty config directory and an allow-listed
+# environment, so your CLAUDE.md, settings and saved login stay out. Set ANTHROPIC_API_KEY or
+# CLAUDE_CODE_OAUTH_TOKEN (printed by `claude setup-token`) first. See docs/adapters.md.
 max_turns = 30
 max_budget_usd = 0.50    # per-trial spend cap enforced by the claude CLI
 

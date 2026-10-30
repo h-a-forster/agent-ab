@@ -219,7 +219,9 @@ under a contaminated control, not cleanly, and it does not replace the published
   "task prompt only": it carried a rule to write a failing test for each fix, which plausibly
   explains why it wrote tests in 149/150 trials against 127/150 in the published run. Both
   arms loaded the same file, so it does not bias the within-run comparison by itself, but the
-  tests-written, cost and time comparisons with the published run are confounded.
+  tests-written, cost and time comparisons with the published run are confounded. agent-ab
+  now isolates `claude-code` trials from user-level configuration by default
+  ([adapters.md](adapters.md#isolation)); this re-run predates that.
 - Grading: the clean-copy grader with verified `unittest` outcomes, and the fixed
   `feature-uri-resolve` oracle. Task prompts and the other checks are unchanged.
 - Claude Code 2.1.308 instead of 2.1.296. Model `claude-haiku-5-5` in every trial.

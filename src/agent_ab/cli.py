@@ -32,7 +32,6 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from agent_ab import __version__, power
-from agent_ab.adapters import get_adapter
 from agent_ab.config import compute_fingerprint, load_experiment
 from agent_ab.errors import AgentABError, ConfigError, RunStoreError
 from agent_ab.model import AgentSpec, Arm, Experiment, Task, TrialRecord, trial_id
@@ -454,10 +453,12 @@ def _rel(path: Path | None, root: Path) -> str:
 
 def _availability(exp: Experiment) -> list[tuple[str, str | None]]:
     """(arm name, problem or None) for every arm's adapter."""
+    from agent_ab.runner import arm_problem
+
     out: list[tuple[str, str | None]] = []
     for arm in exp.arms:
         try:
-            msg = get_adapter(arm.agent.adapter).check_available(arm.agent)
+            msg = arm_problem(exp, arm)
         except AgentABError as e:
             msg = str(e)
         except Exception as e:  # availability probes run external tools; never crash on them

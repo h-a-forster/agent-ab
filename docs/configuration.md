@@ -32,7 +32,7 @@ Rules:
 | `timeout_is_failure` | boolean | `true` | An agent timeout is a fail, without running the check. If `false`, the check runs on what the agent left. |
 | `baseline` | string | first arm | Arm the others are compared with. |
 | `keep_workspaces` | boolean | `false` | Keep workspaces. The paths are written to `workspace.txt` (the agent's) and `grade-workspace.txt` (the grading copy) in the attempt directory. |
-| `workspace_root` | string | system temp | Directory for workspaces. |
+| `workspace_root` | string | system temp | Directory for workspaces. When the system temp directory is inside the home directory (Windows), the default is `agent-ab-workspaces` at the root of the home drive instead: agents load instruction files from the parents of their working directory. |
 
 Duplicate task ids and an empty task list are errors.
 

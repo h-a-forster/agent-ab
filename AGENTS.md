@@ -49,7 +49,8 @@ CI (`.github/workflows/ci.yml`) also builds the wheel and runs the offline demo 
 
 ## Status and next steps
 
-Updated: 2026-10-30 (v0.1.1 prepared on branch `polish-2026-10-30`, not tagged).
+Updated: 2026-10-30 (v0.1.1 prepared on branch `polish-2026-10-30`, not tagged; trial isolation
+added after it, unreleased).
 
 Done:
 - v0.1.0 (2026-10-10); since then clean-copy grading, verified unittest outcomes, model and
@@ -61,19 +62,23 @@ Done:
   (`docs/results/haiku-5-5-no-tests-rerun`). Its pass-rate headline replicated under a
   contaminated control: both arms loaded the machine's user-level CLAUDE.md, so it is not a
   clean replication and its tests-written, cost and time comparisons are confounded.
+- Trial isolation for `claude-code` (unreleased, on by default): empty `CLAUDE_CONFIG_DIR` per
+  trial, allow-listed environment, workspaces outside the home directory, a pre-run check for
+  instruction files above the workspace root, and a leak check of the raw init event
+  (`docs/adapters.md#isolation`). Tested offline only.
 
 Open:
-1. Before the next real run: isolate the agent from user-level configuration (for example a
-   separate `CLAUDE_CONFIG_DIR`, or workspaces outside the home directory: they sit under the
-   home Temp folder, so walking up reaches `<home>/.claude/CLAUDE.md`, a plausible but
-   unconfirmed route despite `setting_sources = "project"`), do not pass on
-   `CLAUDE_CODE_GIT_BASH_PATH` (the owner's bash shim is visible in 72 re-run transcripts), and
-   detect loaded memory: `memory_paths` never lists the user CLAUDE.md (the raw init event in
-   `agent.stdout` lists only the auto-memory directory; the saved `init.json` strips absolute
-   paths), so detection needs the raw event.
+1. Isolation has not met a real Claude Code yet. Before the next real run, do a one-trial smoke
+   run with `CLAUDE_CODE_OAUTH_TOKEN` set and check: the agent authenticates and runs Bash
+   with an empty config directory (Windows: finds Git Bash without
+   `CLAUDE_CODE_GIT_BASH_PATH`), `memory_paths.auto` lies inside the private config directory,
+   `config_leaks` is empty, and the transcript shows no user-level rules. The init event does
+   not list user `CLAUDE.md` files; an `InstructionsLoaded` hook passed with `--settings`
+   would list every loaded file and could make the leak check complete (untested).
 2. The pilots and the Haiku-vs-Sonnet comparison predate the clean-copy grader; re-run them
    only if they are still cited.
-3. Tag v0.1.1 and publish a GitHub release from `docs/release-notes-0.1.1.md` (owner).
+3. Tag v0.1.1 at `8cd03a8` (the last commit before trial isolation, which is unreleased) and
+   publish a GitHub release from `docs/release-notes-0.1.1.md` (owner).
 4. Research questions listed under "Open questions" in `README.md` (task headroom for Haiku
    5.5, heterogeneous effects in the power model, concurrency and time ratios).
 5. Remote branches `claude/audit-fixes-2026-10-10`, `claude/hygiene-2026-10-15` and

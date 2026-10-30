@@ -14,10 +14,13 @@ import pytest
 from agent_ab.adapters import ADAPTER_NAMES, base, get_adapter
 from agent_ab.adapters import command as command_mod
 from agent_ab.adapters.claude_code import (
+    _AUTH_ENV,
     INIT_FILE,
     SYSTEM_PROMPT_FILE,
     ClaudeCodeAdapter,
+    config_dir,
     find_init,
+    instruction_files_above,
     parse_result_text,
     scrub_init,
     summarise_init,
@@ -100,6 +103,8 @@ def claude_argv(tmp_path, **kw):
     inv = ClaudeCodeAdapter().build(make_ctx(tmp_path, spec, prompt="Do the thing"))
     assert inv.stdin == "Do the thing"
     assert inv.cwd == tmp_path / "ws"
+    for path in inv.temp_dirs:  # as the runner does after the agent exits
+        path.rmdir()
     return inv.argv
 
 
@@ -174,6 +179,7 @@ def test_claude_option_combinations(tmp_path, r):
         options = {
             "executable": "nope-claude",
             "capture_init": False,
+            "isolation": False,  # needs capture_init
             "strict_mcp_config": False,  # on by default; listed in FLAG_OPTIONS to test it
             **{k: FLAG_OPTIONS[k][0] for k in combo},
         }
@@ -196,7 +202,12 @@ def test_claude_false_flags_omitted(tmp_path):
 
 
 def test_claude_capture_init_and_strict_mcp_can_be_disabled(tmp_path):
-    options = {"executable": "x-claude", "capture_init": False, "strict_mcp_config": False}
+    options = {
+        "executable": "x-claude",
+        "capture_init": False,
+        "strict_mcp_config": False,
+        "isolation": False,
+    }
     argv = claude_argv(tmp_path, options=options)
     assert argv == [
         "x-claude",
@@ -207,7 +218,8 @@ def test_claude_capture_init_and_strict_mcp_can_be_disabled(tmp_path):
     assert "stream-json" not in argv and "--verbose" not in argv
 
 
-def test_claude_resolves_executable(tmp_path):
+def test_claude_resolves_executable(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")  # isolation needs a credential
     spec = AgentSpec(adapter="claude-code", options={"executable": sys.executable})
     argv = ClaudeCodeAdapter().build(make_ctx(tmp_path, spec)).argv
     assert Path(argv[0]).resolve() == Path(sys.executable).resolve()
@@ -232,6 +244,12 @@ def test_claude_resolves_executable(tmp_path):
         ({"options": {"append_system_prompt": 3}}, "append_system_prompt"),
         ({"options": {"capture_init": "yes"}}, "capture_init"),
         ({"options": {"strict_mcp_config": 0}}, "strict_mcp_config"),
+        ({"options": {"isolation": "yes"}}, "isolation"),
+        ({"options": {"pass_env": "FOO"}}, "pass_env"),
+        ({"options": {"pass_env": ["A=1"]}}, "pass_env"),
+        ({"options": {"pass_env": ["FOO"], "isolation": False}}, "only applies"),
+        ({"options": {"capture_init": False}}, "needs capture_init"),
+        ({"env": {"claude_config_dir": "/x"}}, "CLAUDE_CONFIG_DIR"),
         ({"options": {"executable": ""}}, "executable"),
         ({"options": {"sandbox": "x"}}, "unknown option"),
     ],
@@ -445,6 +463,122 @@ def test_claude_capture_init_disabled_or_absent(tmp_path):
     u = claude_parse(tmp_path, fixture("claude_real_success.json"))  # json format: no init
     assert u.agent_init is None and u.models == ["claude-haiku-4-5-20251001"]
     assert find_init('not json\n{"type": "system", "subtype": "other"}') is None
+
+
+# --------------------------------------------------------------------------- claude-code isolation
+
+
+def test_claude_isolation_env_and_config_dir(tmp_path, monkeypatch):
+    venv = tmp_path / "venv"
+    venv_bin = venv / ("Scripts" if os.name == "nt" else "bin")
+    other = tmp_path / "tools"
+    monkeypatch.setenv("PATH", os.pathsep.join([str(venv_bin), str(other)]))
+    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
+    for name in ("CLAUDECODE", "CLAUDE_CODE_GIT_BASH_PATH", "PYTHONHOME", "ANTHROPIC_MODEL"):
+        monkeypatch.setenv(name, "parent-session")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "user-config"))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("LC_ALL", "C")
+    monkeypatch.setenv("MY_TOOL_HOME", "kept")
+    spec = AgentSpec(
+        adapter="claude-code",
+        env={"EXTRA": "1"},
+        options={"executable": "x-claude", "pass_env": ["my_tool_home"]},
+    )
+    assert ClaudeCodeAdapter().validate(spec) == []
+    ctx = make_ctx(tmp_path, spec)
+    inv = ClaudeCodeAdapter().build(ctx)
+
+    base = {k.upper(): v for k, v in inv.base_env.items()}
+    for name in ("CLAUDECODE", "CLAUDE_CODE_GIT_BASH_PATH", "PYTHONHOME", "ANTHROPIC_MODEL"):
+        assert name not in base
+    assert "VIRTUAL_ENV" not in base and "CLAUDE_CONFIG_DIR" not in base
+    assert base["PATH"] == str(other)  # the venv's bin directory is gone
+    assert base["ANTHROPIC_API_KEY"] == "test-key" and base["LC_ALL"] == "C"
+    assert base["MY_TOOL_HOME"] == "kept"
+    config = config_dir(ctx.workspace)
+    assert inv.env == {"EXTRA": "1", "CLAUDE_CONFIG_DIR": str(config)}
+    assert inv.temp_dirs == [config] and config.is_dir() and not any(config.iterdir())
+    assert config.parent == ctx.workspace.parent  # outside the workspace the agent edits
+
+
+def test_claude_isolation_off_inherits_environment(tmp_path):
+    spec = AgentSpec(adapter="claude-code", options={"executable": "x", "isolation": False})
+    inv = ClaudeCodeAdapter().build(make_ctx(tmp_path, spec))
+    assert inv.base_env is None and inv.temp_dirs == [] and "CLAUDE_CONFIG_DIR" not in inv.env
+
+
+def test_claude_isolation_needs_a_credential(monkeypatch):
+    for name in _AUTH_ENV:
+        monkeypatch.delenv(name, raising=False)
+    adapter = ClaudeCodeAdapter()
+
+    def problem(**kw):
+        options = {"executable": sys.executable, **kw.pop("options", {})}
+        return adapter.check_available(AgentSpec(adapter="claude-code", options=options, **kw))
+
+    assert "saved login" in problem()
+    assert problem(options={"isolation": False}) is None
+    assert problem(env={"ANTHROPIC_API_KEY": "test-key"}) is None
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")
+    assert problem() is None
+    assert "saved login" in problem(options={"bare": True})  # --bare ignores the OAuth token
+
+
+def test_claude_isolation_refuses_instruction_files_above_workspaces(tmp_path):
+    adapter = ClaudeCodeAdapter()
+    spec = AgentSpec(adapter="claude-code")
+    root = tmp_path / "a" / "b"
+    above = set(instruction_files_above(tmp_path))  # whatever this machine has further up
+    assert set(instruction_files_above(root)) == above
+    (tmp_path / "a" / ".claude" / "rules").mkdir(parents=True)
+    (tmp_path / "a" / "CLAUDE.md").write_text("x", encoding="utf-8")
+    found = set(instruction_files_above(root)) - above
+    assert found == {tmp_path / "a" / "CLAUDE.md", tmp_path / "a" / ".claude" / "rules"}
+    message = adapter.check_workspace_root(spec, root)
+    assert str(tmp_path / "a" / "CLAUDE.md") in message and "workspace_root" in message
+    off = AgentSpec(adapter="claude-code", options={"isolation": False})
+    assert adapter.check_workspace_root(off, root) is None
+
+
+def stream_with_init(**init) -> str:
+    event = {"type": "system", "subtype": "init", "model": "m", "tools": ["Bash"], **init}
+    result = {"type": "result", "subtype": "success", "is_error": False, "result": "OK"}
+    return json.dumps(event) + "\n" + json.dumps(result) + "\n"
+
+
+def test_claude_detects_memory_loaded_from_outside(tmp_path):
+    home = Path.home()
+    user_memory = str(home / ".claude" / "projects" / "C--Users-someone-x" / "memory")
+    stdout = stream_with_init(
+        memory_paths={"auto": user_memory, "user": [str(home / ".claude" / "CLAUDE.md")]},
+        extra={"loaded": str(tmp_path / "ws" / "CLAUDE.md")},  # inside the workspace: fine
+    )
+    u = claude_parse(tmp_path, stdout)
+    leaks = ["memory_paths.auto: ~/.../memory", "memory_paths.user: ~/.../CLAUDE.md"]
+    assert u.agent_init["config_leaks"] == leaks
+    assert u.infra_error.startswith("isolation breach") and "memory_paths.auto" in u.infra_error
+    assert str(home) not in json.dumps(u.agent_init) and str(home) not in u.infra_error
+    assert u.final_message == "OK"
+
+    spec = AgentSpec(adapter="claude-code", options={"isolation": False})
+    u = ClaudeCodeAdapter().parse(make_ctx(tmp_path, spec), proc_result(tmp_path, stdout))
+    assert u.agent_init["config_leaks"] == leaks and u.infra_error is None  # recorded only
+
+
+def test_claude_private_config_dir_is_not_a_leak(tmp_path):
+    config = config_dir(tmp_path / "ws")
+    stdout = stream_with_init(
+        memory_paths={"auto": str(config / "projects" / "p" / "memory")},
+        cwd=str(tmp_path / "ws"),
+        rules=str(tmp_path / "elsewhere" / ".claude" / "rules" / "r.md"),
+    )
+    u = claude_parse(tmp_path, stdout)
+    [leak] = u.agent_init["config_leaks"]  # only the rule file outside the workspace
+    assert leak.startswith("rules: ") and leak.endswith("/.../r.md")
+    stdout = stream_with_init(memory_paths={"auto": str(config / "projects" / "p" / "memory")})
+    u = claude_parse(tmp_path, stdout)
+    assert u.agent_init["config_leaks"] == [] and u.infra_error is None
 
 
 def fake_cli(tmp_path, body: str) -> str:
@@ -1084,7 +1218,8 @@ def windows(monkeypatch):
     monkeypatch.setattr(command_mod, "IS_WINDOWS", True)
 
 
-def test_claude_batch_shim_checked_up_front(tmp_path, windows):
+def test_claude_batch_shim_checked_up_front(tmp_path, windows, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")  # isolation needs a credential
     shim = str(fake_shim(tmp_path, "claude.cmd"))
     a = ClaudeCodeAdapter()
     ok = AgentSpec(
@@ -1139,7 +1274,8 @@ def test_command_batch_shim_checked(tmp_path, windows):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="needs cmd.exe")
-def test_claude_batch_shim_end_to_end(tmp_path):
+def test_claude_batch_shim_end_to_end(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")  # isolation needs a credential
     shim = fake_shim(tmp_path, "claude.cmd")
     marker = tmp_path / "pwned.txt"
     text = f'Line one.\nUse %USERNAME% & echo INJECTED>{marker}\n"quoted" ^ !x!'
@@ -1173,4 +1309,6 @@ def test_claude_reports_its_system_prompt_file_as_an_instruction_file(tmp_path):
     inv = ClaudeCodeAdapter().build(make_ctx(tmp_path, spec, prompt="x"))
     assert [p.name for p in inv.instruction_files] == [SYSTEM_PROMPT_FILE]
     plain = AgentSpec(adapter="claude-code", options={"executable": "definitely-not-a-real-claude"})
-    assert ClaudeCodeAdapter().build(make_ctx(tmp_path, plain, prompt="x")).instruction_files == []
+    (tmp_path / "plain").mkdir()
+    ctx = make_ctx(tmp_path / "plain", plain, prompt="x")
+    assert ClaudeCodeAdapter().build(ctx).instruction_files == []

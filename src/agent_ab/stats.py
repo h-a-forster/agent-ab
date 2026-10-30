@@ -382,6 +382,7 @@ def _environments(
             requested[cfg["name"]] = model if isinstance(model, str) else None
 
     envs: list[ArmEnvironment] = []
+    leaky: dict[str, int] = {}  # arm -> trials whose agent loaded memory from outside
     for arm in arms:
         models: set[str] = set()
         versions: set[str] = set()
@@ -398,6 +399,8 @@ def _environments(
             if init is None:
                 continue
             init_trials += 1
+            if init.get("config_leaks"):
+                leaky[arm] = leaky.get(arm, 0) + 1
             for key, field_name in (
                 ("tools", "tools"),
                 ("plugins", "plugins"),
@@ -426,7 +429,12 @@ def _environments(
     if not envs:
         return [], []
 
-    notes: list[str] = []
+    notes: list[str] = [
+        f"Arm {arm}: {n} trial(s) loaded memory or instruction files from outside the "
+        "workspace (config_leaks in trials.jsonl), so they did not run with only the "
+        "configuration under test."
+        for arm, n in leaky.items()
+    ]
     for e in envs:
         if len(e.models) > 1:
             notes.append(f"Arm {e.arm} used more than one model: {', '.join(e.models)}.")

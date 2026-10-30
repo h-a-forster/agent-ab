@@ -83,7 +83,7 @@ class Experiment:
     max_retries: int = 2  # extra attempts after an infrastructure error
     timeout_is_failure: bool = True  # agent timeout => fail, without running the check
     keep_workspaces: bool = False
-    workspace_root: Path | None = None  # default: the system temp directory
+    workspace_root: Path | None = None  # default: see workspace.default_workspace_root
     fingerprint: str = ""  # sha256 over resolved config + task/overlay file contents
     description: str = ""
 
@@ -157,11 +157,16 @@ class TrialContext:
 class AgentInvocation:
     argv: list[str]
     env: dict[str, str] = field(default_factory=dict)  # additions to the inherited environment
+    # Replaces the inherited environment (``os.environ``) when set; ``env`` still applies on top.
+    base_env: dict[str, str] | None = None
     stdin: str | None = None
     cwd: Path | None = None  # default: the workspace
     # Files outside the workspace that instruct the agent (e.g. a system-prompt file); their
     # SHA-256 is recorded with the trial.
     instruction_files: list[Path] = field(default_factory=list)
+    # Directories the adapter created for this attempt (e.g. a private config directory); the
+    # runner removes them once the agent has exited.
+    temp_dirs: list[Path] = field(default_factory=list)
 
 
 @dataclass

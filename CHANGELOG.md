@@ -5,6 +5,26 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- `claude-code` option `isolation`, on by default: each trial gets an empty
+  `CLAUDE_CONFIG_DIR` beside its workspace (removed after the agent exits) and an allow-listed
+  environment (option `pass_env` adds names), and the raw init event is checked for memory or
+  instruction files loaded from outside the workspace. Leaks are recorded in
+  `agent_init.config_leaks`, make the attempt an infrastructure error, and are noted in the
+  report. A run refuses to start when `CLAUDE.md`, `AGENTS.md` or similar files exist in the
+  workspace root or its parents, or when no credential is set in the environment.
+- Adapter hook `check_workspace_root`, and `AgentInvocation.base_env` and `temp_dirs`.
+
+### Changed
+
+- `claude-code` no longer uses your saved login by default: set `ANTHROPIC_API_KEY` or
+  `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`), or set `isolation = false`. A run
+  started with 0.1.1 and resumed now runs its remaining trials isolated; to keep it as it
+  was, set `isolation = false`, which changes the configuration, and resume with `--force`.
+- Default `workspace_root`: when the system temp directory is inside the home directory (as
+  on Windows), workspaces go to `agent-ab-workspaces` at the root of the home drive.
+
 ## 0.1.1 - 2026-10-30
 
 ### Added

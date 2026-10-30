@@ -213,13 +213,16 @@ def resolve_executable(name: str) -> str | None:
     return found
 
 
-def build_env(additions: Mapping[str, str] | None) -> dict[str, str]:
-    """Return a copy of ``os.environ`` with ``additions`` applied (values coerced to str).
+def build_env(
+    additions: Mapping[str, str] | None, base: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """Return a copy of ``base`` (default ``os.environ``) with ``additions`` applied (values
+    coerced to str).
 
     On Windows environment names are case-insensitive, so an addition replaces any existing
     variable whose name differs only in case instead of creating a duplicate.
     """
-    env = dict(os.environ)
+    env = dict(os.environ if base is None else base)
     for key, value in (additions or {}).items():
         if IS_WINDOWS:
             for existing in [k for k in env if k.upper() == key.upper() and k != key]:

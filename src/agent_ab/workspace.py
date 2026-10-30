@@ -303,19 +303,41 @@ def _snapshot(ws: Path) -> str:
 
 # --------------------------------------------------------------------------- public API
 
+# Used when the system temp directory lies inside the home directory (as on Windows): agents
+# such as Claude Code load instruction files from every parent of their working directory, and
+# the home directory holds user-level ones (``~/.claude/CLAUDE.md``).
+HOME_SAFE_ROOT = "agent-ab-workspaces"
+
+
+def default_workspace_root() -> Path:
+    """Where workspaces go when ``workspace_root`` is not set: the system temp directory if it
+    is outside the home directory, else ``agent-ab-workspaces`` at the root of the home drive."""
+    tmp = Path(tempfile.gettempdir()).resolve()
+    try:
+        home = Path.home().resolve()
+    except (RuntimeError, OSError):  # no home directory can be determined
+        return tmp
+    return Path(home.anchor) / HOME_SAFE_ROOT if _is_within(tmp, home) else tmp
+
+
+def resolve_workspace_root(root: Path | None) -> Path:
+    """The directory workspaces are created in: ``root``, or the default."""
+    return Path(root) if root is not None else default_workspace_root()
+
 
 def create_workspace(task: Task, arm: Arm, *, root: Path | None, label: str) -> Workspace:
     """Create an isolated workspace for one attempt and snapshot it with git.
 
     Copies ``task.repo`` (dotfiles included, ``.git`` excluded), deletes ``arm.remove`` paths,
     copies ``arm.overlay`` on top, then commits everything as the baseline so the agent's diff
-    excludes the arm's own files. Raises ``WorkspaceError``; nothing is left behind on failure.
+    excludes the arm's own files. ``root=None`` means ``default_workspace_root()``. Raises
+    ``WorkspaceError``; nothing is left behind on failure.
     """
     try:
-        if root is not None:
-            Path(root).mkdir(parents=True, exist_ok=True)
+        parent = resolve_workspace_root(root)
+        parent.mkdir(parents=True, exist_ok=True)
         path = Path(
-            tempfile.mkdtemp(prefix=f"agent-ab-{_sanitize_label(label)}-", dir=root)
+            tempfile.mkdtemp(prefix=f"agent-ab-{_sanitize_label(label)}-", dir=parent)
         ).resolve()
     except OSError as e:
         raise WorkspaceError(f"cannot create workspace directory: {e}") from e

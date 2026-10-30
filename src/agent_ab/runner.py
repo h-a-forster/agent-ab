@@ -33,6 +33,7 @@ from agent_ab.errors import (
 )
 from agent_ab.model import (
     AgentUsage,
+    Arm,
     Experiment,
     ProcResult,
     Task,
@@ -58,6 +59,7 @@ from agent_ab.workspace import (
     diff_stats,
     install_checks,
     rebaseline,
+    resolve_workspace_root,
     run_check,
     run_command,
 )
@@ -389,18 +391,22 @@ def _execute(
         root=exp.root,
     )  # fmt: skip
     inv = adapter.build(ctx)
-    rec.prompt_sha256 = _sha256(prompt.encode("utf-8"))
-    rec.instructions_sha256 = _instruction_hashes(ws, inv.instruction_files) or None
-    result = run_process(
-        inv.argv,
-        cwd=inv.cwd or ws.path,
-        env=build_env({**arm.agent.env, **inv.env}),
-        timeout_s=agent_timeout,
-        stdout_path=art / "agent.stdout",
-        stderr_path=art / "agent.stderr",
-        stdin_text=inv.stdin,
-        cancel=cancel,
-    )
+    try:
+        rec.prompt_sha256 = _sha256(prompt.encode("utf-8"))
+        rec.instructions_sha256 = _instruction_hashes(ws, inv.instruction_files) or None
+        result = run_process(
+            inv.argv,
+            cwd=inv.cwd or ws.path,
+            env=build_env({**arm.agent.env, **inv.env}, base=inv.base_env),
+            timeout_s=agent_timeout,
+            stdout_path=art / "agent.stdout",
+            stderr_path=art / "agent.stderr",
+            stdin_text=inv.stdin,
+            cancel=cancel,
+        )
+    finally:
+        for path in inv.temp_dirs:
+            _remove_dir(path)
     _check_cancel(cancel, result)
     rec.agent_exit_code = result.exit_code
     rec.agent_timed_out = result.timed_out
@@ -642,13 +648,24 @@ def run_trial(
 # --------------------------------------------------------------------------- scheduling
 
 
+def arm_problem(exp: Experiment, arm: Arm) -> str | None:
+    """Why ``arm``'s agent cannot run here (missing executable, unsafe workspace root), or None.
+
+    May raise: callers report exceptions as availability problems.
+    """
+    adapter = get_adapter(arm.agent.adapter)
+    return adapter.check_available(arm.agent) or adapter.check_workspace_root(
+        arm.agent, resolve_workspace_root(exp.workspace_root)
+    )
+
+
 def _check_adapters(exp: Experiment) -> None:
     problems: list[str] = []
     seen: set[str] = set()
     for arm in exp.arms:
         name = arm.agent.adapter
         try:
-            msg = get_adapter(name).check_available(arm.agent)
+            msg = arm_problem(exp, arm)
         except AgentABError as e:
             msg = str(e)
         except Exception as e:

@@ -15,9 +15,11 @@ from agent_ab.errors import ConfigError, GitDirAlteredError, WorkspaceError
 from agent_ab.model import AgentSpec, Arm, Task
 from agent_ab.proc import IS_WINDOWS
 from agent_ab.workspace import (
+    HOME_SAFE_ROOT,
     Workspace,
     apply_solution,
     create_workspace,
+    default_workspace_root,  # the real one: conftest patches the module attribute
     destroy_workspace,
     diff_stats,
     install_checks,
@@ -97,7 +99,7 @@ def test_label_sanitized_and_default_root(tmp_path):
     ws = create_workspace(task, _arm(), root=None, label="../..\\evil name")
     try:
         assert ws.path.is_dir()
-        assert ws.path.parent == Path(tempfile.gettempdir()).resolve()
+        assert ws.path.parent == wsmod.default_workspace_root().resolve()  # see conftest.py
         assert ws.path.name.startswith("agent-ab-evil-name-")
     finally:
         destroy_workspace(ws)
@@ -781,3 +783,12 @@ def test_apply_patch_empty_is_a_noop_and_conflicts_raise(tmp_path, root, repo_ta
         with pytest.raises(WorkspaceError):
             wsmod.apply_patch(ws, escape)
     assert not (root / "evil.txt").exists()
+
+
+def test_default_workspace_root_is_outside_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(home / "AppData" / "Temp"))
+    assert default_workspace_root() == Path(home.resolve().anchor) / HOME_SAFE_ROOT
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
+    assert default_workspace_root() == (tmp_path / "tmp").resolve()

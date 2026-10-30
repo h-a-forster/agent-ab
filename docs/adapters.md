@@ -13,7 +13,8 @@ Set it with `adapter = "..."` in `[agent]` or `[arms.agent]`.
 Every adapter:
 
 - runs the agent with the workspace as its working directory;
-- adds `env` to the inherited environment and appends `args` after its own arguments;
+- adds `env` to the inherited environment (for `claude-code` with `isolation`, an allow-listed
+  part of it) and appends `args` after its own arguments;
 - validates `[agent.options]` when the config loads (unknown keys are errors);
 - checks that the executable exists before the run starts.
 
@@ -76,6 +77,8 @@ claude -p --output-format stream-json --verbose --no-session-persistence
 | `append_system_prompt` | options | none | Text written to a file and passed with `--append-system-prompt-file`. |
 | `capture_init` | options | `true` | Use `--output-format stream-json --verbose` and record the init event (see below). With `false` the CLI runs with `--output-format json` and no init data is recorded. |
 | `strict_mcp_config` | options | `true` | `--strict-mcp-config`: use only MCP servers named by `--mcp-config`. agent-ab passes none, so no MCP server (not even your own) is loaded unless you add `--mcp-config` through `args`. |
+| `isolation` | options | `true` | Empty config directory and allow-listed environment per trial, plus a leak check; see [Isolation](#isolation). Needs `capture_init`. |
+| `pass_env` | options | `[]` | Names of further environment variables to pass to an isolated agent. |
 
 agent-ab records cost (`total_cost_usd`), turns, tokens (including cache reads and writes)
 and the final message. Hitting `max_turns` or `max_budget_usd` is a fail. API statuses 401,
@@ -91,7 +94,7 @@ What is recorded about the agent itself:
   unknown.
 - `agent_init`: a compact summary of the init event: `model`, `claude_code_version`,
   `permission_mode`, `api_key_source` and the names of `tools`, `mcp_servers` (with status),
-  `plugins`, `skills` and `agents`.
+  `plugins`, `skills` and `agents`, plus `config_leaks` (see [Isolation](#isolation)).
 - `prompt_sha256` and `instructions_sha256`: hashes of the exact prompt and of the instruction
   files (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` and `AGENTS.md` at the workspace
   root, and `append_system_prompt.md` when set), so two runs can be checked for identical
@@ -100,9 +103,9 @@ What is recorded about the agent itself:
   skills, settings, `CLAUDE.md` in subdirectories, `AGENTS.override.md`) and instruction files
   outside the workspace are not hashed: Claude Code can also load user memory
   (`~/.claude/CLAUDE.md`), `CLAUDE.md` files in parent directories, rules and settings.
-  `setting_sources = "project"` did not keep user memory out in one of our runs (see below),
-  so equal hashes mean identical instructions only when you have checked that nothing outside
-  the workspace was loaded.
+  `setting_sources = "project"` did not keep user memory out in one of our runs (see
+  [Isolation](#isolation)), so equal hashes mean identical instructions only when nothing
+  outside the workspace was loaded.
 - `init.json` in the attempt directory: the full init event, without `cwd`, `session_id`,
   `uuid`, `scratchpad_path`, `messaging_socket_path`, `startup_timing` and any value that is
   an absolute path. The event is read from the start of the output, so a long transcript does
@@ -113,19 +116,10 @@ servers and plugins per arm, and notes arms that used more than one model, a mod
 the one requested, or a different tool, MCP or plugin set (a confound unless that difference
 is what you are testing). Runs without this data produce the same report as before.
 
-Isolation: Claude Code also loads settings and memory from your home directory. Setting
-`setting_sources = "project"` passes `--setting-sources project`, but it does not isolate the
-agent from your user-level configuration: in the
-[no-tests re-run](results.md#re-run-with-the-current-grader), with this option set, the agents
-still followed the machine owner's `~/.claude/CLAUDE.md` and used a bash shim set through
-`CLAUDE_CODE_GIT_BASH_PATH`, while the init event's `memory_paths` never listed the user
-`CLAUDE.md` (the raw event lists only the auto-memory directory; the saved `init.json` strips
-absolute paths). We have not established which path let them in. Until agent-ab isolates and detects this, run trials
-on a machine or account without user-level instructions. To compare a customised setup
-with a stock one, use an arm with `safe_mode = true` (or `bare = true`). `strict_mcp_config`
-keeps your own MCP servers out, and the recorded init summary lets you check part of what was
-actually loaded: compare `tools`, `mcp_servers`, `plugins` and `skills` across arms (it does
-not show user memory).
+To compare a customised setup with a stock one, use an arm with `safe_mode = true` (or
+`bare = true`). `strict_mcp_config` keeps your own MCP servers out, and the recorded init
+summary lets you check part of what was actually loaded: compare `tools`, `mcp_servers`,
+`plugins` and `skills` across arms.
 
 ```toml
 [agent]
@@ -146,6 +140,64 @@ name = "high"
 [arms.agent]
 effort = "high"
 ```
+
+### Isolation
+
+Claude Code reads configuration from outside the workspace: its config directory (`~/.claude`,
+or `CLAUDE_CONFIG_DIR`) holds user settings, user memory (`CLAUDE.md`, `rules/`), auto memory,
+plugins, skills and the saved login; it loads `CLAUDE.md` files from every parent of its
+working directory; and it inherits the environment. In the
+[no-tests re-run](results.md#re-run-with-the-current-grader), made before isolation existed
+and with `setting_sources = "project"`, the agents still followed the machine owner's
+user-level `CLAUDE.md` and used a bash shim set through `CLAUDE_CODE_GIT_BASH_PATH`.
+
+With `isolation = true` (the default) each trial gets:
+
+- **An empty config directory.** `CLAUDE_CONFIG_DIR` points at a fresh directory beside the
+  workspace (`<workspace>.claude-config`, outside what the agent edits), removed when the
+  agent exits. Your settings, memory, hooks, plugins, skills and saved login stay out.
+- **An allow-listed environment.** Operating-system basics (`PATH`, `HOME`, `USERPROFILE`,
+  `TEMP`, locale), proxy and certificate settings, and API credentials and provider settings
+  (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `CLAUDE_CODE_USE_BEDROCK`, `AWS_*` and similar) pass; everything else is dropped. That
+  includes `CLAUDE_CODE_GIT_BASH_PATH`, `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and the other
+  variables a parent Claude Code session sets, `CLAUDE_CONFIG_DIR`, `ANTHROPIC_MODEL`,
+  `PYTHONHOME`, `PYTHONPATH` and `VIRTUAL_ENV` (whose `bin` or `Scripts` directory is also
+  taken off `PATH`, so the agent's `python` is not agent-ab's). `pass_env` adds names, and
+  `env` applies on top. The full list is `_ENV_ALLOW` in `src/agent_ab/adapters/claude_code.py`.
+  On Windows Claude Code finds Git Bash by itself; if it cannot, pass
+  `CLAUDE_CODE_GIT_BASH_PATH` on purpose with `pass_env`.
+- **Workspaces outside your home directory.** By default workspaces go to the system temp
+  directory, or to `agent-ab-workspaces` at the root of the home drive when the temp directory
+  is inside the home directory, as on Windows ([`workspace_root`](configuration.md)). Before
+  anything runs, agent-ab refuses to start if `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
+  `.claude/CLAUDE.md` or `.claude/rules` exists in the workspace root or any of its parents.
+- **A leak check.** In the raw init event (before it is scrubbed), every path under
+  `memory_paths`, and every path naming a `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` or
+  `.claude/rules` file, must lie inside the workspace or its config directory. Anything else is
+  recorded in `agent_init.config_leaks`, reduced to the key and the last path component (for
+  example `memory_paths.auto: ~/.../memory`), and makes the attempt an infrastructure error:
+  it is retried, and excluded from the statistics if it persists. The report notes arms with
+  leaks. The init event does not list every file Claude Code loads (2.1.308 listed only the
+  auto-memory directory), so the check catches a foreign config directory but cannot prove
+  that nothing else was loaded; the three measures above are what keep user files out.
+
+An empty config directory has no saved login, so an isolated agent authenticates from the
+environment. agent-ab refuses to start unless `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_PROFILE` or one of `CLAUDE_CODE_USE_BEDROCK`,
+`CLAUDE_CODE_USE_VERTEX` and `CLAUDE_CODE_USE_FOUNDRY` is set, in the environment or in `env`.
+With a Claude subscription, `claude setup-token` prints a long-lived `CLAUDE_CODE_OAUTH_TOKEN`.
+`bare = true` reads neither that token nor a profile; use an API key with it. agent-ab never
+copies your credentials file.
+
+Isolation keeps your configuration out of the agent's context; it is not a sandbox (see
+[safety.md](safety.md)). It was added after the published example runs and has not been used
+for one yet.
+
+`isolation = false` runs the agent with your config directory and full environment, as
+agent-ab 0.1.1 did. The leak check still records `config_leaks` (such trials normally list the
+auto-memory directory inside your config directory) but does not fail the trial. Use it only on
+a machine or account without user-level configuration.
 
 ## codex
 
@@ -308,7 +360,11 @@ Use it to test a new task suite and the whole pipeline for free.
    - `option_keys`: accepted `[agent.options]` keys;
    - `validate(spec)`: return a list of problems; no side effects;
    - `check_available(spec)`: return a message if the agent cannot be launched, else `None`;
-   - `build(ctx)`: return an `AgentInvocation` (argv, env, stdin, cwd);
+   - `check_workspace_root(spec, root)` (optional): return a message if workspaces under `root`
+     would expose the agent to files it must not see, else `None`;
+   - `build(ctx)`: return an `AgentInvocation` (argv, env, stdin, cwd; optionally `base_env`
+     to replace the inherited environment and `temp_dirs` for the runner to remove after the
+     agent exits);
    - `parse(ctx, result)`: return `AgentUsage`. It must never raise. Set `infra_error` only
      for failures unrelated to the configuration under test.
 2. Register it in `_REGISTRY` in `src/agent_ab/adapters/__init__.py` as

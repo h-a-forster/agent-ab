@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -57,7 +58,16 @@ class FakeAdapter(Adapter):
 
     name = "fake"
     option_keys = frozenset(
-        {"script", "missing", "build_error", "argv", "parse_error", "version", "version_error"}
+        {
+            "script",
+            "missing",
+            "build_error",
+            "argv",
+            "parse_error",
+            "version",
+            "version_error",
+            "isolate",
+        }
     )
 
     def check_available(self, spec: AgentSpec) -> str | None:
@@ -73,7 +83,15 @@ class FakeAdapter(Adapter):
             raise RuntimeError("boom in build")
         argv = ctx.spec.options.get("argv") or [PY, "-c", ctx.spec.options.get("script", "")]
         env = {"FAKE_ATTEMPT": str(ctx.attempt), "FAKE_ARTIFACTS": str(ctx.artifacts)}
-        return AgentInvocation(argv=list(argv), env=env)
+        if not ctx.spec.options.get("isolate"):
+            return AgentInvocation(argv=list(argv), env=env)
+        temp = ctx.workspace.with_name(ctx.workspace.name + ".private")
+        temp.mkdir()
+        base = {k: v for k, v in os.environ.items() if k.upper() in ("PATH", "SYSTEMROOT")}
+        env["FAKE_TEMP"] = str(temp)
+        return AgentInvocation(
+            argv=list(argv), env=env, base_env={**base, "BASE_ONLY": "1"}, temp_dirs=[temp]
+        )
 
     def parse(self, ctx: TrialContext, result: ProcResult) -> AgentUsage:
         if ctx.spec.options.get("parse_error"):
@@ -563,6 +581,33 @@ def test_unavailable_adapter_fails_fast(tmp_path):
     with pytest.raises(AdapterError) as info:
         run_experiment(exp, tmp_path / "run")
     assert "not installed" in str(info.value) and "too old" in str(info.value)
+    assert not (tmp_path / "run").exists()
+
+
+def test_base_env_replaces_inherited_env_and_temp_dirs_are_removed(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_AB_TEST_INHERITED", "x")
+    script = (
+        "import json, os\n"
+        "seen = {k: os.environ.get(k) for k in ('AGENT_AB_TEST_INHERITED', 'BASE_ONLY')}\n"
+        "seen['temp'] = os.path.isdir(os.environ['FAKE_TEMP'])\n"
+        "json.dump(seen, open(os.path.join(os.environ['FAKE_ARTIFACTS'], 'seen.json'), 'w'))\n"
+    )
+    exp = make_exp(tmp_path, arms=[fake_arm("a", script, options={"isolate": True})])
+    run_experiment(exp, tmp_path / "run")
+    [rec] = records(tmp_path / "run")
+    seen = json.loads((tmp_path / "run" / rec.artifacts / "seen.json").read_text("utf-8"))
+    assert seen == {"AGENT_AB_TEST_INHERITED": None, "BASE_ONLY": "1", "temp": True}
+    assert ws_left(tmp_path) == []  # the private directory beside the workspace is gone
+
+
+def test_claude_isolation_checks_parents_of_workspace_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")  # isolation needs a credential
+    (tmp_path / "CLAUDE.md").write_text("user rules\n", encoding="utf-8")
+    arm = Arm(name="a", agent=AgentSpec(adapter="claude-code", options={"executable": PY}))
+    exp = make_exp(tmp_path, arms=[arm])  # workspace_root = tmp_path / "ws"
+    with pytest.raises(AdapterError) as info:
+        run_experiment(exp, tmp_path / "run")
+    assert str(tmp_path / "CLAUDE.md") in str(info.value)
     assert not (tmp_path / "run").exists()
 
 
