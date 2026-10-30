@@ -98,10 +98,11 @@ What is recorded about the agent itself:
   copies of those files. Recorded for every adapter; see
   [run-directory.md](run-directory.md#trialsjsonl). Other workspace files (`.claude/rules/`,
   skills, settings, `CLAUDE.md` in subdirectories, `AGENTS.override.md`) and instruction files
-  outside the workspace are not hashed: Claude Code also loads user memory (`~/.claude/CLAUDE.md`),
-  `CLAUDE.md` files in parent directories, rules and settings unless the arm restricts them
-  (`setting_sources`, `bare`). Equal hashes therefore mean identical instructions only for arms
-  that exclude those sources.
+  outside the workspace are not hashed: Claude Code can also load user memory
+  (`~/.claude/CLAUDE.md`), `CLAUDE.md` files in parent directories, rules and settings.
+  `setting_sources = "project"` did not keep user memory out in one of our runs (see below),
+  so equal hashes mean identical instructions only when you have checked that nothing outside
+  the workspace was loaded.
 - `init.json` in the attempt directory: the full init event, without `cwd`, `session_id`,
   `uuid`, `scratchpad_path`, `messaging_socket_path`, `startup_timing` and any value that is
   an absolute path. The event is read from the start of the output, so a long transcript does
@@ -112,12 +113,18 @@ servers and plugins per arm, and notes arms that used more than one model, a mod
 the one requested, or a different tool, MCP or plugin set (a confound unless that difference
 is what you are testing). Runs without this data produce the same report as before.
 
-Isolation: Claude Code also loads settings from your home directory. Set
-`setting_sources = "project"` so only workspace settings apply, which is what you want when
-the arm difference is a workspace file such as a `CLAUDE.md`. To compare a customised setup
+Isolation: Claude Code also loads settings and memory from your home directory. Setting
+`setting_sources = "project"` passes `--setting-sources project`, but it does not isolate the
+agent from your user-level configuration: in the
+[no-tests re-run](results.md#re-run-with-the-current-grader), with this option set, the agents
+still followed the machine owner's `~/.claude/CLAUDE.md` and used a bash shim set through
+`CLAUDE_CODE_GIT_BASH_PATH`, while the init event's `memory_paths` was empty. We have not
+established which path let them in. Until agent-ab isolates and detects this, run trials
+on a machine or account without user-level instructions. To compare a customised setup
 with a stock one, use an arm with `safe_mode = true` (or `bare = true`). `strict_mcp_config`
-keeps your own MCP servers out, and the recorded init summary lets you check what was
-actually loaded: compare `tools`, `mcp_servers`, `plugins` and `skills` across arms.
+keeps your own MCP servers out, and the recorded init summary lets you check part of what was
+actually loaded: compare `tools`, `mcp_servers`, `plugins` and `skills` across arms (it does
+not show user memory).
 
 ```toml
 [agent]

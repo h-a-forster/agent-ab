@@ -22,7 +22,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - One-arm runs, for pilots that measure baseline difficulty.
 - Manipulation check script, `docs/results/manipulation.py`.
 - Example result: a re-run of the no-tests experiment with the current grader and Claude Code
-  2.1.308 (`docs/results/haiku-5-5-no-tests-rerun`).
+  2.1.308 (`docs/results/haiku-5-5-no-tests-rerun`). Both of its arms also loaded the
+  machine's user-level `CLAUDE.md`, so it is not a clean replication.
 
 ### Changed
 

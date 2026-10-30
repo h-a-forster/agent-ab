@@ -195,16 +195,32 @@ measured.
 
 On 2026-10-30 we re-ran this experiment with the published config unchanged:
 [haiku-5-5-no-tests-rerun](results/haiku-5-5-no-tests-rerun)
-([report](results/haiku-5-5-no-tests-rerun/report.md)). It is a replication with known
-differences, not a replacement:
+([report](results/haiku-5-5-no-tests-rerun/report.md)). It replicates the pass-rate headline
+under a contaminated control, not cleanly, and it does not replace the published run:
 
+- **Both arms carried the machine owner's user-level instructions.** The re-run machine has a
+  user-level `CLAUDE.md` with style rules, among them: show that each fix's test fails
+  without the fix, keep scratch scripts in `tmp/`, and check `$0` for a custom bash shim.
+  `setting_sources = "project"` did not keep it out, and the init event's `memory_paths` is
+  empty, so agent-ab could not detect it. The transcripts show it (trials per arm,
+  control / no-tests): `git stash` in a shell command, the "test fails without the fix"
+  revert check, 69/0; a Write/Edit or command path under `tmp/` (excluding `/tmp/`), 68/3;
+  `echo $0` in a shell command, 36/29; the phrase "extend the existing test", 27/0; two
+  control transcripts cite "the global instructions" directly. The bash shim configured on
+  that machine through `CLAUDE_CODE_GIT_BASH_PATH` also ran in 72 trials (43/29). No
+  `CLAUDE.md` exists in the workspace's parent directories. The control arm was therefore not
+  "task prompt only": it carried a rule to write a failing test for each fix, which plausibly
+  explains why it wrote tests in 149/150 trials against 127/150 in the published run. Both
+  arms loaded the same file, so it does not bias the within-run comparison by itself, but the
+  tests-written, cost and time comparisons with the published run are confounded.
 - Grading: the clean-copy grader with verified `unittest` outcomes, and the fixed
   `feature-uri-resolve` oracle. Task prompts and the other checks are unchanged.
 - Claude Code 2.1.308 instead of 2.1.296. Model `claude-haiku-5-5` in every trial.
 - A local Windows machine instead of the cloud environment. The init event lists 31 tools,
   3 plugins and 22 skills (39, 3 and 21 before), identical across arms. The tool sets differ:
-  the re-run has `Glob`, `Grep` and `PowerShell` and lacks the cloud's connector, plugin,
-  skill-search and notification tools.
+  the re-run has `Glob`, `Grep`, `PowerShell` and `RemoteTrigger` and the `schedule` skill,
+  and lacks the cloud's connector, plugin, skill-search and notification tools,
+  `SendUserFile` and `ShowOnboardingRolePicker`.
 - 300/300 trials completed, 0 errors, 6 at a time. One control trial (`feature-minire`) hit
   the 30-minute timeout and counts as a failure. Total cost $10.88.
 
@@ -220,9 +236,11 @@ differences, not a replacement:
 | Wrote tests, control / no-tests | 127/150 / 3/150 | 149/150 / 3/150 |
 | Ran tests, control / no-tests | 150/150 / 0/150 | 148/150 / 1/150 |
 
-- **The headline replicates.** The pass-rate difference is again -2.7 points with an interval
-  that includes zero and rules out a drop larger than about 7 points. Skipping tests again cut
-  cost and time, with both intervals excluding 1.
+- **The pass-rate headline replicates, under a contaminated control.** The pass-rate
+  difference is again -2.7 points with an interval that includes zero and rules out a drop
+  larger than about 7 points. Skipping tests again cut cost and time, with both intervals
+  excluding 1, but the control arm followed extra user-level rules (above), so the cost, time
+  and tests-written numbers are not comparable with the published run.
 - **The task-level losses do not.** `data-interval-sets` passed 2/3 in both arms (3/3 vs 1/3
   before). The re-run's losses fell on other tasks: `config-validation-errors` went from 3/3
   to 1/3 and four tasks lost one repeat each. Per-task differences of this size look like
@@ -272,6 +290,8 @@ model $8.82), inside the USD 60 cap.
 - Costs are the CLI's list-price estimates.
 - There is no joint correction across pass rate, cost and time.
 - One CLI version per run (2.1.296; the re-run 2.1.308). Python tasks only.
+- In the re-run, both arms also loaded the machine owner's user-level `CLAUDE.md`
+  ([re-run](#re-run-with-the-current-grader)).
 - Grading ran in the agent's workspace and trusted the check's exit status. agent-ab now grades
   in a clean copy and verifies `unittest` outcomes out of band
   ([safety.md](safety.md#grading-integrity)). Only the no-tests experiment was re-run under

@@ -29,13 +29,16 @@ The no-tests experiment was re-run with the clean-copy grader and the fixed
   95.3% with tests, 92.7% without, a difference of -2.7 pts [-7.3, +1.3]. A drop larger than
   about 7 points is unlikely; a small one is not ruled out. Ceiling effects limit this.
   A re-run with the current grader and a newer Claude Code gave the same difference: 96.7% vs
-  94.0%, -2.7 pts [-6.7, +1.3].
+  94.0%, -2.7 pts [-6.7, +1.3]. It is not a clean replication: both of its arms also loaded the
+  machine owner's user-level `CLAUDE.md`, which asks for a failing test per fix, so its control
+  was not "task prompt only".
   [Details](docs/results.md#powered-experiment-no-tests-on-claude-haiku-55),
   [re-run](docs/results.md#re-run-with-the-current-grader).
 - **Skipping tests cut the cost by about half.** Cost per trial fell to x0.50 [0.40, 0.70]
   (re-run x0.58 [0.50, 0.65]) and time to x0.64 [0.53, 0.74] (re-run x0.60 [0.53, 0.67]).
   The instruction worked: the control wrote tests in 127/150 trials (re-run 149/150), the
-  `no-tests` arm in 3/150 (re-run 3/150).
+  `no-tests` arm in 3/150 (re-run 3/150). The re-run's tests-written, cost and time numbers
+  are confounded by that user-level file.
   [Details](docs/results.md#manipulation-check).
 - **Sonnet 5.5 cost 3.6 times as much as Haiku 5.5 per trial for no detectable gain.**
   Pass rate was 96.0% vs 94.0% (+2.0 pts [-4.0, +10.0]), cost x3.58 [2.35, 5.55], with one
@@ -139,7 +142,7 @@ model = "sonnet"
 
 [agent.options]
 permission_mode = "bypassPermissions"
-setting_sources = "project"  # ignore your user-level Claude Code settings
+setting_sources = "project"  # project settings only; does not isolate everything (docs/adapters.md)
 max_turns = 60
 
 [[arms]]

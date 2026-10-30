@@ -58,14 +58,21 @@ Done:
 - Headline numbers in `README.md` and `docs/results.md` re-checked against the committed
   reports and `manipulation.jsonl` files on 2026-10-30.
 - The no-tests experiment re-run on 2026-10-30 with the current grader and Claude Code 2.1.308
-  (`docs/results/haiku-5-5-no-tests-rerun`); its headline replicated.
+  (`docs/results/haiku-5-5-no-tests-rerun`). Its pass-rate headline replicated under a
+  contaminated control: both arms loaded the machine's user-level CLAUDE.md, so it is not a
+  clean replication and its tests-written, cost and time comparisons are confounded.
 
 Open:
-1. The pilots and the Haiku-vs-Sonnet comparison predate the clean-copy grader; re-run them
+1. Before the next real run: isolate the agent from user-level configuration (for example a
+   separate `CLAUDE_CONFIG_DIR`, or workspaces outside the home directory; which path let the
+   user-level CLAUDE.md in is not established, since `setting_sources = "project"` was set), do
+   not pass on `CLAUDE_CODE_GIT_BASH_PATH` (the owner's bash shim ran in 72 re-run trials), and
+   detect loaded memory, since the init event's `memory_paths` was empty while it was loaded.
+2. The pilots and the Haiku-vs-Sonnet comparison predate the clean-copy grader; re-run them
    only if they are still cited.
-2. Tag v0.1.1 and publish a GitHub release from `docs/release-notes-0.1.1.md` (owner).
-3. Research questions listed under "Open questions" in `README.md` (task headroom for Haiku
+3. Tag v0.1.1 and publish a GitHub release from `docs/release-notes-0.1.1.md` (owner).
+4. Research questions listed under "Open questions" in `README.md` (task headroom for Haiku
    5.5, heterogeneous effects in the power model, concurrency and time ratios).
-4. Remote branches `claude/audit-fixes-2026-10-10`, `claude/hygiene-2026-10-15` and
+5. Remote branches `claude/audit-fixes-2026-10-10`, `claude/hygiene-2026-10-15` and
    `upgrades-2026-10-23` are merged or superseded by `main`; delete them (owner).
-5. Not published to PyPI; install is from GitHub.
+6. Not published to PyPI; install is from GitHub.

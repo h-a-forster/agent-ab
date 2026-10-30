@@ -108,7 +108,7 @@ effort = "medium"        # low | medium | high | xhigh | max
 
 [agent.options]
 permission_mode = "bypassPermissions"   # nobody is there to approve tool calls
-setting_sources = "project"   # only workspace settings, so local configuration cannot leak in
+setting_sources = "project"   # project settings only; user memory may still load (docs/adapters.md)
 max_turns = 30
 max_budget_usd = 0.50    # per-trial spend cap enforced by the claude CLI
 

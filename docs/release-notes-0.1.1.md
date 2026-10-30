@@ -31,9 +31,12 @@ Released 2026-10-30. Full list: [CHANGELOG.md](../CHANGELOG.md#011---2026-10-30)
 - `feature-uri-resolve`: the hidden oracle and reference solution now follow the prompt.
 
 The no-tests experiment was re-run with the clean-copy grader, the `feature-uri-resolve` fix
-and Claude Code 2.1.308, and its headline replicated: -2.7 pts [-6.7, +1.3], against
--2.7 pts [-7.3, +1.3] in the original run. The pilots and the model comparison predate the
-new grader and have not been re-graded.
+and Claude Code 2.1.308. Its pass-rate headline replicated, -2.7 pts [-6.7, +1.3] against
+-2.7 pts [-7.3, +1.3] in the original run, but under a contaminated control: both arms also
+loaded the machine owner's user-level `CLAUDE.md`, so the control was not "task prompt only"
+and its tests-written, cost and time numbers are confounded
+([details](results.md#re-run-with-the-current-grader)). The pilots and the model comparison
+predate the new grader and have not been re-graded.
 
 ## Install
 
