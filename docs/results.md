@@ -27,6 +27,9 @@ not writing them.
 - 10 tasks x 2 arms x 3 repeats = 60 trials per model, all completed, 0 infrastructure errors.
 - Claude Code 2.1.287, `bypassPermissions`, `--setting-sources project`, 4 trials at a time.
 - Windows 11, 2026-10-09. Every trial was graded by the task's hidden check.
+- It ran on the same machine as the 2026-10-30 [re-run](#re-run-with-the-current-grader), also
+  with `--setting-sources project`; its transcripts are not kept, so whether it loaded the
+  user-level `CLAUDE.md` is unknown.
 - Models: the alias `haiku` resolved to `claude-haiku-4-5-20251001` and `sonnet` to
   `claude-sonnet-5-5`. These are different generations, so Haiku-vs-Sonnet differences mix
   size and generation. The IDs come from the run logs; the committed files predate model
@@ -201,14 +204,18 @@ under a contaminated control, not cleanly, and it does not replace the published
 - **Both arms carried the machine owner's user-level instructions.** The re-run machine has a
   user-level `CLAUDE.md` with style rules, among them: show that each fix's test fails
   without the fix, keep scratch scripts in `tmp/`, and check `$0` for a custom bash shim.
-  `setting_sources = "project"` did not keep it out, and the init event's `memory_paths` is
-  empty, so agent-ab could not detect it. The transcripts show it (trials per arm,
+  `setting_sources = "project"` did not keep it out, and the init event's `memory_paths` never
+  lists it (the raw event lists only the auto-memory directory; the saved `init.json` strips
+  absolute paths), so agent-ab could not detect it. The transcripts show it (trials per arm,
   control / no-tests): `git stash` in a shell command, the "test fails without the fix"
   revert check, 69/0; a Write/Edit or command path under `tmp/` (excluding `/tmp/`), 68/3;
   `echo $0` in a shell command, 36/29; the phrase "extend the existing test", 27/0; two
   control transcripts cite "the global instructions" directly. The bash shim configured on
-  that machine through `CLAUDE_CODE_GIT_BASH_PATH` also ran in 72 trials (43/29). No
-  `CLAUDE.md` exists in the workspace's parent directories. The control arm was therefore not
+  that machine through `CLAUDE_CODE_GIT_BASH_PATH` is also visible in 72 transcripts (43/29);
+  Bash was used in 294/300 trials and the setting applies to every Bash call. The workspaces
+  live under the home directory's Temp folder, so walking up from one reaches
+  `<home>/.claude/CLAUDE.md`, which Claude Code reads as a `.claude/CLAUDE.md` in a parent
+  directory: a plausible but unconfirmed route. The control arm was therefore not
   "task prompt only": it carried a rule to write a failing test for each fix, which plausibly
   explains why it wrote tests in 149/150 trials against 127/150 in the published run. Both
   arms loaded the same file, so it does not bias the within-run comparison by itself, but the

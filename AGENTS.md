@@ -64,10 +64,13 @@ Done:
 
 Open:
 1. Before the next real run: isolate the agent from user-level configuration (for example a
-   separate `CLAUDE_CONFIG_DIR`, or workspaces outside the home directory; which path let the
-   user-level CLAUDE.md in is not established, since `setting_sources = "project"` was set), do
-   not pass on `CLAUDE_CODE_GIT_BASH_PATH` (the owner's bash shim ran in 72 re-run trials), and
-   detect loaded memory, since the init event's `memory_paths` was empty while it was loaded.
+   separate `CLAUDE_CONFIG_DIR`, or workspaces outside the home directory: they sit under the
+   home Temp folder, so walking up reaches `<home>/.claude/CLAUDE.md`, a plausible but
+   unconfirmed route despite `setting_sources = "project"`), do not pass on
+   `CLAUDE_CODE_GIT_BASH_PATH` (the owner's bash shim is visible in 72 re-run transcripts), and
+   detect loaded memory: `memory_paths` never lists the user CLAUDE.md (the raw init event in
+   `agent.stdout` lists only the auto-memory directory; the saved `init.json` strips absolute
+   paths), so detection needs the raw event.
 2. The pilots and the Haiku-vs-Sonnet comparison predate the clean-copy grader; re-run them
    only if they are still cited.
 3. Tag v0.1.1 and publish a GitHub release from `docs/release-notes-0.1.1.md` (owner).

@@ -118,8 +118,9 @@ Isolation: Claude Code also loads settings and memory from your home directory. 
 agent from your user-level configuration: in the
 [no-tests re-run](results.md#re-run-with-the-current-grader), with this option set, the agents
 still followed the machine owner's `~/.claude/CLAUDE.md` and used a bash shim set through
-`CLAUDE_CODE_GIT_BASH_PATH`, while the init event's `memory_paths` was empty. We have not
-established which path let them in. Until agent-ab isolates and detects this, run trials
+`CLAUDE_CODE_GIT_BASH_PATH`, while the init event's `memory_paths` never listed the user
+`CLAUDE.md` (the raw event lists only the auto-memory directory; the saved `init.json` strips
+absolute paths). We have not established which path let them in. Until agent-ab isolates and detects this, run trials
 on a machine or account without user-level instructions. To compare a customised setup
 with a stock one, use an arm with `safe_mode = true` (or `bare = true`). `strict_mcp_config`
 keeps your own MCP servers out, and the recorded init summary lets you check part of what was
