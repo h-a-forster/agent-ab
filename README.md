@@ -20,7 +20,9 @@ Haiku 5.5 against Sonnet 5.5. See Findings below.
 
 ## Findings
 
-From the [example results](docs/results.md). All runs used Claude Code with Python tasks.
+From the [example results](docs/results.md). All runs used Claude Code with Python tasks
+and were graded before the clean-copy grader and the `feature-uri-resolve` oracle fix
+([limitations](docs/results.md#limitations-of-the-new-runs)).
 
 - **No detectable effect of skipping tests on pass rate.** On Claude Haiku 5.5, 50 tasks x 3 repeats:
   95.3% with tests, 92.7% without, a difference of -2.7 pts [-7.3, +1.3]. A drop larger than
