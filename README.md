@@ -154,9 +154,9 @@ overlay = "arms/tdd"         # contains a CLAUDE.md that asks for a failing test
 ```
 
 Each trial runs isolated from your own Claude Code configuration: an empty config directory,
-an allow-listed environment and a workspace outside your home directory, with a check that no
-memory was loaded from elsewhere ([details](docs/adapters.md#isolation)). The agent therefore
-needs a credential in the environment: `ANTHROPIC_API_KEY`, or the `CLAUDE_CODE_OAUTH_TOKEN`
+an allow-listed environment and a workspace outside your home directory, and the run refuses to
+start if a parent of that workspace holds instruction files, skills, agents or commands
+([details](docs/adapters.md#isolation)). The agent therefore needs a credential in the environment: `ANTHROPIC_API_KEY`, or the `CLAUDE_CODE_OAUTH_TOKEN`
 that `claude setup-token` prints.
 
 Check the config, then check that every task fails without its solution and passes with it:

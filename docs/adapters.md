@@ -145,11 +145,13 @@ effort = "high"
 
 Claude Code reads configuration from outside the workspace: its config directory (`~/.claude`,
 or `CLAUDE_CONFIG_DIR`) holds user settings, user memory (`CLAUDE.md`, `rules/`), auto memory,
-plugins, skills and the saved login; it loads `CLAUDE.md` files from every parent of its
-working directory; and it inherits the environment. In the
+plugins, skills and the saved login; from every parent of its working directory it loads
+`CLAUDE.md` files and the `.claude` memory, rules, skills, agents and commands there, whatever
+`setting_sources` says; and it inherits the environment. In the
 [no-tests re-run](results.md#re-run-with-the-current-grader), made before isolation existed
 and with `setting_sources = "project"`, the agents still followed the machine owner's
-user-level `CLAUDE.md` and used a bash shim set through `CLAUDE_CODE_GIT_BASH_PATH`.
+user-level `CLAUDE.md`, reached that way because the workspaces sat under the home directory,
+and used a bash shim set through `CLAUDE_CODE_GIT_BASH_PATH`.
 
 With `isolation = true` (the default) each trial gets:
 
@@ -171,7 +173,8 @@ With `isolation = true` (the default) each trial gets:
   directory, or to `agent-ab-workspaces` at the root of the home drive when the temp directory
   is inside the home directory, as on Windows ([`workspace_root`](configuration.md)). Before
   anything runs, agent-ab refuses to start if `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
-  `.claude/CLAUDE.md` or `.claude/rules` exists in the workspace root or any of its parents.
+  `.claude/CLAUDE.md`, `.claude/rules`, `.claude/skills`, `.claude/agents` or
+  `.claude/commands` exists in the workspace root or any of its parents.
 - **A leak check.** In the raw init event (before it is scrubbed), every path under
   `memory_paths`, and every path naming a `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` or
   `.claude/rules` file, must lie inside the workspace or its config directory. Anything else is
@@ -179,20 +182,27 @@ With `isolation = true` (the default) each trial gets:
   example `memory_paths.auto: ~/.../memory`), and makes the attempt an infrastructure error:
   it is retried, and excluded from the statistics if it persists. The report notes arms with
   leaks. The init event does not list every file Claude Code loads (2.1.308 listed only the
-  auto-memory directory), so the check catches a foreign config directory but cannot prove
-  that nothing else was loaded; the three measures above are what keep user files out.
+  auto-memory directory, and `config_leaks` stayed empty with a parent directory's
+  `.claude/CLAUDE.md` loaded), so the check catches a foreign config directory but cannot
+  prove that nothing else was loaded; the three measures above are what keep user files out.
 
 An empty config directory has no saved login, so an isolated agent authenticates from the
 environment. agent-ab refuses to start unless `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
 `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_PROFILE` or one of `CLAUDE_CODE_USE_BEDROCK`,
-`CLAUDE_CODE_USE_VERTEX` and `CLAUDE_CODE_USE_FOUNDRY` is set, in the environment or in `env`.
+`CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_USE_MANTLE` and
+`CLAUDE_CODE_USE_ANTHROPIC_AWS` is set, in the environment or in `env`.
 With a Claude subscription, `claude setup-token` prints a long-lived `CLAUDE_CODE_OAUTH_TOKEN`.
 `bare = true` reads neither that token nor a profile; use an API key with it. agent-ab never
 copies your credentials file.
 
 Isolation keeps your configuration out of the agent's context; it is not a sandbox (see
-[safety.md](safety.md)). It was added after the published example runs and has not been used
-for one yet.
+[safety.md](safety.md)). It cannot remove what an administrator deploys: managed settings and a
+managed `CLAUDE.md` still apply. It was added after the published example runs and has not been
+used for one yet. On 2026-11-06 it was checked without a credential, on Windows with Claude Code
+2.1.308, which starts, prints its init event and stops at "Not logged in": auto memory lay in
+the private config directory, Bash was available without `CLAUDE_CODE_GIT_BASH_PATH`, and an
+`InstructionsLoaded` hook passed with `--settings` listed only the workspace's own `CLAUDE.md`.
+An authenticated trial is still untested.
 
 `isolation = false` runs the agent with your config directory and full environment, as
 agent-ab 0.1.1 did. The leak check still records `config_leaks` (such trials normally list the

@@ -189,10 +189,11 @@ Haiku 4.5's control arm rarely wrote tests. Haiku 5.5 tests by default.
 ### Isolation
 
 With `setting_sources = "project"` and `--strict-mcp-config`, the init event still lists 39
-tools, 3 plugins and 21 skills, and no MCP servers, in every trial. These come from the cloud
-environment that ran the trials (built-in plugins and environment-provided skills). They are
-identical across arms, so they do not confound the comparison. They are part of the setup
-measured.
+tools, 3 plugins and 21 skills, and no MCP servers, in every trial. They do not come from a
+user's configuration: with an empty config directory, Claude Code 2.1.308 still lists
+`cc-plugin-agents-md`, `cc-plugin-plugin-authoring` and most of these skills; the rest depend on
+the environment. They are identical across arms, so they do not confound the comparison. They
+are part of the setup measured.
 
 ### Re-run with the current grader
 
@@ -215,7 +216,10 @@ under a contaminated control, not cleanly, and it does not replace the published
   Bash was used in 294/300 trials and the setting applies to every Bash call. The workspaces
   live under the home directory's Temp folder, so walking up from one reaches
   `<home>/.claude/CLAUDE.md`, which Claude Code reads as a `.claude/CLAUDE.md` in a parent
-  directory: a plausible but unconfirmed route. The control arm was therefore not
+  directory. A later check confirmed this route: with Claude Code 2.1.308, no credential,
+  `--setting-sources project` and an empty `CLAUDE_CONFIG_DIR`, an `InstructionsLoaded` hook
+  reported that file as project memory for a working directory under the home directory, and
+  not for one outside it. The control arm was therefore not
   "task prompt only": it carried a rule to write a failing test for each fix, which plausibly
   explains why it wrote tests in 149/150 trials against 127/150 in the published run. Both
   arms loaded the same file, so it does not bias the within-run comparison by itself, but the

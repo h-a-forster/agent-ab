@@ -30,8 +30,8 @@ analysed with paired task-level statistics. Example results for Claude Code are 
   set `budget_usd`; use a resumable launcher for anything long.
 - User-visible changes get a `CHANGELOG.md` entry under "Unreleased".
 - Scratch files go in `tmp/` (gitignored). No `.bak` copies; use git.
-- Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. The repository
-  is public: change it through pull requests with CI, not direct pushes to `main`.
+- The repository is public: change it through pull requests with CI, not direct pushes to
+  `main`.
 - Public-release hygiene: no personal names, local user paths or machine details in
   committed files, results or logs.
 
@@ -47,40 +47,25 @@ uv run agent-ab validate examples/quickstart/experiment.toml --tasks
 
 CI (`.github/workflows/ci.yml`) also builds the wheel and runs the offline demo from it.
 
-## Status and next steps
+## Status
 
-Updated: 2026-10-30 (v0.1.1 prepared on branch `polish-2026-10-30`, not tagged; trial isolation
-added after it, unreleased).
+Updated: 2026-11-06 (v0.1.1 prepared on branch `polish-2026-10-30`, not tagged; trial isolation
+added after it, unreleased, notes in `docs/release-notes-0.2.0.md`). Open work is in
+`backlog.md`.
 
-Done:
 - v0.1.0 (2026-10-10); since then clean-copy grading, verified unittest outcomes, model and
   CLI-version recording, 40 more example tasks, and four example runs (two calibration
   pilots, the 50-task x 3-repeat no-tests experiment, Haiku 5.5 vs Sonnet 5.5).
 - Headline numbers in `README.md` and `docs/results.md` re-checked against the committed
-  reports and `manipulation.jsonl` files on 2026-10-30.
+  reports and `manipulation.jsonl` files on 2026-11-06; `agent-ab report` reproduces every
+  committed `report.md` byte for byte.
 - The no-tests experiment re-run on 2026-10-30 with the current grader and Claude Code 2.1.308
   (`docs/results/haiku-5-5-no-tests-rerun`). Its pass-rate headline replicated under a
   contaminated control: both arms loaded the machine's user-level CLAUDE.md, so it is not a
   clean replication and its tests-written, cost and time comparisons are confounded.
 - Trial isolation for `claude-code` (unreleased, on by default): empty `CLAUDE_CONFIG_DIR` per
-  trial, allow-listed environment, workspaces outside the home directory, a pre-run check for
-  instruction files above the workspace root, and a leak check of the raw init event
-  (`docs/adapters.md#isolation`). Tested offline only.
-
-Open:
-1. Isolation has not met a real Claude Code yet. Before the next real run, do a one-trial smoke
-   run with `CLAUDE_CODE_OAUTH_TOKEN` set and check: the agent authenticates and runs Bash
-   with an empty config directory (Windows: finds Git Bash without
-   `CLAUDE_CODE_GIT_BASH_PATH`), `memory_paths.auto` lies inside the private config directory,
-   `config_leaks` is empty, and the transcript shows no user-level rules. The init event does
-   not list user `CLAUDE.md` files; an `InstructionsLoaded` hook passed with `--settings`
-   would list every loaded file and could make the leak check complete (untested).
-2. The pilots and the Haiku-vs-Sonnet comparison predate the clean-copy grader; re-run them
-   only if they are still cited.
-3. Tag v0.1.1 at `8cd03a8` (the last commit before trial isolation, which is unreleased) and
-   publish a GitHub release from `docs/release-notes-0.1.1.md` (owner).
-4. Research questions listed under "Open questions" in `README.md` (task headroom for Haiku
-   5.5, heterogeneous effects in the power model, concurrency and time ratios).
-5. Remote branches `claude/audit-fixes-2026-10-10`, `claude/hygiene-2026-10-15` and
-   `upgrades-2026-10-23` are merged or superseded by `main`; delete them (owner).
-6. Not published to PyPI; install is from GitHub.
+  trial, allow-listed environment, workspaces outside the home directory, a pre-run check of
+  the workspace root's parents, and a leak check of the raw init event
+  (`docs/adapters.md#isolation`). Checked against the real CLI without a credential, not yet
+  in an authenticated trial.
+- Not published to PyPI; install is from GitHub.
