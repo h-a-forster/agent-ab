@@ -807,7 +807,7 @@ class _Progress:
                     f"{self._prefix(ev, rec)}  retry  attempt {rec.attempt} error: "
                     f"{_short(rec.error, 80)}"
                 )
-        elif ev.kind == "budget":
+        elif ev.kind in ("budget", "halt"):
             _warn(ev.message)
         elif ev.kind == "info" and ev.message:
             _err(ev.message)
@@ -916,6 +916,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     for name in outputs:
         _err(f"wrote {_display_path(run_dir / name)}")
     remaining = summary.planned - summary.completed - summary.errors
+    if summary.isolation_halt:
+        _err(
+            f"{PROG}: run stopped: {summary.isolation_halt}\n"
+            f"Finished trials are kept. Fix the leak (see docs/adapters.md, Isolation), then "
+            f"resume with: {resume_hint}"
+        )
+        return EXIT_FAILURE
     if summary.budget_exhausted and remaining:
         _warn(
             f"budget {_budget_text(budget)} reached with {remaining} of {summary.planned} "

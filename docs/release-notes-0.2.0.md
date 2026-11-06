@@ -24,6 +24,11 @@ section of [CHANGELOG.md](../CHANGELOG.md).
 - The default workspace root falls back to the system temp directory when the root of the home
   drive is not writable. Before, every adapter failed for an unprivileged POSIX user whose
   `TMPDIR` lies inside the home directory.
+- An isolation breach is no longer retried, and three in a row with no graded trial between
+  them stop the run: `agent-ab run` exits 1 with the reason, already finished trials stay, and
+  `--resume` after fixing the leak runs the breached trials again. Before, a leak on the machine
+  paid for every attempt of every trial until the budget ran out, all excluded. Trial records
+  gain an `isolation_breach` field.
 - CI actions are pinned to commit SHAs.
 - Docs: the route by which the re-run loaded the user-level `CLAUDE.md` is confirmed, the limits
   of the leak check and managed settings are stated, and the plugins and skills in the init

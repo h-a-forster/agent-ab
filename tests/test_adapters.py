@@ -569,12 +569,14 @@ def test_claude_detects_memory_loaded_from_outside(tmp_path):
     leaks = ["memory_paths.auto: ~/.../memory", "memory_paths.user: ~/.../CLAUDE.md"]
     assert u.agent_init["config_leaks"] == leaks
     assert u.infra_error.startswith("isolation breach") and "memory_paths.auto" in u.infra_error
+    assert u.isolation_breach
     assert str(home) not in json.dumps(u.agent_init) and str(home) not in u.infra_error
     assert u.final_message == "OK"
 
     spec = AgentSpec(adapter="claude-code", options={"isolation": False})
     u = ClaudeCodeAdapter().parse(make_ctx(tmp_path, spec), proc_result(tmp_path, stdout))
     assert u.agent_init["config_leaks"] == leaks and u.infra_error is None  # recorded only
+    assert not u.isolation_breach
 
 
 def test_claude_private_config_dir_is_not_a_leak(tmp_path):

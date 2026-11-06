@@ -640,6 +640,7 @@ class ClaudeCodeAdapter(Adapter):
                 "isolation breach: the agent loaded memory or instructions from outside its "
                 f"workspace and private config directory ({shown}); see agent.stdout"
             )
+            usage.isolation_breach = True
         usage.agent_init = {**summarise_init(scrub_init(event)), "config_leaks": leaks}
         usage.agent_version = usage.agent_init.get("claude_code_version")
         ctx.artifacts.mkdir(parents=True, exist_ok=True)

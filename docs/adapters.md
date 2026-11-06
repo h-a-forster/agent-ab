@@ -30,6 +30,9 @@ counted in the report. Two kinds:
 - problems the adapter reports: authentication, rate limits, provider outages, an unusable
   model, or (Codex) a sandbox that cannot run commands.
 
+An [isolation breach](#isolation) is the exception: it is not retried, and three in a row stop
+the run.
+
 Everything else is the agent's outcome. Exiting non-zero, giving up, running out of turns or
 budget, or breaking the workspace so grading fails (deleting `.git`, replacing check paths
 with links) is a `fail`.
@@ -165,7 +168,9 @@ With `isolation = true` (the default) each trial gets:
   includes `CLAUDE_CODE_GIT_BASH_PATH`, `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and the other
   variables a parent Claude Code session sets, `CLAUDE_CONFIG_DIR`, `ANTHROPIC_MODEL`,
   `PYTHONHOME`, `PYTHONPATH` and `VIRTUAL_ENV` (whose `bin` or `Scripts` directory is also
-  taken off `PATH`, so the agent's `python` is not agent-ab's). `pass_env` adds names, and
+  taken off `PATH`, so the agent's `python` is not agent-ab's). Checks still run `{python}` as
+  agent-ab's own interpreter, so a task that tells the agent to run `python` can reach a
+  different Python from the grader's, or none if `PATH` has no other. `pass_env` adds names, and
   `env` applies on top. The full list is `_ENV_ALLOW` in `src/agent_ab/adapters/claude_code.py`.
   On Windows Claude Code finds Git Bash by itself; if it cannot, pass
   `CLAUDE_CODE_GIT_BASH_PATH` on purpose with `pass_env`.
@@ -179,9 +184,12 @@ With `isolation = true` (the default) each trial gets:
   `memory_paths`, and every path naming a `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` or
   `.claude/rules` file, must lie inside the workspace or its config directory. Anything else is
   recorded in `agent_init.config_leaks`, reduced to the key and the last path component (for
-  example `memory_paths.auto: ~/.../memory`), and makes the attempt an infrastructure error:
-  it is retried, and excluded from the statistics if it persists. The report notes arms with
-  leaks. The init event does not list every file Claude Code loads (2.1.308 listed only the
+  example `memory_paths.auto: ~/.../memory`), and makes the attempt an infrastructure error
+  excluded from the statistics. A leak comes from the machine, so it is not retried, and three
+  breaches in a row with no graded trial between them stop the run: no new trials start, agents
+  already running finish and are recorded, and `agent-ab run` exits 1. Finished trials are kept.
+  Fix the leak and resume: breached trials run again, whatever `max_retries` says, and a breach
+  that recurs stops the run again. The report notes arms with leaks. The init event does not list every file Claude Code loads (2.1.308 listed only the
   auto-memory directory, and `config_leaks` stayed empty with a parent directory's
   `.claude/CLAUDE.md` loaded), so the check catches a foreign config directory but cannot
   prove that nothing else was loaded; the three measures above are what keep user files out.

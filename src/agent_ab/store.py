@@ -296,5 +296,11 @@ def _redact_env(value: Any) -> Any:
 
 
 def is_done(record: TrialRecord, max_retries: int) -> bool:
-    """A trial needs no more attempts once it passed/failed or exhausted its retries."""
+    """A trial needs no more attempts once it passed/failed or exhausted its retries.
+
+    An isolation breach is never final: it says nothing about the trial, and it stops the run
+    without retries, so a resume after fixing the leak must run the trial again.
+    """
+    if record.isolation_breach:
+        return False
     return record.status in ("pass", "fail") or record.attempt >= max_retries

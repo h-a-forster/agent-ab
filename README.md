@@ -157,7 +157,8 @@ Each trial runs isolated from your own Claude Code configuration: an empty confi
 an allow-listed environment and a workspace outside your home directory, and the run refuses to
 start if a parent of that workspace holds instruction files, skills, agents or commands
 ([details](docs/adapters.md#isolation)). The agent therefore needs a credential in the environment: `ANTHROPIC_API_KEY`, or the `CLAUDE_CODE_OAUTH_TOKEN`
-that `claude setup-token` prints.
+that `claude setup-token` prints. Isolation has not yet been exercised in an authenticated trial,
+so start a real experiment with one trial and a small budget; repeated breaches stop the run.
 
 Check the config, then check that every task fails without its solution and passes with it:
 

@@ -2,7 +2,8 @@
 
 Every attempt runs in a fresh workspace and is appended to the run store as soon as it
 finishes, so the log on disk is always the complete truth. Infrastructure errors are retried;
-a budget stops new launches; Ctrl-C kills running agents and records nothing half-done.
+a budget or repeated isolation breaches stop new launches; Ctrl-C kills running agents and
+records nothing half-done.
 """
 
 from __future__ import annotations
@@ -65,8 +66,11 @@ from agent_ab.workspace import (
 )
 
 _WAIT_S = 0.2  # main-thread wait slice; short so Ctrl-C is delivered promptly on Windows
+# Breaches in a row, with no graded trial between them, that stop the run. A leak comes from the
+# machine, so every further trial would pay for an attempt the statistics exclude.
+_MAX_CONSECUTIVE_BREACHES = 3
 
-ProgressKind = Literal["start", "finish", "retry", "budget", "info"]
+ProgressKind = Literal["start", "finish", "retry", "budget", "halt", "info"]
 
 
 @dataclass
@@ -107,6 +111,7 @@ class RunSummary:
     cancelled: bool
     total_cost_usd: float
     budget_exhausted: bool
+    isolation_halt: str | None = None  # why repeated isolation breaches stopped the run
 
 
 class _Cancelled(Exception):
@@ -248,6 +253,7 @@ def _copy_usage(rec: TrialRecord, usage: AgentUsage) -> list[str]:
     if cost is None and usage.cost_usd is not None:
         dropped.append(f"cost_usd: {_short_repr(usage.cost_usd)}")
     rec.cost_usd = cost
+    rec.isolation_breach = usage.isolation_breach
     _copy_identity(rec, usage)
     for name in _USAGE_COUNTS:
         raw = getattr(usage, name)
@@ -757,12 +763,15 @@ def run_experiment(
     done = len(final_status)
     spent = prior_cost
 
-    def summary(*, cancelled: bool, budget_exhausted: bool, skipped: int) -> RunSummary:
+    def summary(
+        *, cancelled: bool, budget_exhausted: bool, skipped: int, isolation_halt: str | None = None
+    ) -> RunSummary:
         values = list(final_status.values())
         return RunSummary(
             run_dir=run_dir, planned=total, completed=sum(v != "error" for v in values),
             errors=values.count("error"), skipped_budget=skipped, cancelled=cancelled,
             total_cost_usd=round(spent, 6), budget_exhausted=budget_exhausted,
+            isolation_halt=isolation_halt,
         )  # fmt: skip
 
     if options.dry_run:
@@ -790,10 +799,12 @@ def run_experiment(
     cancel = threading.Event()
     running: dict[Future[TrialRecord], tuple[TrialSpec, int]] = {}
     budget_exhausted = cancelled = False
+    breaches = 0  # isolation breaches since the last graded trial
+    isolation_halt: str | None = None
     pool = ThreadPoolExecutor(max_workers=jobs, thread_name_prefix="agent-ab-trial")
 
     def collect(fut: Future[TrialRecord]) -> None:
-        nonlocal done, spent
+        nonlocal done, spent, breaches, isolation_halt
         spec, attempt = running.pop(fut)
         try:
             rec = fut.result()
@@ -807,7 +818,11 @@ def run_experiment(
             return  # interrupted attempts are discarded, not recorded
         store.append(rec)
         spent += rec.cost_usd or 0.0
-        if rec.status == "error" and attempt < exp.max_retries:
+        if rec.isolation_breach:
+            breaches += 1
+        elif rec.status != "error":
+            breaches = 0
+        if rec.status == "error" and attempt < exp.max_retries and not rec.isolation_breach:
             pending.append((spec, attempt + 1))
             emit(
                 "retry",
@@ -820,6 +835,12 @@ def run_experiment(
         final_status[spec.id] = rec.status
         done += 1
         emit("finish", trial_id=spec.id, attempt=attempt, record=rec)
+        if breaches >= _MAX_CONSECUTIVE_BREACHES and isolation_halt is None:
+            isolation_halt = (
+                f"{breaches} trials in a row ended in an isolation breach; not starting more "
+                f"trials. Last one: {rec.error}"
+            )
+            emit("halt", message=isolation_halt)
 
     def drain() -> None:
         # Wait in short slices: an unbounded wait would swallow Ctrl-C on Windows.
@@ -833,7 +854,7 @@ def run_experiment(
 
     try:
         while pending or running:
-            while pending and len(running) < jobs and not budget_exhausted:
+            while pending and len(running) < jobs and not budget_exhausted and not isolation_halt:
                 if budget is not None and spent >= budget:
                     budget_exhausted = True
                     emit(
@@ -874,4 +895,7 @@ def run_experiment(
     pool.shutdown(wait=True)
 
     skipped = len({spec.id for spec, _ in pending}) if budget_exhausted and not cancelled else 0
-    return summary(cancelled=cancelled, budget_exhausted=budget_exhausted, skipped=skipped)
+    return summary(
+        cancelled=cancelled, budget_exhausted=budget_exhausted, skipped=skipped,
+        isolation_halt=isolation_halt,
+    )  # fmt: skip

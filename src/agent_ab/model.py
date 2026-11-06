@@ -187,6 +187,9 @@ class AgentUsage:
     # (authentication, rate limiting, provider outage). The attempt is retried and,
     # if it never succeeds, excluded from statistics.
     infra_error: str | None = None
+    # The infrastructure error is a breach of trial isolation. It will recur on this machine, so
+    # the attempt is not retried and repeated breaches stop the run.
+    isolation_breach: bool = False
 
 
 @dataclass
@@ -227,6 +230,7 @@ class TrialRecord:
     # SHA-256 per instruction file the agent received: workspace files by relative path,
     # adapter files (outside the workspace) as "agent:<name>"
     instructions_sha256: dict[str, str] | None = None
+    isolation_breach: bool = False  # the agent loaded configuration from outside its isolation
     schema: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
