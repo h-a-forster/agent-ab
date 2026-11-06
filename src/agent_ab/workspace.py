@@ -305,19 +305,25 @@ def _snapshot(ws: Path) -> str:
 
 # Used when the system temp directory lies inside the home directory (as on Windows): agents
 # such as Claude Code load instruction files from every parent of their working directory, and
-# the home directory holds user-level ones (``~/.claude/CLAUDE.md``).
+# the home directory holds user-level ones (``~/.claude/CLAUDE.md``). os.access decides whether
+# it can be used: reliable on POSIX, where "/" is usually not writable; on Windows it says yes
+# and a refused directory fails loudly in create_workspace.
 HOME_SAFE_ROOT = "agent-ab-workspaces"
 
 
 def default_workspace_root() -> Path:
     """Where workspaces go when ``workspace_root`` is not set: the system temp directory if it
-    is outside the home directory, else ``agent-ab-workspaces`` at the root of the home drive."""
+    is outside the home directory, else ``agent-ab-workspaces`` at the root of the home drive
+    if that can be created there, else the temp directory after all."""
     tmp = Path(tempfile.gettempdir()).resolve()
     try:
         home = Path.home().resolve()
     except (RuntimeError, OSError):  # no home directory can be determined
         return tmp
-    return Path(home.anchor) / HOME_SAFE_ROOT if _is_within(tmp, home) else tmp
+    if not _is_within(tmp, home):
+        return tmp
+    safe = Path(home.anchor) / HOME_SAFE_ROOT
+    return safe if os.access(safe if safe.exists() else safe.parent, os.W_OK) else tmp
 
 
 def resolve_workspace_root(root: Path | None) -> Path:

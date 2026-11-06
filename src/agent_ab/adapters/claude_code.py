@@ -98,8 +98,8 @@ _ENV_ALLOW = frozenset(
         # credentials and API provider
         "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_PROFILE",
         "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
-        "CLAUDE_CODE_USE_FOUNDRY", "CLOUD_ML_REGION", "GOOGLE_APPLICATION_CREDENTIALS",
-        "GOOGLE_CLOUD_PROJECT",
+        "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+        "CLOUD_ML_REGION", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT",
     }
 )  # fmt: skip
 _ENV_ALLOW_PREFIXES = (
@@ -108,6 +108,7 @@ _ENV_ALLOW_PREFIXES = (
     "ANTHROPIC_VERTEX_",
     "ANTHROPIC_BEDROCK_",
     "ANTHROPIC_FOUNDRY_",
+    "ANTHROPIC_AWS_",
     "VERTEX_REGION_",
 )
 # An isolated agent has no saved login, so it needs one of these. --bare reads neither an OAuth
@@ -120,16 +121,21 @@ _AUTH_ENV = (
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CODE_USE_MANTLE",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
 )
 _BARE_UNREAD = frozenset({"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_PROFILE"})
-# What Claude Code loads from the parents of its working directory; in the home directory,
-# ``.claude/CLAUDE.md`` and ``.claude/rules`` are the user's own memory.
+# What Claude Code loads from the parents of its working directory, whatever --setting-sources
+# says (checked on 2.1.308); in the home directory, these ``.claude`` entries are the user's own.
 _ANCESTOR_FILES = (
     "CLAUDE.md",
     "CLAUDE.local.md",
     "AGENTS.md",
     ".claude/CLAUDE.md",
     ".claude/rules",
+    ".claude/skills",
+    ".claude/agents",
+    ".claude/commands",
 )
 _INSTRUCTION_NAMES = frozenset({"claude.md", "claude.local.md", "agents.md"})
 
@@ -213,7 +219,8 @@ def config_leaks(event: Mapping[str, Any], allowed: Sequence[Path]) -> list[str]
 
 
 def instruction_files_above(root: Path) -> list[Path]:
-    """Instruction files Claude Code would load from ``root`` and its parents."""
+    """Instruction files and agent definitions Claude Code would load from ``root`` and its
+    parents."""
     root = Path(root).resolve()
     return [d / rel for d in (root, *root.parents) for rel in _ANCESTOR_FILES if (d / rel).exists()]
 
@@ -531,8 +538,8 @@ class ClaudeCodeAdapter(Adapter):
         if not found:
             return None
         return (
-            "claude-code: Claude Code would load instruction files from the parents of the "
-            f"workspaces under {root}: {', '.join(str(f) for f in found)}. Move them, set "
+            "claude-code: Claude Code would load these from the parents of the workspaces "
+            f"under {root}: {', '.join(str(f) for f in found)}. Move them, set "
             "workspace_root elsewhere, or set isolation = false"
         )
 

@@ -480,6 +480,8 @@ def test_claude_isolation_env_and_config_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("LC_ALL", "C")
     monkeypatch.setenv("MY_TOOL_HOME", "kept")
+    monkeypatch.setenv("ANTHROPIC_AWS_WORKSPACE_ID", "provider")
+    monkeypatch.setenv("CLAUDE_CODE_USE_MANTLE", "1")
     spec = AgentSpec(
         adapter="claude-code",
         env={"EXTRA": "1"},
@@ -496,6 +498,9 @@ def test_claude_isolation_env_and_config_dir(tmp_path, monkeypatch):
     assert base["PATH"] == str(other)  # the venv's bin directory is gone
     assert base["ANTHROPIC_API_KEY"] == "test-key" and base["LC_ALL"] == "C"
     assert base["MY_TOOL_HOME"] == "kept"
+    assert (
+        base["ANTHROPIC_AWS_WORKSPACE_ID"] == "provider" and base["CLAUDE_CODE_USE_MANTLE"] == "1"
+    )
     config = config_dir(ctx.workspace)
     assert inv.env == {"EXTRA": "1", "CLAUDE_CONFIG_DIR": str(config)}
     assert inv.temp_dirs == [config] and config.is_dir() and not any(config.iterdir())
@@ -523,6 +528,9 @@ def test_claude_isolation_needs_a_credential(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")
     assert problem() is None
     assert "saved login" in problem(options={"bare": True})  # --bare ignores the OAuth token
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+    for provider in ("CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS"):
+        assert problem(env={provider: "1"}) is None
 
 
 def test_claude_isolation_refuses_instruction_files_above_workspaces(tmp_path):
@@ -531,10 +539,13 @@ def test_claude_isolation_refuses_instruction_files_above_workspaces(tmp_path):
     root = tmp_path / "a" / "b"
     above = set(instruction_files_above(tmp_path))  # whatever this machine has further up
     assert set(instruction_files_above(root)) == above
-    (tmp_path / "a" / ".claude" / "rules").mkdir(parents=True)
+    dot_claude = tmp_path / "a" / ".claude"
+    expected = {dot_claude / name for name in ("rules", "skills", "agents", "commands")}
+    for path in expected:
+        path.mkdir(parents=True)
     (tmp_path / "a" / "CLAUDE.md").write_text("x", encoding="utf-8")
     found = set(instruction_files_above(root)) - above
-    assert found == {tmp_path / "a" / "CLAUDE.md", tmp_path / "a" / ".claude" / "rules"}
+    assert found == expected | {tmp_path / "a" / "CLAUDE.md"}
     message = adapter.check_workspace_root(spec, root)
     assert str(tmp_path / "a" / "CLAUDE.md") in message and "workspace_root" in message
     off = AgentSpec(adapter="claude-code", options={"isolation": False})
