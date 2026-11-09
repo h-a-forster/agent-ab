@@ -47,8 +47,8 @@ closes these routes:
   whether `.git` was missing or replaced or git itself could not record the changes. A failure
   to write `diff.patch` into the run directory is an infrastructure error and is retried, as is
   any grading failure the machine caused: git reporting a full disk or no memory, git hitting its
-  time limit on a workspace too small to explain it, a valid diff that cannot be written to the
-  clean copy, or a step that also fails on a copy of the task the agent never touched.
+  time limit when the agent did not add enough to explain it, a valid diff that cannot be written
+  to the clean copy, or a step that also fails on a copy of the task the agent never touched.
 - **What an agent can still turn from a `fail` into an excluded error.** Agents run with full
   permissions and machine failures must not count against them, so these remain. No route gives a
   pass, and retries are bounded, but the trial leaves the denominator, which can lift a pass rate.
@@ -59,15 +59,20 @@ closes these routes:
   - Changing anything outside its workspace that grading needs: the task's `checks/` or `repo/`
     folder, which breaks every later trial too and so stops the run after ten errors, or the run
     directory, so that `diff.patch` cannot be written.
+  - Adding just under what counts as enough to stall git (about 20,000 files or 2 GiB at the 600 s
+    limit) on a machine slow enough to time out anyway. The figures are a third of what one Windows PC
+    measured.
   - On Linux and macOS, a file name containing a newline can put a line of its own choosing in
     git's error output, ending in a phrase such as `: No space left on device`.
 
   The other way round, a machine failure can still read as the agent's: a disk that fills while the
-  check runs, including when the verifying runner cannot write its report, is a failing check.
+  check runs, including when the verifying runner cannot write its report, is a failing check. So
+  is a machine stall on a workspace the agent did add that much to, and a spend limit reached
+  mid-trial in wording agent-ab does not recognise.
 
   Closed: a file name that merely contains such a phrase, a command line overflowed by staged
-  entries, and a workspace bloated until git times out (over 200,000 files or 20 GiB) all stay
-  `fail`.
+  entries, a workspace bloated with what the agent added (`npm install` included) until git times
+  out, and an API 400 its work provoked (a context overflow) all stay `fail`.
   Nested git repositories the agent creates (a `git clone` to vendor a library, `git init` in a
   subdirectory) are recorded as ordinary files: their `.git` metadata is moved aside while the
   diff is taken and does not reach the grading copy, and gitlink entries the agent staged for

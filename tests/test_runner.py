@@ -1216,10 +1216,37 @@ def test_git_add_timing_out_on_a_small_workspace_is_infrastructure(tmp_path, mon
 
 
 @pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_add_timing_out_on_a_big_task_is_the_machine(tmp_path, monkeypatch):
+    # Size alone would blame the agent; it added one file to thirty of the task's.
+    from agent_ab import workspace as wsmod
+
+    monkeypatch.setattr(wsmod, "_GIT_MIN_FILES_PER_S", 3 / 600)
+    _git_fails(monkeypatch, _adds_agent_files, _timeout)
+    task = make_task(tmp_path)
+    for i in range(30):
+        (task.repo / f"f{i}.txt").write_text(str(i), encoding="utf-8")
+    exp = make_exp(tmp_path, arms=[fake_arm("a")], tasks=[task], max_retries=0)
+    run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_add_timing_out_after_a_big_setup_is_the_machine(tmp_path, monkeypatch):
+    from agent_ab import workspace as wsmod
+
+    monkeypatch.setattr(wsmod, "_GIT_MIN_FILES_PER_S", 3 / 600)
+    _git_fails(monkeypatch, _adds_agent_files, _timeout)
+    setup = (PY, "-c", "for i in range(30): open('dep' + str(i), 'w').close()")
+    rec = run_one(tmp_path, SOLVE, max_retries=0, task_kw={"setup": setup})
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
 def test_git_add_timing_out_on_a_workspace_the_agent_bloated_is_its_failure(tmp_path, monkeypatch):
     from agent_ab import workspace as wsmod
 
-    monkeypatch.setattr(wsmod, "_GIT_MANY_FILES", 3)  # the agent's files exceed it
+    monkeypatch.setattr(wsmod, "_GIT_MIN_FILES_PER_S", 3 / 600)  # the agent's files exceed it
     _git_fails(monkeypatch, _adds_agent_files, _timeout)
     script = SOLVE + "\nfor i in range(5):\n    open(f'junk{i}', 'w').close()\n"
     rec = run_one(tmp_path, script, max_retries=0)

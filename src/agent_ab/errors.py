@@ -53,6 +53,10 @@ class HostError(WorkspaceError):
     """The machine failed (disk full, no memory, a stalled git), whatever is in the workspace."""
 
 
+class GitTimeoutError(HostError):
+    """git hit its time limit: the machine, unless what the agent added explains it."""
+
+
 class AdapterError(AgentABError):
     """An agent adapter cannot run (missing executable, bad options)."""
 

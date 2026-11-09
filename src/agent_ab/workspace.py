@@ -26,7 +26,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePath, PureWindowsPath
 
 from .config import expand_placeholders as _expand
-from .errors import GitDirAlteredError, HostError, WorkspaceError, is_host_failure
+from .errors import (
+    GitDirAlteredError,
+    GitTimeoutError,
+    HostError,
+    WorkspaceError,
+    is_host_failure,
+)
 from .model import Arm, Command, ProcResult, Task
 from .proc import IS_WINDOWS, build_env, run_process
 
@@ -280,21 +286,33 @@ def _copy_error(message: str, e: Exception) -> WorkspaceError:
     return (HostError if is_host_failure(e) else WorkspaceError)(f"{message}: {e}")
 
 
-_GIT_MANY_FILES = 200_000
-_GIT_MANY_BYTES = 20 * 1024**3
+# A third of what git add was measured doing on one Windows PC (96 files/s, 23 MiB/s): adding this
+# much can account for git hitting its time limit. At the 600 s limit, about 20,000 files or 2 GiB.
+_GIT_MIN_FILES_PER_S = 33.0
+_GIT_MIN_BYTES_PER_S = 3.5 * 1024**2
 
 
-def _too_big_for_git(ws: Path) -> bool:
-    """Whether ``ws`` could explain git hitting its time limit: then its content is the cause."""
+def _tree_size(root: Path) -> tuple[int, int]:
+    """(files, bytes) under ``root``, without its ``.git``, which grows just by being used."""
     files = size = 0
-    for folder, _, names in os.walk(ws):
+    for folder, dirs, names in os.walk(root):
+        if Path(folder) == root and ".git" in dirs:
+            dirs.remove(".git")
         for name in names:
             files += 1
             with contextlib.suppress(OSError):
                 size += os.lstat(os.path.join(folder, name)).st_size
-        if files > _GIT_MANY_FILES or size > _GIT_MANY_BYTES:
-            return True
-    return False
+    return files, size
+
+
+def added_enough_to_stall_git(ws: Path, pristine: Path) -> bool:
+    """Whether what ``ws`` holds beyond ``pristine`` can explain git hitting its time limit."""
+    files, size = _tree_size(ws)
+    base_files, base_size = _tree_size(pristine)
+    return (
+        files - base_files > _GIT_MIN_FILES_PER_S * _GIT_TIMEOUT_S
+        or size - base_size > _GIT_MIN_BYTES_PER_S * _GIT_TIMEOUT_S
+    )
 
 
 def grading_mode() -> str:
@@ -324,10 +342,10 @@ def _run_git(ws: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
         # Anything else (a command line too long for what the agent staged) goes to the control.
         error = HostError if is_host_failure(e) else WorkspaceError
         raise error(f"git {args[0]} failed: {e}") from e
+    except subprocess.TimeoutExpired as e:
+        raise GitTimeoutError(f"git {args[0]} failed: {e}") from e
     except subprocess.SubprocessError as e:
-        # Git gets through anything smaller well inside its time limit, unless the machine stalls.
-        error = WorkspaceError if _too_big_for_git(ws) else HostError
-        raise error(f"git {args[0]} failed: {e}") from e
+        raise WorkspaceError(f"git {args[0]} failed: {e}") from e
     if cp.returncode != 0:
         tail = (cp.stderr or b"").decode("utf-8", "replace").strip()[-500:]
         error = HostError if _GIT_HOST_FAILURE.search(tail) else WorkspaceError

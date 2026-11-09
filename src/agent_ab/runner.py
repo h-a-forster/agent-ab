@@ -32,6 +32,7 @@ from agent_ab.errors import (
     AdapterError,
     AgentABError,
     GitDirAlteredError,
+    GitTimeoutError,
     HostError,
     RunStoreError,
     WorkspaceError,
@@ -63,6 +64,7 @@ from agent_ab.store import (
 from agent_ab.workspace import (
     Workspace,
     _is_link,
+    added_enough_to_stall_git,
     apply_patch,
     create_workspace,
     destroy_workspace,
@@ -658,6 +660,34 @@ def _control_problem(
             _note_leak(art, ws, live)
 
 
+def _agent_bloated_workspace(
+    exp: Experiment,
+    spec: TrialSpec,
+    attempt: int,
+    art: Path,
+    ws: Workspace,
+    timeout_s: float,
+    cancel: threading.Event,
+    live: _LiveDirs,
+) -> bool:
+    """Whether what the agent added explains git timing out, measured against a clean copy."""
+    try:
+        copy = create_workspace(
+            spec.task, spec.arm, root=exp.workspace_root, label=f"{spec.id}-a{attempt}-size"
+        )
+    except WorkspaceError:
+        return False
+    live.add(copy.path)
+    try:
+        problem = _prepare_pristine(
+            spec.task, copy, art, timeout_s, cancel, "the size copy", "size-setup"
+        )
+        return problem is None and added_enough_to_stall_git(Path(ws.path), Path(copy.path))
+    finally:
+        if not destroy_workspace(copy):
+            _note_leak(art, copy, live)
+
+
 def _grade(
     exp: Experiment,
     rec: TrialRecord,
@@ -710,10 +740,12 @@ def _grade(
         rec.error = "the agent's changes could not be recorded (its .git directory was altered)"
         return
     if diff_error is not None:
-        raise _GradingBroken(
-            f"the agent's changes could not be recorded: {diff_error}",
-            host=isinstance(diff_error, HostError),
-        )
+        host = isinstance(diff_error, HostError)
+        if isinstance(diff_error, GitTimeoutError):
+            host = not _agent_bloated_workspace(
+                exp, spec, rec.attempt, art, ws, agent_timeout, cancel, live
+            )
+        raise _GradingBroken(f"the agent's changes could not be recorded: {diff_error}", host=host)
     try:
         grade_ws = create_workspace(
             task, spec.arm, root=exp.workspace_root, label=f"{spec.id}-a{rec.attempt}-grade"
