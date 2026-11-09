@@ -21,6 +21,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   when the process ends, so a crash leaves nothing stale.
 - Trial records gain `leak_check` (`clean`, `leaked`, `unverified`), `tool_version`, `fingerprint`
   and `grading`; `run.json` gains `grading` and `forced_resumes`. All optional on read.
+- The report notes when arms lose different shares of their trials to exclusion.
 - A run stops after ten infrastructure errors in a row in one arm, before an outage uses up every
   trial's retries.
 

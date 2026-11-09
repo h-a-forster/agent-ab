@@ -578,6 +578,19 @@ def test_absurd_costs_outside_the_plan_do_not_stop_the_report():
     assert analyze(planned, recs, n_boot=10).total_cost_usd == 1.0
 
 
+def test_report_warns_when_arms_lose_different_shares_to_exclusion():
+    def trial(i, arm, status):
+        return TrialRecord(trial_id=f"t{i}__{arm}__r0", task=f"t{i}", arm=arm, repeat=0, attempt=2,
+                           status=status)  # fmt: skip
+
+    meta = {"experiment": "x", "baseline": "a", "planned_trials": 8}
+    even = [trial(i, a, "error" if i == 0 else "pass") for i in range(4) for a in "ab"]
+    uneven = [trial(i, "a", "pass") for i in range(4)]
+    uneven += [trial(i, "b", "error" if i < 2 else "pass") for i in range(4)]
+    assert not any("2 of 4" in n for n in analyze(meta, even, n_boot=10).notes)
+    assert any("2 of 4" in n for n in analyze(meta, uneven, n_boot=10).notes)
+
+
 def _with_errors(attempt: int, breach: bool = False) -> tuple[dict, list[TrialRecord]]:
     recs = [
         TrialRecord(

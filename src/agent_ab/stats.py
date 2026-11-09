@@ -803,6 +803,14 @@ def analyze(
             f"{_plural(errors - still_open, 'trial')} excluded as infrastructure errors "
             "(final attempt failed for reasons outside the configuration under test).",
         )
+    shares = {s.arm: (s.errors, s.errors + s.trials) for s in summaries if s.errors + s.trials}
+    if len({e / n for e, n in shares.values()}) > 1:
+        shown = ", ".join(f"{arm} {e} of {n}" for arm, (e, n) in shares.items())
+        notes.append(
+            f"Arms lost different shares of their trials to exclusion ({shown}). If an arm's "
+            "failures were misread as infrastructure, its pass rate is too high: read the "
+            "excluded attempts before trusting the comparison."
+        )
     finished = len(finals) - still_open
     if planned and finished < planned:
         notes.append(
