@@ -37,9 +37,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A grading failure the machine caused (full disk, no memory, a moved `checks/` folder, a broken
   check command) is an infrastructure error, retried and excluded, not a final `fail`. Sabotage of
   the agent's own workspace still fails.
-- `claude-code`: a failed result counts against the agent only for a turn or budget limit or a
-  status that blames the request, whatever its text says, and a CLI that dies with no result is an
-  infrastructure error. A parser crash means usage unknown.
+- `claude-code`: a failed result counts against the agent only for a turn or budget limit or for
+  outgrowing what a request can hold, and a CLI that dies with no result is an infrastructure
+  error. A parser crash means usage unknown.
 - An isolation breach leaves the trial open everywhere: not counted as an error by `run`, exit code
   1 with a resume hint, and no retries used. The three-breach stop counts per arm and across
   sessions. The report counts open trials as unfinished.

@@ -678,6 +678,18 @@ def test_trial_with_no_leak_check_is_recorded_and_reported_as_unverified(tmp_pat
     assert set(noted) - set(analyze(store.meta, checked).notes)
 
 
+def test_running_out_of_credit_stops_the_run_without_grading_anything(tmp_path, monkeypatch):
+    result = (
+        "{'type': 'result', 'subtype': 'success', 'is_error': True, 'api_error_status': 400, "
+        "'result': 'Your credit balance is too low to access the Anthropic API.'}"
+    )
+    script = f"import json, sys\nprint(json.dumps({result}))\nsys.exit(1)\n"
+    exp = leaky_exp(tmp_path, monkeypatch, script, arms=1, tasks=14)
+    summary = run_experiment(exp, tmp_path / "run")
+    assert summary.infra_halt and summary.completed == 0
+    assert {r.status for r in records(tmp_path / "run")} == {"error"}
+
+
 def test_halted_run_keeps_finished_trials_and_resumes(tmp_path, monkeypatch):
     # max_retries = 0: a breach must stay resumable even with no retries to spare.
     flag = tmp_path / "leak-is-unfixed"

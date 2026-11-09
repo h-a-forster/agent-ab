@@ -318,9 +318,22 @@ def test_claude_error_classification_ignores_the_wording(tmp_path):
 
     for wording in ("fetch failed", "getaddrinfo EAI_AGAIN", "you exceeded your quota"):
         assert claude_parse(tmp_path, result(wording), code=1).infra_error is not None
-    # A status that blames the request (the agent's context, say) is the agent's outcome.
-    u = claude_parse(tmp_path, result("/login quota", api_error_status=400), code=1)
-    assert u.infra_error is None
+    # Out of credit or over a spend limit: the API answers 400 or 402, and it is not the agent.
+    for message, status in (
+        ("Your credit balance is too low to access the Anthropic API.", 400),
+        ("You have reached your specified API usage limits.", 400),
+        ("Your credit balance is too low", 402),
+        ("some other request problem", 400),
+    ):
+        u = claude_parse(tmp_path, result(message, api_error_status=status), code=1)
+        assert u.infra_error is not None, message
+    # The agent outgrowing what a request can hold is its own outcome.
+    for message, status in (
+        ("Prompt is too long: 210000 tokens > 200000 maximum", 400),
+        ("Request exceeds the maximum allowed number of bytes", 413),
+    ):
+        u = claude_parse(tmp_path, result(message, api_error_status=status), code=1)
+        assert u.infra_error is None, message
 
 
 def test_claude_dying_mid_stream_is_infra_whatever_it_says(tmp_path):
@@ -703,7 +716,16 @@ def test_claude_real_unknown_model_is_infra(tmp_path):
 
 @pytest.mark.parametrize(
     "status, infra",
-    [(400, False), (401, True), (404, True), (429, True), (529, True), (None, True)],
+    [
+        (400, True),
+        (401, True),
+        (402, True),
+        (404, True),
+        (413, False),
+        (429, True),
+        (529, True),
+        (None, True),
+    ],
 )
 def test_claude_api_error_status(status, infra):
     obj = {

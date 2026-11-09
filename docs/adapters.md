@@ -29,8 +29,9 @@ counted in the report. Two kinds:
 - failures before the agent starts: workspace creation, `setup`, or launching the agent;
 - problems the adapter reports: authentication, rate limits, provider outages, an unusable
   model, or (Codex) a sandbox that cannot run commands. For `claude-code` this goes by structure,
-  not wording: a CLI that dies without a result event, or a result with `is_error` and no status
-  that blames the request. Hitting a turn or budget limit, or a status such as 400, is the agent's;
+  not wording: a CLI that dies without a result event, or a result with `is_error`, including
+  API status 400 and 402 (spend limit, no credit). Hitting a turn or budget limit, or outgrowing
+  what a request can hold (status 413, or 400 saying the prompt is too long), is the agent's;
 - a grading step that fails because of the machine: a full disk, no memory, git that cannot
   start, or anything that also fails on a copy of the task the agent never touched (a moved
   `checks/` folder, a broken check command).

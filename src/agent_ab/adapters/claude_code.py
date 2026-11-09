@@ -40,9 +40,11 @@ _INFRA = re.compile(
 # Agent-side failures: the agent ran out of turns or budget, which is a legitimate outcome.
 _AGENT_SUBTYPES = frozenset({"error_max_turns", "error_max_budget_usd"})
 
-# ``api_error_status`` values that blame the account or provider: auth, no access, unknown
-# model (404, which costs nothing and should not count against the arm), rate limits, outages.
-_INFRA_STATUSES = frozenset({401, 403, 404, 408, 429})
+# The one API failure that is the agent's doing: what it gathered no longer fits in a request (413,
+# or 400 with this text). Every other status blames the account, the provider or the setup, 400
+# included: the API also answers 400 at a spend limit, and 402 when out of credit.
+_REQUEST_TOO_LARGE_STATUS = 413
+_OUTGREW_CONTEXT = re.compile(r"prompt is too long|input is too long", re.IGNORECASE)
 
 _STDOUT_LIMIT = 16 * 1024 * 1024
 _HEAD_LIMIT = 1024 * 1024  # the init event is the first few events; stdout is read from the front
@@ -275,9 +277,10 @@ def _pick_result(objects: list[dict[str, Any]]) -> dict[str, Any] | None:
     return objects[-1] if objects else None
 
 
-def _infra_status(v: Any) -> bool:
-    status = _int(v)
-    return status is not None and (status in _INFRA_STATUSES or status >= 500)
+def _outgrew_the_request(status: Any, message: str) -> bool:
+    return status == _REQUEST_TOO_LARGE_STATUS or (
+        status == 400 and _OUTGREW_CONTEXT.search(message) is not None
+    )
 
 
 def _int(v: Any) -> int | None:
@@ -403,14 +406,13 @@ def parse_result_text(stdout: str, stderr: str, exit_code: int | None) -> AgentU
         usage.final_message = text
     subtype = obj.get("subtype")
 
-    # By structure, never by wording: the text of a failure varies by arm, and the agent writes
-    # some of it. A failed run blames the agent only through a turn or budget limit or a status
-    # that blames the request. Anything else cannot be told apart from a machine or provider
+    # A failed run blames the agent only through a turn or budget limit, or by outgrowing what a
+    # request can hold. Anything else cannot be told apart from a machine, provider or account
     # failure, so it does not count against the arm: it is retried, then excluded and reported.
     failed = obj.get("is_error") is True or (died and obj.get("is_error") is not False)
     status = obj.get("api_error_status")
-    if failed and subtype not in _AGENT_SUBTYPES and (_infra_status(status) or status is None):
-        message = usage.final_message or ""
+    message = usage.final_message or ""
+    if failed and subtype not in _AGENT_SUBTYPES and not _outgrew_the_request(status, message):
         detail = _tail(message, _TAIL - 20) or _tail(stderr, _TAIL - 20) or str(subtype)
         usage.infra_error = f"API error {status}: {detail}" if status is not None else detail
     if usage.final_message is None and isinstance(subtype, str) and subtype.startswith("error"):
