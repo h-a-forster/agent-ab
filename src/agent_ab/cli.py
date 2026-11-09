@@ -28,6 +28,7 @@ import time
 import traceback
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -47,7 +48,6 @@ from agent_ab.store import (
     IN_USE_DIR,
     RUN_FILE,
     TRIALS_DIR,
-    TRIALS_FILE,
     RunStore,
     breach_counts,
     is_done,
@@ -337,7 +337,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-workspaces", action="store_true", help="keep each trial's workspace for inspection"
     )
     p.add_argument(
-        "--force", action="store_true", help="resume even if the experiment fingerprint changed"
+        "--force",
+        action="store_true",
+        help="resume even if the fingerprint, agent-ab version or grading mode differs",
     )
     p.add_argument(
         "--retry-errors",
@@ -1034,6 +1036,13 @@ def _planned_ids(meta: dict) -> list[str]:
     return [trial_id(t, a, r) for t in tasks for a in arms for r in range(repeats)]
 
 
+def _timestamp(text: str) -> float:
+    try:
+        return datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return 0.0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     store = _open_run(args.run_dir)
     meta = store.meta
@@ -1106,10 +1115,11 @@ def cmd_status(args: argparse.Namespace) -> int:
     reports = [
         n for n in ("report.html", "report.md", "analysis.json") if (store.run_dir / n).exists()
     ]
-    log = store.run_dir / TRIALS_FILE
-    log_time = log.stat().st_mtime if log.exists() else 0
+    # The attempts' own times: a fresh git checkout gives the files arbitrary ones.
+    newest = _timestamp(max(finished)) if finished else 0.0
     shown = [
-        n + (" (older than the log)" if (store.run_dir / n).stat().st_mtime < log_time else "")
+        n
+        + (" (older than the last attempt)" if (store.run_dir / n).stat().st_mtime < newest else "")
         for n in reports
     ]
     _out("")

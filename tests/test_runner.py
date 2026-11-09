@@ -1804,6 +1804,22 @@ def test_status_marks_reports_older_than_the_log(tmp_path, capsys):
     assert capsys.readouterr().out != fresh
 
 
+def test_status_does_not_call_reports_stale_for_a_newer_file_time_on_the_log(tmp_path, capsys):
+    # A fresh git checkout gives every file an arbitrary time; what the log holds is what counts.
+    from agent_ab.cli import main
+
+    run_experiment(make_exp(tmp_path), tmp_path / "run")
+    (tmp_path / "run" / "report.md").write_text("x", encoding="utf-8")
+    capsys.readouterr()
+    main(["status", str(tmp_path / "run")])
+    fresh = capsys.readouterr().out
+    log = tmp_path / "run" / TRIALS_FILE
+    later = time.time() + 1000
+    os.utime(log, (later, later))
+    main(["status", str(tmp_path / "run")])
+    assert capsys.readouterr().out == fresh
+
+
 def in_use(run_dir: Path) -> list[str]:
     folder = run_dir / "workspaces-in-use"
     lines = [line for f in sorted(folder.glob("*")) for line in f.read_text("utf-8").splitlines()]
