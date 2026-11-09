@@ -7,6 +7,7 @@ be resumed from what is on disk.
 
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
@@ -21,7 +22,13 @@ from agent_ab.errors import RunStoreError
 from agent_ab.model import SCHEMA_VERSION, Experiment, TrialRecord
 from agent_ab.workspace import grading_mode
 
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
 RUN_FILE = "run.json"
+LOCK_FILE = "run.lock"
 TRIALS_FILE = "trials.jsonl"
 TRIALS_DIR = "trials"
 MAX_COST_USD = 1e6  # an agent-reported cost above this per attempt is treated as unknown
@@ -30,6 +37,58 @@ MAX_COST_USD = 1e6  # an agent-reported cost above this per attempt is treated a
 def utc_now() -> str:
     """Current time as an ISO-8601 UTC string with second precision."""
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class RunLock:
+    """Exclusive use of a run directory by one session, across processes.
+
+    An operating-system lock on ``run.lock``: it goes away with the process however that ends,
+    so a crash leaves no stale lock to clear. Child processes do not inherit it. The file stays
+    behind and only says who holds it. On a network filesystem the lock is only as good as the
+    filesystem's support for it.
+    """
+
+    # Beyond the file's content, which Windows would otherwise refuse to let others read.
+    _OFFSET = 1 << 30
+    _HELD = frozenset({errno.EACCES, errno.EAGAIN, errno.EDEADLK, errno.EWOULDBLOCK})
+
+    def __init__(self) -> None:
+        self._file = None
+
+    def acquire(self, run_dir: Path) -> None:
+        """Take the lock, or raise ``RunStoreError`` at once if it cannot be had."""
+        path = Path(run_dir) / LOCK_FILE
+        try:
+            f = open(path, "a+b")  # noqa: SIM115 - held until release()
+        except OSError as e:
+            raise RunStoreError(f"cannot create {path}: {e}") from e
+        try:
+            if os.name == "nt":
+                f.seek(self._OFFSET)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            f.close()
+            if e.errno not in self._HELD:
+                raise RunStoreError(f"cannot lock {path}: {e}") from e
+            try:
+                holder = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                holder = "unknown"
+            raise RunStoreError(
+                f"{run_dir} is in use by another agent-ab session ({holder}); wait for it to "
+                "finish or stop it before running here"
+            ) from e
+        f.truncate(0)
+        f.write(f"pid {os.getpid()} since {utc_now()}\n".encode())
+        f.flush()
+        self._file = f
+
+    def release(self) -> None:
+        if self._file is not None:
+            self._file.close()  # closing the handle drops the lock
+            self._file = None
 
 
 class RunStore:

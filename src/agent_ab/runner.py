@@ -50,6 +50,7 @@ from agent_ab.proc import build_env, run_process
 from agent_ab.store import (
     MAX_COST_USD,
     TRIALS_DIR,
+    RunLock,
     RunStore,
     check_new_run_dir,
     is_done,
@@ -793,9 +794,20 @@ def run_experiment(
     and with ``RunStoreError`` when the run directory is unusable. ``options.dry_run`` plans
     only: no directories, no processes. A KeyboardInterrupt in the calling thread cancels the
     run: running agents are killed, their attempts are not recorded, and the summary says
-    ``cancelled=True``.
+    ``cancelled=True``. A run directory takes one session at a time: a second one gets ``RunStoreError``
+    before anything runs, and a crashed one holds nothing (see ``RunLock``).
     """
     options = options or RunOptions()
+    lock = RunLock()
+    try:
+        return _run_experiment(exp, run_dir, resume, options, lock)
+    finally:
+        lock.release()
+
+
+def _run_experiment(
+    exp: Experiment, run_dir: Path | None, resume: bool, options: RunOptions, lock: RunLock
+) -> RunSummary:
     jobs = max(1, options.jobs if options.jobs is not None else exp.jobs)
     budget = options.budget_usd if options.budget_usd is not None else exp.budget_usd
     keep = options.keep_workspaces if options.keep_workspaces is not None else exp.keep_workspaces
@@ -816,6 +828,9 @@ def run_experiment(
         if run_dir is None:
             raise RunStoreError("resuming needs the run directory to continue")
         store = RunStore.open(Path(run_dir))
+        if not options.dry_run:
+            lock.acquire(store.run_dir)
+            store = RunStore.open(Path(run_dir))  # what the previous session left, now settled
         store.check_compatible(exp, force=options.force)
         finals = store.final_records()
         # Records of trials outside the current plan (e.g. arms or tasks filtered out) must
@@ -865,6 +880,8 @@ def run_experiment(
         return summary(cancelled=False, budget_exhausted=False, skipped=0)
 
     if store is None:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        lock.acquire(run_dir)
         store = RunStore.create(run_dir, exp, planned_trials=total)
     elif changes := store.forced_changes(exp):
         store.record_forced_resume(exp, total, changes)

@@ -1279,3 +1279,62 @@ def test_forced_narrower_selection_reports_and_counts_the_new_plan(tmp_path, cap
     capsys.readouterr()
     assert main(["status", str(tmp_path / "run")]) == 0
     assert "3/3 done" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- run-directory lock
+
+HOLD_LOCK = """
+import sys, time
+from pathlib import Path
+from agent_ab.store import RunLock
+lock = RunLock()
+lock.acquire(Path(sys.argv[1]))
+print("held", flush=True)
+time.sleep(30)  # a test that forgets to kill this cannot hang for long
+"""
+
+
+def hold_lock(run_dir: Path) -> subprocess.Popen:
+    proc = subprocess.Popen([PY, "-c", HOLD_LOCK, str(run_dir)], stdout=subprocess.PIPE, text=True)
+    assert proc.stdout.readline().strip() == "held"
+    return proc
+
+
+def test_second_session_refused_until_the_first_crashes(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    holder = hold_lock(tmp_path / "run")
+    try:
+        with pytest.raises(RunStoreError):
+            run_experiment(exp, tmp_path / "run", resume=True)
+        assert len(records(tmp_path / "run")) == 1  # refused before anything ran
+        # Reading is not running: a dry run and the reports still work.
+        run_experiment(exp, tmp_path / "run", resume=True, options=RunOptions(dry_run=True))
+    finally:
+        holder.kill()  # a crash: nothing gets to release the lock
+        holder.wait(timeout=30)
+        holder.stdout.close()
+    summary = run_experiment(exp, tmp_path / "run", resume=True)
+    assert summary.completed == 2 and len(records(tmp_path / "run")) == 2
+
+
+def test_new_run_refused_while_its_directory_is_locked(tmp_path):
+    exp = make_exp(tmp_path)
+    (tmp_path / "run").mkdir()
+    holder = hold_lock(tmp_path / "run")
+    try:
+        with pytest.raises(RunStoreError):
+            run_experiment(exp, tmp_path / "run")
+        assert not (tmp_path / "run" / "run.json").exists()
+    finally:
+        holder.kill()
+        holder.wait(timeout=30)
+        holder.stdout.close()
+
+
+def test_lock_is_released_after_a_session_so_the_next_can_start(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    assert run_experiment(exp, tmp_path / "run", resume=True).completed == 2
