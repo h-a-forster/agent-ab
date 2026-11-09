@@ -10,11 +10,19 @@ _HOST_ERRNOS = frozenset(
     for name in ("ENOSPC", "EDQUOT", "ENOMEM", "EMFILE", "ENFILE", "EAGAIN", "EROFS", "EIO")
     if hasattr(errno, name)
 )
+# Python maps many Windows errors to EINVAL, so these need their own check: not enough memory,
+# outofmemory, handle disk full, disk full, no system resources, nonpaged and paged pool, working
+# set quota, paging file quota, commitment limit.
+_HOST_WINERRORS = frozenset({8, 14, 39, 112, 1450, 1451, 1452, 1453, 1454, 1455})
 
 
 def is_host_failure(e: BaseException) -> bool:
     """True when ``e`` says the machine failed (disk full, no memory or handles)."""
-    return isinstance(e, MemoryError) or (isinstance(e, OSError) and e.errno in _HOST_ERRNOS)
+    if isinstance(e, MemoryError):
+        return True
+    if not isinstance(e, OSError):
+        return False
+    return e.errno in _HOST_ERRNOS or getattr(e, "winerror", None) in _HOST_WINERRORS
 
 
 class AgentABError(Exception):

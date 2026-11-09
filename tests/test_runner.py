@@ -1129,6 +1129,25 @@ def test_machine_out_of_memory_starting_the_check_is_infrastructure(tmp_path, mo
     assert rec.status == "error" and rec.passed is None
 
 
+@pytest.mark.parametrize("winerror", [8, 14, 39, 112, 1450, 1455])
+@pytest.mark.skipif(os.name != "nt", reason="the winerror argument only exists on Windows")
+def test_windows_out_of_resources_starting_the_check_is_infrastructure(
+    tmp_path, monkeypatch, winerror
+):
+    from agent_ab import proc
+
+    real = proc.subprocess.Popen
+
+    def no_resources(command, **kw):
+        if command[0] == PY and (Path(kw["cwd"]) / "solution.txt").exists():
+            raise OSError(None, "out of resources", None, winerror)
+        return real(command, **kw)
+
+    monkeypatch.setattr(proc.subprocess, "Popen", no_resources)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
 def test_check_command_broken_for_every_copy_is_infrastructure(tmp_path):
     rec = run_one(
         tmp_path, SOLVE, task_kw={"check": ("agent-ab-no-such-check-exe",)}, max_retries=0
