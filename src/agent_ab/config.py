@@ -23,7 +23,7 @@ from typing import Any
 
 from agent_ab.adapters import get_adapter
 from agent_ab.errors import ConfigError
-from agent_ab.model import AgentSpec, Arm, Command, Experiment, Task
+from agent_ab.model import AgentSpec, Arm, Command, Experiment, Task, trial_id
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -512,6 +512,26 @@ def _merge_agent(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _check_trial_ids(tasks: Sequence[Task], arms: Sequence[Arm], t: _Table) -> None:
+    """Refuse cells that would share a trial id, and so one log entry and attempt folder.
+
+    Ids end in the repeat, so comparing one repeat is enough. Compared without case, because
+    Windows and macOS filesystems would give such cells one folder.
+    """
+    seen: dict[str, tuple[str, str]] = {}
+    for task in tasks:
+        for arm in arms:
+            key = trial_id(task.id, arm.name, 0).casefold()
+            other = seen.setdefault(key, (task.id, arm.name))
+            if other != (task.id, arm.name):
+                raise t.error(
+                    f"task {task.id!r} with arm {arm.name!r} and task {other[0]!r} with arm "
+                    f"{other[1]!r} would share the trial id {key}; rename one (ids join with "
+                    "'__' and folder names may ignore case)",
+                    "arms",
+                )
+
+
 def _load_arm(t: _Table, root: Path, defaults: dict[str, Any], defaults_where: str) -> Arm:
     t.reject_unknown(_ARM_KEYS)
     name = t.string("name", required=True)
@@ -656,6 +676,8 @@ def load_experiment(
         _load_task(task_dir, f"{_rel(task_dir, root)}/task.toml")
         for _, task_dir in _discover_tasks(t, root, select_tasks)
     )
+
+    _check_trial_ids(tasks, arms, t)
 
     exp = Experiment(
         name=name,
