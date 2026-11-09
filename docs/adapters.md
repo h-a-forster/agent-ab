@@ -34,11 +34,14 @@ counted in the report. Two kinds:
   what a request can hold (status 413, or 400 saying the prompt is too long), is the agent's;
 - a grading step that fails because of the machine: a full disk, no memory, git that cannot
   start, or anything that also fails on a copy of the task the agent never touched (a moved
-  `checks/` folder, a broken check command).
+  `checks/` folder, an argv check command that cannot start). What cannot be told from a failing
+  check stays a `fail`: a string check goes through the shell, so a broken command is just a
+  non-zero exit (`validate --tasks` catches it before anything is spent), and a disk that fills
+  while the check runs looks like a failing check.
 
 An [isolation breach](#isolation) is an exception: it is not retried and uses no retries. Ten
-attempts in a row in one arm ending in an infrastructure error, with none of its trials graded
-between them, stop the run: `agent-ab run` exits 1, and trials that were not reached keep all
+attempts in a row in one arm ending in an infrastructure error (or `max_retries + 2`, if that is
+more), with none of its trials graded between them, stop the run: `agent-ab run` exits 1, and trials that were not reached keep all
 their retries. Resume once it is fixed; `--retry-errors` reopens trials whose retries ran out
 ([run-directory.md](run-directory.md#resume)).
 

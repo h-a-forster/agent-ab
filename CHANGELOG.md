@@ -34,8 +34,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes the configuration, and resume with `--force`.
 - A forced resume now updates the plan in `run.json` and is noted in the report. Trials added by
   `--repeats` count; trials no longer selected are left out of the analysis and `status`.
-- A grading failure the machine caused (full disk, no memory, a moved `checks/` folder, a broken
-  check command) is an infrastructure error, retried and excluded, not a final `fail`. Breaking the
+- A grading failure the machine caused while recording or applying the diff, installing the checks
+  or starting the check (full disk, no memory, a stalled git, a moved `checks/` folder, an argv
+  check command that cannot start) is an infrastructure error, retried and excluded, not a final `fail`. Breaking the
   agent's own workspace still fails; `docs/safety.md` lists the routes by which an agent can still
   reach an excluded error.
 - `claude-code`: a failed result counts against the agent only for a turn or budget limit or for
@@ -47,7 +48,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Attempts that finished before Ctrl-C are kept. A stale attempt folder that cannot be removed is
   not reused. `run.json` is synced to disk before it replaces the old one. Experiments whose
   cells would share a trial id (including by case alone) are refused.
-- `status` marks reports older than the log, and lists workspaces left behind; resume removes
+- `status` marks reports older than the last attempt, and lists workspaces left behind; resume removes
   those. `docs/results/manipulation.py` counts what the report counts, which changes no
   published figure.
 - Default `workspace_root`: when the system temp directory is inside the home directory (as

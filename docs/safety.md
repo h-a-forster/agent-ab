@@ -62,6 +62,9 @@ closes these routes:
   - On Linux and macOS, a file name containing a newline can put a line of its own choosing in
     git's error output, ending in a phrase such as `: No space left on device`.
 
+  The other way round, a machine failure can still read as the agent's: a disk that fills while the
+  check runs, including when the verifying runner cannot write its report, is a failing check.
+
   Closed: a file name that merely contains such a phrase, a command line overflowed by staged
   entries, and a workspace bloated until git times out (over 200,000 files or 20 GiB) all stay
   `fail`.

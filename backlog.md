@@ -14,6 +14,8 @@
 
 ## Proposed
 
+- A grader change that keeps `__version__` is noticed on resume (`0.1.1` covers both the audited and the fixed grader, and installs are from GitHub): bump the version when this branch merges, which is a release decision; a recorded grader revision only moves the same manual step, and hashing the source would refuse resumes after unrelated edits.
+- `agent-ab report` survives absurd costs on planned records in old logs (1e308 crashes the bootstrap and totals, as it did before the audit fixes): every cost reader needs the sanitised value, so it is more than a small fix, and only logs from before `_sane_cost` can hold them.
 - `validate` warns when an isolated agent's `python` is missing from `PATH` or is a different major version from the interpreter checks use (the divergence itself is documented in `docs/adapters.md`).
 - `README.md` findings lead with a clean run, or group the two confounded numbers under one "both runs confounded" header, so `-2.7 pts` is not read before the caveat.
 - The offline suite costs less CI time (5 minutes per matrix cell, mostly `tests/test_proc.py`).
