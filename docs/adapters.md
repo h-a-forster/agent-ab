@@ -200,7 +200,7 @@ With `isolation = true` (the default) each trial gets:
   that ends with fewer also exits 1 and says to resume. Finished trials are kept. Fix the leak
   and resume: breached trials run again, whatever `max_retries` says, and a breach that recurs
   stops the run again. The report notes arms with leaks. `leak_check` on each record says whether
-  the check ran: without a usable init event it is `unverified`, never clean, and the report counts
+  the check ran: without an init event holding `memory_paths` it is `unverified`, never clean, and the report counts
   those trials. The init event does not list every file Claude Code loads (2.1.308 listed only the
   auto-memory directory, and `config_leaks` stayed empty with a parent directory's
   `.claude/CLAUDE.md` loaded), so the check catches a foreign config directory but cannot

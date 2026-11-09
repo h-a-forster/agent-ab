@@ -545,8 +545,8 @@ def _unverified_notes(arms: Sequence[str], finals: Sequence[TrialRecord]) -> lis
         if n:
             notes.append(
                 f"Arm {arm}: {_plural(n, 'trial')} could not be checked for configuration loaded "
-                "from outside the workspace (no usable init event), so they may not have run with "
-                "only the configuration under test."
+                "from outside the workspace (no init event listing memory paths), so they may "
+                "not have run with only the configuration under test."
             )
     return notes
 

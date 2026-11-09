@@ -363,6 +363,19 @@ def test_claude_leak_check_outcomes(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {},  # the field is gone
+        {"memory_dirs": {"auto": "/home/x/.claude/projects/y/memory"}},  # or renamed
+        {"memory_paths": "see settings"},  # or no longer a mapping
+    ],
+)
+def test_claude_init_event_with_nothing_to_check_is_unverified(tmp_path, extra):
+    stdout = json.dumps({"type": "system", "subtype": "init", **extra}) + "\n"
+    assert claude_parse(tmp_path, stdout).leak_check == "unverified"
+
+
 def test_claude_leak_check_that_crashes_is_unverified(tmp_path, monkeypatch):
     from agent_ab.adapters import claude_code
 

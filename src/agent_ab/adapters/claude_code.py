@@ -635,7 +635,9 @@ class ClaudeCodeAdapter(Adapter):
         isolated = ctx.spec.options.get("isolation", True)
         allowed = [ctx.workspace, config_dir(ctx.workspace)] if isolated else [ctx.workspace]
         leaks = config_leaks(event, allowed)
-        usage.leak_check = "leaked" if leaks else "clean"
+        # memory_paths is what the check reads: with it gone or renamed, nothing was checked.
+        checked = isinstance(event.get("memory_paths"), Mapping)
+        usage.leak_check = "leaked" if leaks else "clean" if checked else "unverified"
         if leaks and isolated and usage.infra_error is None:
             shown = "; ".join(leaks[:5]) + ("; ..." if len(leaks) > 5 else "")
             usage.infra_error = (
