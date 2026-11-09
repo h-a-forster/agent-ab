@@ -252,8 +252,12 @@ class RunStore:
     def _write_meta(self) -> None:
         path = self.run_dir / RUN_FILE
         tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(self.meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(self.meta, indent=2, sort_keys=True) + "\n")
+            f.flush()
+            os.fsync(f.fileno())  # or power loss can leave an empty run.json over a paid log
         os.replace(tmp, path)
+        _fsync_dir(self.run_dir)
 
     # ------------------------------------------------------------------ trial log
 
@@ -377,6 +381,16 @@ def check_new_run_dir(run_dir: Path) -> None:
             f"{run_dir} holds agent-ab results ({', '.join(leftovers)}) but no {RUN_FILE}; "
             "refusing to mix them into a new run. Choose another directory or remove them."
         )
+
+
+def _fsync_dir(path: Path) -> None:
+    # Makes a rename durable on POSIX; Windows cannot open a directory this way.
+    if os.name != "nt":
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def _cost(record: TrialRecord) -> float:
