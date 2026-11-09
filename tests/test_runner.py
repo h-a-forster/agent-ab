@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import shutil
@@ -834,25 +835,116 @@ def test_parser_crash_means_usage_unknown_not_infra_error(tmp_path):
     assert "RecursionError" in warning
 
 
-def test_grading_breakage_after_agent_is_fail_not_error(tmp_path, monkeypatch):
+def test_grading_breakage_only_the_agents_diff_causes_is_fail(tmp_path, monkeypatch):
     from agent_ab import runner
     from agent_ab.errors import WorkspaceError
 
+    real = runner.install_checks
+
     def broken(ws, task):
-        raise WorkspaceError("refusing to write outside the workspace")
+        if (ws.path / "solution.txt").exists():  # not on a copy without the agent's changes
+            raise WorkspaceError("refusing to write outside the workspace")
+        real(ws, task)
 
     monkeypatch.setattr(runner, "install_checks", broken)
     exp = make_exp(tmp_path, arms=[fake_arm("a")])
     run_experiment(exp, tmp_path / "run")
     (rec,) = records(tmp_path / "run")  # one attempt: nothing retried
     assert rec.status == "fail" and rec.passed is False
-    assert "grading failed after the agent ran" in rec.error and "outside" in rec.error
     assert (tmp_path / "run" / rec.artifacts / "traceback.txt").is_file()
 
 
-def test_check_that_cannot_start_is_fail(tmp_path):
-    rec = run_one(tmp_path, SOLVE, task_kw={"check": ("agent-ab-no-such-check-exe",)})
-    assert rec.status == "fail" and "check could not start" in rec.error
+def test_checks_folder_gone_after_the_agent_ran_is_infrastructure(tmp_path):
+    # A branch switch or moved folder during a long run: no copy of the task can be graded.
+    task = make_task(tmp_path)
+    checks = task.path / "checks"
+    checks.mkdir()
+    (checks / "c.txt").write_text("x", encoding="utf-8")
+    script = f"import shutil; shutil.rmtree({str(checks)!r}, ignore_errors=True)\n{SOLVE}"
+    exp = make_exp(tmp_path, arms=[fake_arm("a", script)], tasks=[replace(task, checks=checks)])
+    summary = run_experiment(exp, tmp_path / "run")
+    recs = records(tmp_path / "run")
+    assert [r.attempt for r in recs] == [0, 1, 2]  # retried like any infrastructure error
+    assert all(r.status == "error" and r.passed is None for r in recs)
+    assert (summary.completed, summary.errors) == (0, 1)
+    assert ws_left(tmp_path) == []
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_full_disk_while_recording_the_diff_is_infrastructure(tmp_path, monkeypatch):
+    from agent_ab import workspace as wsmod
+
+    real = wsmod.subprocess.run
+
+    def no_space(argv, **kw):
+        if "add" in argv and (Path(kw["cwd"]) / "solution.txt").exists():
+            stderr = b"error: unable to write loose object: No space left on device\n"
+            return subprocess.CompletedProcess(argv, 128, b"", stderr)
+        return real(argv, **kw)
+
+    monkeypatch.setattr(wsmod.subprocess, "run", no_space)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+def test_machine_out_of_memory_starting_the_check_is_infrastructure(tmp_path, monkeypatch):
+    from agent_ab import proc
+
+    real = proc.subprocess.Popen
+
+    def no_memory(command, **kw):
+        if command[0] == PY and (Path(kw["cwd"]) / "solution.txt").exists():  # the check
+            raise OSError(errno.ENOMEM, "Cannot allocate memory")
+        return real(command, **kw)
+
+    monkeypatch.setattr(proc.subprocess, "Popen", no_memory)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+def test_check_command_broken_for_every_copy_is_infrastructure(tmp_path):
+    rec = run_one(
+        tmp_path, SOLVE, task_kw={"check": ("agent-ab-no-such-check-exe",)}, max_retries=0
+    )
+    assert rec.status == "error" and rec.passed is None
+
+
+def test_agent_deleting_the_check_script_is_fail(tmp_path):
+    # The script lives in the task's repo and the agent's diff removes it: only its copy breaks.
+    task = make_task(tmp_path)
+    name = "run_check.cmd" if os.name == "nt" else "run_check.sh"
+    body = "@exit /b 0\r\n" if os.name == "nt" else "#!/bin/sh\nexit 0\n"
+    check = (f"{{workspace}}/{name}",)
+    (task.repo / name).write_text(body, encoding="utf-8", newline="")
+    os.chmod(task.repo / name, 0o755)
+    script = f"import os; os.remove({name!r})"
+    exp = make_exp(tmp_path, arms=[fake_arm("a", script)], tasks=[replace(task, check=check)])
+    run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert rec.status == "fail" and rec.check_exit_code is None
+
+
+DELETE_WORKSPACE = (
+    "import os, shutil, stat\n"
+    "def unlock(f, p, e):\n"
+    "    os.chmod(p, stat.S_IWRITE)\n"
+    "    f(p)\n"
+    "w = os.getcwd()\n"
+    "os.chdir(os.path.dirname(w))\n"
+    "shutil.rmtree(w, onerror=unlock)\n"
+)
+
+
+@pytest.mark.parametrize("git", [True, False])
+def test_agent_deleting_its_workspace_is_fail(tmp_path, monkeypatch, git):
+    from agent_ab import workspace as wsmod
+
+    if not git:
+        monkeypatch.setattr(wsmod, "_git", lambda: None)
+    elif not HAS_GIT:
+        pytest.skip("git not available")
+    rec = run_one(tmp_path, DELETE_WORKSPACE)
+    assert rec.status == "fail" and rec.attempt == 0, rec.error
 
 
 def test_agent_link_over_checks_dir_is_replaced(tmp_path):

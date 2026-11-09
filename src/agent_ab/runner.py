@@ -29,8 +29,10 @@ from agent_ab.errors import (
     AdapterError,
     AgentABError,
     GitDirAlteredError,
+    HostError,
     RunStoreError,
     WorkspaceError,
+    is_host_failure,
 )
 from agent_ab.model import (
     AgentUsage,
@@ -116,6 +118,14 @@ class RunSummary:
 
 class _Cancelled(Exception):
     """Internal: the attempt was interrupted and must not be recorded."""
+
+
+class _GradingBroken(Exception):
+    """Internal: a grading step failed. ``host``: the machine is known to be the cause."""
+
+    def __init__(self, message: str, *, host: bool = False):
+        super().__init__(message)
+        self.host = host
 
 
 # --------------------------------------------------------------------------- planning
@@ -435,13 +445,98 @@ def _execute(
     except Exception as e:
         if cancel.is_set():
             raise _Cancelled from e
-        # The agent ran; whatever it did to the workspace that breaks grading (deleted .git,
-        # links over check paths, unreadable files) is its outcome, not an infrastructure
-        # problem. Retrying would bill again and excluding would hide sabotage.
-        rec.status, rec.passed = "fail", False
-        rec.error = f"grading failed after the agent ran: {_exception_summary(e)}"
+        broken = isinstance(e, _GradingBroken)
+        message = (
+            str(e) if broken else f"grading failed after the agent ran: {_exception_summary(e)}"
+        )
+        # What the agent did to its workspace that breaks grading (links over check paths,
+        # unreadable files) is its outcome: retrying would bill again and excluding would hide
+        # sabotage. So the same steps run on a copy it never touched: what fails there, or what
+        # is known to be the machine (a full disk), is an infrastructure error.
+        host = e.host if broken else isinstance(e, HostError) or is_host_failure(e)
+        machine = "the machine" if host else _control_problem(
+            exp, spec, attempt, art, agent_timeout, check_timeout, cancel
+        )  # fmt: skip
+        if machine:
+            rec.status, rec.passed = "error", None
+            rec.error = f"{message} (not the agent's doing: {machine})"
+        else:
+            rec.status, rec.passed = "fail", False
+            rec.error = message
         with contextlib.suppress(OSError):
             _write_text(art / "traceback.txt", traceback.format_exc())
+
+
+def _prepare_pristine(
+    task: Task,
+    ws: Workspace,
+    art: Path,
+    timeout_s: float,
+    cancel: threading.Event,
+    what: str,
+    prefix: str,
+) -> str | None:
+    """Run the task's setup in a fresh copy and snapshot the result; return what went wrong."""
+    if task.setup is None:
+        return None
+    r = run_command(
+        task.setup, ws, timeout_s=timeout_s,
+        stdout_path=art / f"{prefix}.stdout", stderr_path=art / f"{prefix}.stderr", cancel=cancel,
+    )  # fmt: skip
+    _check_cancel(cancel, r)
+    problem = _proc_failure(f"setup of {what}", r, timeout_s)
+    if problem is None and r.exit_code != 0:
+        problem = f"setup of {what} failed with exit code {r.exit_code} (see {prefix}.stderr)"
+    if problem:
+        return problem
+    try:
+        rebaseline(ws)
+    except WorkspaceError as e:
+        return f"cannot snapshot {what} after setup: {e}"
+    return None
+
+
+def _control_problem(
+    exp: Experiment,
+    spec: TrialSpec,
+    attempt: int,
+    art: Path,
+    agent_timeout: float,
+    check_timeout: float,
+    cancel: threading.Event,
+) -> str | None:
+    """Why grading also breaks on a copy of the task the agent never touched, or None.
+
+    Only whether the check can start matters here: on an unsolved task it is expected to fail.
+    """
+    task = spec.task
+    try:
+        ws = create_workspace(
+            task, spec.arm, root=exp.workspace_root, label=f"{spec.id}-a{attempt}-control"
+        )
+    except WorkspaceError as e:
+        return str(e)
+    try:
+        problem = _prepare_pristine(
+            task, ws, art, agent_timeout, cancel, "the control copy", "control-setup"
+        )
+        if problem:
+            return problem
+        install_checks(ws, task)
+        outcome = run_check(
+            task.check, ws, timeout_s=check_timeout,
+            stdout_path=art / "control-check.stdout", stderr_path=art / "control-check.stderr",
+            report_path=art / "control-check-report.json", cancel=cancel,
+        )  # fmt: skip
+        _check_cancel(cancel, outcome.proc)
+        return outcome.proc.start_error
+    except _Cancelled:
+        raise
+    except Exception as e:
+        return _exception_summary(e)
+    finally:
+        if not destroy_workspace(ws):
+            _note_leak(art, ws)
 
 
 def _grade(
@@ -467,13 +562,14 @@ def _grade(
     # Measured before the checks are copied in so they never count as agent changes.
     patch = art / "diff.patch"
     stats: tuple[int, int, int] | None = None
-    diff_problem: str | None = None
+    git_dir_altered = False
+    diff_error: WorkspaceError | None = None
     try:
         stats = diff_stats(ws, patch)
     except GitDirAlteredError:
-        diff_problem = "the agent's changes could not be recorded (its .git directory was altered)"
+        git_dir_altered = True
     except WorkspaceError as e:
-        diff_problem = f"the agent's changes could not be recorded: {e}"
+        diff_error = e
     except OSError as e:
         rec.error = f"cannot write the agent's diff: {e}"  # infrastructure, not the agent
         return
@@ -488,11 +584,15 @@ def _grade(
     if ws.baseline_commit is None:
         _run_checks(exp, rec, art, ws, task, check_timeout, cancel)
         return
-    if diff_problem is not None:
-        # The baseline existed and git works on the host, so the workspace's state is the cause.
+    if git_dir_altered:
         rec.status, rec.passed = "fail", False
-        rec.error = diff_problem
+        rec.error = "the agent's changes could not be recorded (its .git directory was altered)"
         return
+    if diff_error is not None:
+        raise _GradingBroken(
+            f"the agent's changes could not be recorded: {diff_error}",
+            host=isinstance(diff_error, HostError),
+        )
     if stats is None:
         rec.error = "git became unavailable before the agent's diff was taken"  # infrastructure
         return
@@ -511,31 +611,17 @@ def _grade(
             except OSError as e:
                 rec.error = f"cannot write grade-workspace.txt: {e}"  # infrastructure
                 return
-        if task.setup is not None:
-            r = run_command(
-                task.setup, grade_ws, timeout_s=agent_timeout,
-                stdout_path=art / "grade-setup.stdout", stderr_path=art / "grade-setup.stderr",
-                cancel=cancel,
-            )  # fmt: skip
-            _check_cancel(cancel, r)
-            problem = _proc_failure("setup of the grading copy", r, agent_timeout)
-            if problem is None and r.exit_code != 0:
-                problem = (
-                    f"setup of the grading copy failed with exit code {r.exit_code} "
-                    "(see grade-setup.stderr)"
-                )
-            if problem:
-                # The grading copy is pristine, so this is not the agent's doing.
-                rec.error = problem
-                return
-            try:
-                rebaseline(grade_ws)
-            except WorkspaceError as e:
-                # Still the pristine copy: an infrastructure error, retried like one.
-                rec.error = f"cannot snapshot the grading copy after setup: {e}"
-                return
+        problem = _prepare_pristine(
+            task, grade_ws, art, agent_timeout, cancel, "the grading copy", "grade-setup"
+        )
+        if problem:
+            # The grading copy is pristine, so this is not the agent's doing.
+            rec.error = problem
+            return
         try:
             apply_patch(grade_ws, patch)
+        except HostError as e:
+            raise _GradingBroken(f"the agent's diff could not be applied: {e}", host=True) from e
         except WorkspaceError as e:
             rec.status, rec.passed = "fail", False
             rec.error = f"the agent's diff does not apply to a clean copy of the task: {e}"
@@ -568,11 +654,8 @@ def _run_checks(
     rec.check_timed_out = check.timed_out
     rec.check_duration_s = round(check.duration_s, 3)
     if check.start_error:
-        # Also how an agent that deleted the workspace ends up; a broken check command is
-        # caught by `validate --tasks` before anything is spent.
-        rec.status, rec.passed = "fail", False
-        rec.error = f"check could not start: {check.start_error}"
-        return
+        # An agent that deleted the workspace or a script the check runs ends up here too.
+        raise _GradingBroken(f"check could not start: {check.start_error}", host=check.host_error)
     if check.timed_out:
         rec.status, rec.passed = "fail", False
         rec.error = f"check timed out after {check_timeout:g}s"

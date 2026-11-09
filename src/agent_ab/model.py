@@ -135,6 +135,7 @@ class ProcResult:
     stdout_path: Path
     stderr_path: Path
     start_error: str | None = None  # set when the executable could not be launched
+    host_error: bool = False  # the start failed because of the machine, not the command
 
 
 @dataclass

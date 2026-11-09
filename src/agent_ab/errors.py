@@ -1,5 +1,21 @@
 """Exception types shared across agent-ab."""
 
+from __future__ import annotations
+
+import errno
+
+# The machine ran out of something or its storage failed; no workspace content causes these.
+_HOST_ERRNOS = frozenset(
+    getattr(errno, name)
+    for name in ("ENOSPC", "EDQUOT", "ENOMEM", "EMFILE", "ENFILE", "EAGAIN", "EROFS", "EIO")
+    if hasattr(errno, name)
+)
+
+
+def is_host_failure(e: BaseException) -> bool:
+    """True when ``e`` says the machine failed (disk full, no memory or handles)."""
+    return isinstance(e, MemoryError) or (isinstance(e, OSError) and e.errno in _HOST_ERRNOS)
+
 
 class AgentABError(Exception):
     """Base class for all agent-ab errors."""
@@ -23,6 +39,10 @@ class WorkspaceError(AgentABError):
 
 class GitDirAlteredError(WorkspaceError):
     """A workspace's ``.git`` directory is gone or was replaced, so its diff cannot be taken."""
+
+
+class HostError(WorkspaceError):
+    """The machine failed (disk full, no memory, git cannot start), whatever is in the workspace."""
 
 
 class AdapterError(AgentABError):

@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePath, PureWindowsPath
 
 from .config import expand_placeholders as _expand
-from .errors import GitDirAlteredError, WorkspaceError
+from .errors import GitDirAlteredError, HostError, WorkspaceError, is_host_failure
 from .model import Arm, Command, ProcResult, Task
 from .proc import IS_WINDOWS, build_env, run_process
 
@@ -211,7 +211,7 @@ def _copy_into(src: Path, ws: Path, what: str) -> None:
     except WorkspaceError:
         raise
     except (OSError, shutil.Error) as e:
-        raise WorkspaceError(f"copying {what} into the workspace failed: {e}") from e
+        raise _copy_error(f"copying {what} into the workspace failed", e) from e
 
 
 # --------------------------------------------------------------------------- git
@@ -261,6 +261,18 @@ def _git_argv(git: str, *args: str) -> list[str]:
     ]  # fmt: skip
 
 
+# git's own wording (its environment sets LC_ALL=C) when the machine, not the repository, failed.
+_GIT_HOST_FAILURE = re.compile(
+    r"no space left|disk quota|out of memory|cannot allocate memory|too many open files"
+    r"|read-only file system|input/output error",
+    re.IGNORECASE,
+)
+
+
+def _copy_error(message: str, e: Exception) -> WorkspaceError:
+    return (HostError if is_host_failure(e) else WorkspaceError)(f"{message}: {e}")
+
+
 def _run_git(ws: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
     git = _git()
     if git is None:
@@ -279,11 +291,16 @@ def _run_git(ws: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
             timeout=_GIT_TIMEOUT_S,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError) as e:
+    except OSError as e:
+        # With the workspace still there, the machine could not start git.
+        error = HostError if ws.is_dir() else WorkspaceError
+        raise error(f"git {args[0]} failed: {e}") from e
+    except subprocess.SubprocessError as e:
         raise WorkspaceError(f"git {args[0]} failed: {e}") from e
     if cp.returncode != 0:
         tail = (cp.stderr or b"").decode("utf-8", "replace").strip()[-500:]
-        raise WorkspaceError(f"git {args[0]} failed (exit {cp.returncode}): {tail}")
+        error = HostError if _GIT_HOST_FAILURE.search(tail) else WorkspaceError
+        raise error(f"git {args[0]} failed (exit {cp.returncode}): {tail}")
     return cp
 
 
@@ -581,7 +598,7 @@ def apply_patch(ws: Workspace, patch_path: Path) -> None:
         if patch_path.stat().st_size == 0:
             return
     except OSError as e:
-        raise WorkspaceError(f"cannot read the agent's diff: {e}") from e
+        raise HostError(f"cannot read the agent's diff: {e}") from e
     _run_git(ws.path, "apply", "--binary", "--whitespace=nowarn", str(patch_path.resolve()))
 
 
@@ -608,7 +625,7 @@ def install_checks(ws: Workspace, task: Task) -> None:
                 continue
             _remove_path(ws.path / entry.name)
     except OSError as e:
-        raise WorkspaceError(f"clearing check paths in the workspace failed: {e}") from e
+        raise _copy_error("clearing check paths in the workspace failed", e) from e
     _copy_into(checks, ws.path, "checks")
 
 

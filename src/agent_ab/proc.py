@@ -26,6 +26,7 @@ import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from .errors import is_host_failure
 from .model import ProcResult
 
 IS_WINDOWS = sys.platform == "win32"
@@ -298,7 +299,7 @@ def run_process(
     stderr_path = Path(stderr_path)
     start = time.monotonic()
 
-    def failed(message: str) -> ProcResult:
+    def failed(message: str, host: bool = False) -> ProcResult:
         # Leave the output files behind so callers can always open them.
         for p in (stdout_path, stderr_path):
             with contextlib.suppress(OSError):
@@ -312,6 +313,7 @@ def run_process(
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             start_error=message,
+            host_error=host,
         )
 
     if isinstance(argv, str):
@@ -348,12 +350,12 @@ def run_process(
         stderr_path.parent.mkdir(parents=True, exist_ok=True)
         out = open(stdout_path, "wb")  # noqa: SIM115 - closed in the finally below
     except OSError as e:
-        return failed(f"cannot open output file: {e}")
+        return failed(f"cannot open output file: {e}", host=True)
     try:
         err = open(stderr_path, "wb")  # noqa: SIM115
     except OSError as e:
         out.close()
-        return failed(f"cannot open output file: {e}")
+        return failed(f"cannot open output file: {e}", host=True)
 
     writer: threading.Thread | None = None
     job: _Job | None = None
@@ -370,7 +372,7 @@ def run_process(
                 **kwargs,
             )
         except (OSError, ValueError, subprocess.SubprocessError) as e:
-            return failed(f"{type(e).__name__}: {e}")
+            return failed(f"{type(e).__name__}: {e}", host=is_host_failure(e))
         job = _Job.create()
         if job is not None and not job.assign(proc.pid):
             job = None
