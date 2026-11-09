@@ -351,7 +351,7 @@ def test_analyze_no_ratio_note_with_positive_costs():
 
 def test_analyze_errors_excluded_and_retries():
     records = grid(6, 1, lambda i, arm, r: True)
-    records.append(rec("t00", "treat", 1, "error", cost=None))  # never recovered
+    records.append(rec("t00", "treat", 1, "error", attempt=2, cost=None))  # never recovered
     records.append(rec("t01", "treat", 1, "error", attempt=0, cost=0.5))
     records.append(rec("t01", "treat", 1, "fail", attempt=1, cost=0.2))  # retry wins
     records.append(rec("t02", "treat", 1, "pass", attempt=2))
@@ -565,3 +565,30 @@ def test_analyze_environment_flags_config_leaks():
     notes = "\n".join(analyze(env_meta(), records, n_boot=100).notes)
     assert "Arm treat: 2 trial(s) loaded memory or instruction files from outside" in notes
     assert "Arm control:" not in notes
+
+
+def _with_errors(attempt: int, breach: bool = False) -> tuple[dict, list[TrialRecord]]:
+    recs = [
+        TrialRecord(
+            trial_id=f"t{i}__a__r0", task=f"t{i}", arm="a", repeat=0, attempt=0, status="pass"
+        )
+        for i in range(4)
+    ] + [
+        TrialRecord(trial_id=f"t{i}__a__r0", task=f"t{i}", arm="a", repeat=0, attempt=attempt,
+                    status="error", isolation_breach=breach)
+        for i in range(4, 6)
+    ]  # fmt: skip
+    meta = {"experiment": "x", "baseline": "a", "planned_trials": 6, "config": {"max_retries": 2}}
+    return meta, recs
+
+
+def test_report_counts_trials_still_open_as_unfinished():
+    meta, recs = _with_errors(attempt=0)
+    assert any("4 of 6" in n for n in analyze(meta, recs, n_boot=10).notes)
+    meta, recs = _with_errors(attempt=0, breach=True)
+    assert any("4 of 6" in n for n in analyze(meta, recs, n_boot=10).notes)
+
+
+def test_report_counts_exhausted_errors_as_finished():
+    meta, recs = _with_errors(attempt=2)
+    assert not any("of 6" in n for n in analyze(meta, recs, n_boot=10).notes)

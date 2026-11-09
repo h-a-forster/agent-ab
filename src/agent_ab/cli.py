@@ -43,7 +43,14 @@ from agent_ab.report import (
     render_text,
 )
 from agent_ab.stats import analyze
-from agent_ab.store import RUN_FILE, TRIALS_DIR, RunStore, is_done
+from agent_ab.store import (
+    RUN_FILE,
+    TRIALS_DIR,
+    RunStore,
+    breach_counts,
+    is_done,
+    stored_max_retries,
+)
 
 PROG = "agent-ab"
 EXIT_OK, EXIT_FAILURE, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 130
@@ -329,6 +336,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--force", action="store_true", help="resume even if the experiment fingerprint changed"
+    )
+    p.add_argument(
+        "--retry-errors",
+        action="store_true",
+        help="with --resume: run trials whose retries ran out again, with fresh retries; "
+        "everything already recorded is kept",
     )
     p.add_argument("--quiet", action="store_true", help="no per-trial progress lines")
 
@@ -822,6 +835,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         run_experiment,
     )
 
+    if args.retry_errors and not args.resume:
+        raise UsageError("--retry-errors needs --resume: there is nothing to retry in a new run")
     exp = _load(args)
     if len(exp.arms) < 2:
         # A one-arm run is a pilot: it measures baseline difficulty (and feeds `power`).
@@ -852,6 +867,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             dry_run=dry_run,
             keep_workspaces=True if args.keep_workspaces else None,
             force=args.force,
+            retry_errors=args.retry_errors,
             progress=progress,
         )
 
@@ -923,6 +939,19 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"resume with: {resume_hint}"
         )
         return EXIT_FAILURE
+    if summary.infra_halt:
+        _err(
+            f"{PROG}: run stopped: {summary.infra_halt}\n"
+            f"Finished trials are kept. Once it is fixed, resume with: {resume_hint}"
+        )
+        return EXIT_FAILURE
+    if summary.open_breaches:
+        _warn(
+            f"{summary.open_breaches} trial(s) ended in an isolation breach, are excluded and "
+            "stay open. Fix the leak (see docs/adapters.md, Isolation), then resume with: "
+            f"{resume_hint}"
+        )
+        remaining -= summary.open_breaches
     if summary.budget_exhausted and remaining:
         _warn(
             f"budget {_budget_text(budget)} reached with {remaining} of {summary.planned} "
@@ -934,8 +963,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         _warn(
             f"{summary.errors} trial(s) ended in infrastructure errors after all retries "
             f"and are excluded from the statistics; see: {PROG} status "
-            f"{_quote(str(run_dir))}"
+            f"{_quote(str(run_dir))}. To try them again: {resume_hint} --retry-errors"
         )
+    if summary.open_breaches:
+        return EXIT_FAILURE
     if summary.completed == 0 and summary.planned and not summary.budget_exhausted:
         return EXIT_FAILURE
     return EXIT_OK
@@ -991,11 +1022,6 @@ def cmd_report(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- status
 
 
-def _max_retries(meta: dict) -> int:
-    value = (meta.get("config") or {}).get("max_retries")
-    return value if isinstance(value, int) and value >= 0 else 2
-
-
 def _planned_ids(meta: dict) -> list[str]:
     """Trial ids implied by run.json's resolved config (empty if it cannot be read)."""
     cfg = meta.get("config") or {}
@@ -1016,10 +1042,11 @@ def cmd_status(args: argparse.Namespace) -> int:
     ids = set(_planned_ids(meta))
     if ids:  # records outside the plan count toward spend only, as in the report
         finals = {tid: r for tid, r in finals.items() if tid in ids}
-    max_retries = _max_retries(meta)
+    max_retries = stored_max_retries(meta)
+    breaches = breach_counts(records)
     planned = int(meta.get("planned_trials") or 0)
 
-    done = [r for r in finals.values() if is_done(r, max_retries)]
+    done = [r for r in finals.values() if is_done(r, max_retries, breaches[r.trial_id])]
     passes = sum(r.status == "pass" for r in done)
     fails = sum(r.status == "fail" for r in done)
     errors = sum(r.status == "error" for r in done)
@@ -1071,7 +1098,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         _out("")
         _out("Errors (last attempt):")
         for r in errored[:10]:
-            state = "final" if is_done(r, max_retries) else "will retry on resume"
+            final = is_done(r, max_retries, breaches[r.trial_id])
+            state = "final; --retry-errors reopens it" if final else "will retry on resume"
             _out(f"  {r.trial_id} (attempt {r.attempt}, {state}): {_short(r.error, 90)}")
         if len(errored) > 10:
             _out(f"  ... and {len(errored) - 10} more")

@@ -430,15 +430,14 @@ def leaky_agent(counter: Path, leaks: str) -> str:
     )
 
 
-def leaky_exp(tmp_path, monkeypatch, script: str, **kw) -> Experiment:
+def leaky_exp(tmp_path, monkeypatch, script: str, *, arms=2, tasks=3, **kw) -> Experiment:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setitem(adapters._REGISTRY, "leaky", "unused:Unused")
     monkeypatch.setitem(adapters._INSTANCES, "leaky", LeakyClaude(script))
     agent = AgentSpec(adapter="leaky", options={"executable": PY})
-    tasks = [make_task(tmp_path, f"t{i}") for i in range(3)]
-    return make_exp(
-        tmp_path, arms=[Arm(name="a", agent=agent), Arm(name="b", agent=agent)], tasks=tasks, **kw
-    )
+    tasks = [make_task(tmp_path, f"t{i}") for i in range(tasks)]
+    arm_list = [Arm(name=n, agent=agent) for n in "ab"[:arms]]
+    return make_exp(tmp_path, arms=arm_list, tasks=tasks, **kw)
 
 
 @pytest.mark.parametrize("jobs", [1, 2])
@@ -455,13 +454,135 @@ def test_repeated_isolation_breach_halts_the_run(tmp_path, monkeypatch, jobs):
     assert summary.total_cost_usd == pytest.approx(0.1 * len(recs))
 
 
-def test_clean_trial_between_breaches_does_not_halt(tmp_path, monkeypatch):
-    # Breach, breach, clean, repeated: never three in a row. A single breach is not retried.
-    exp = leaky_exp(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "n % 3 != 2"))
+def test_clean_trial_in_the_arm_between_breaches_does_not_halt(tmp_path, monkeypatch):
+    # Breach, breach, clean, repeated in one arm: never three open. A breach is not retried.
+    exp = leaky_exp(
+        tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "n % 3 != 2"), arms=1, tasks=6
+    )
     summary = run_experiment(exp, tmp_path / "run")
     assert summary.isolation_halt is None
     assert len(records(tmp_path / "run")) == 6
-    assert (summary.completed, summary.errors) == (2, 4)
+    # Breached trials are not finished: they count neither as completed nor as errors.
+    assert (summary.completed, summary.errors, summary.open_breaches) == (2, 0, 4)
+
+
+def test_breaches_in_one_arm_halt_despite_clean_trials_in_the_other(tmp_path, monkeypatch):
+    script = leaky_agent(tmp_path / "n", "'LEAK' in __import__('sys').stdin.read()")
+    exp = leaky_exp(tmp_path, monkeypatch, script, tasks=6)
+    leaking = replace(exp.arms[0], prompt_prefix="LEAK")
+    exp = replace(exp, arms=(leaking, exp.arms[1]))
+    summary = run_experiment(exp, tmp_path / "run")
+    assert summary.isolation_halt
+    assert sum(r.isolation_breach for r in records(tmp_path / "run")) == 3
+
+
+def test_resuming_an_unfixed_leak_pays_for_one_more_attempt_not_three(tmp_path, monkeypatch):
+    exp = leaky_exp(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "True"), arms=1, tasks=6)
+    run_experiment(exp, tmp_path / "run")
+    assert len(records(tmp_path / "run")) == 3
+    again = run_experiment(exp, tmp_path / "run", resume=True)
+    assert again.isolation_halt and len(records(tmp_path / "run")) == 4
+
+
+def test_breach_attempts_do_not_use_up_retries(tmp_path, monkeypatch):
+    # Breaches at attempts 0, 1, 2 across sessions, then the leak is fixed and a 429 hits.
+    script = leaky_agent(tmp_path / "n", "n < 3").replace(
+        "print(json.dumps({'type': 'result'",
+        "if n == 3:\n"
+        "    print(json.dumps({'type': 'result', 'is_error': True, 'api_error_status': 429}))\n"
+        "    raise SystemExit(1)\n"
+        "print(json.dumps({'type': 'result'",
+    )
+    exp = leaky_exp(tmp_path, monkeypatch, script, arms=1, tasks=1, max_retries=2)
+    for _ in range(3):
+        run_experiment(exp, tmp_path / "run", resume=(tmp_path / "run").exists())
+    summary = run_experiment(exp, tmp_path / "run", resume=True)
+    assert [r.status for r in records(tmp_path / "run")][3:] == ["error", "pass"]
+    assert (summary.completed, summary.errors) == (1, 0)
+
+
+def leaky_cli_config(tmp_path, monkeypatch, script) -> Path:
+    leaky_exp(tmp_path, monkeypatch, script)  # registers the adapter
+    task = tmp_path / "cli" / "tasks" / "t0"
+    (task / "repo").mkdir(parents=True)
+    (task / "repo" / "README.md").write_text("x\n", encoding="utf-8")
+    (task / "task.toml").write_text(
+        'prompt = "p"\ncheck = ["{python}", "-c", "pass"]\n', encoding="utf-8"
+    )
+    config = tmp_path / "cli" / "experiment.toml"
+    config.write_text(
+        'name = "x"\ntasks = ["tasks/*"]\nrepeats = 2\n'
+        f"workspace_root = {json.dumps((tmp_path / 'ws').as_posix())}\n"
+        f'[agent]\nadapter = "leaky"\noptions = {{ executable = {json.dumps(PY)} }}\n'
+        '[[arms]]\nname = "a"\n',
+        encoding="utf-8",
+    )
+    return config
+
+
+def test_cli_does_not_call_a_run_with_a_breach_finished(tmp_path, monkeypatch, capsys):
+    from agent_ab.cli import main
+
+    config = leaky_cli_config(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "n == 0"))
+    code = main(["run", str(config), "--out", str(tmp_path / "run"), "--quiet"])
+    assert code == 1
+    assert "--resume" in capsys.readouterr().err
+
+
+def test_exhausted_errors_can_be_retried_without_discarding_paid_results(tmp_path):
+    flag = tmp_path / "outage"
+    flag.touch()
+    script = (
+        "import os, sys\n"
+        f"{usage_snippet(cost_usd=1.0)}\n"
+        f"{SOLVE}\n"
+        f"if os.path.exists({str(flag)!r}) and "
+        "os.path.basename(os.getcwd()).startswith('agent-ab-t1'):\n"
+        f"    {usage_snippet(cost_usd=1.0, infra_error='outage')}\n"
+    )
+    tasks = [make_task(tmp_path, "t0"), make_task(tmp_path, "t1")]
+    exp = make_exp(tmp_path, arms=[fake_arm("a", script)], tasks=tasks, max_retries=1)
+    first = run_experiment(exp, tmp_path / "run")
+    assert (first.completed, first.errors) == (1, 1)
+    flag.unlink()
+    before = records(tmp_path / "run")
+    run_experiment(exp, tmp_path / "run", resume=True)
+    assert records(tmp_path / "run") == before  # still final without being asked
+
+    summary = run_experiment(
+        exp, tmp_path / "run", resume=True, options=RunOptions(retry_errors=True)
+    )
+    assert (summary.completed, summary.errors) == (2, 0)
+    new = records(tmp_path / "run")[len(before) :]
+    assert [(r.task, r.attempt, r.status) for r in new] == [("t1", 2, "pass")]
+    assert records(tmp_path / "run")[: len(before)] == before
+    assert RunStore.open(tmp_path / "run").total_cost() == pytest.approx(4.0)
+
+
+def test_retry_errors_needs_a_run_to_resume(tmp_path, monkeypatch):
+    from agent_ab.cli import main
+
+    config = leaky_cli_config(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "False"))
+    code = main(["run", str(config), "--out", str(tmp_path / "run"), "--retry-errors"])
+    assert code != 0 and not (tmp_path / "n").exists()
+
+
+def test_outage_stops_the_run_before_exhausting_every_trial(tmp_path):
+    tasks = [make_task(tmp_path, f"t{i:02}") for i in range(14)]
+    script = usage_snippet(infra_error="429")
+    exp = make_exp(tmp_path, arms=[fake_arm("a", script)], tasks=tasks)
+    summary = run_experiment(exp, tmp_path / "run")
+    assert summary.infra_halt
+    recs = records(tmp_path / "run")
+    assert len(recs) == 10 and summary.errors == 0  # nothing used up: all can resume
+    assert {r.attempt for r in recs} == {0}
+
+
+def test_errors_in_one_arm_stop_it_though_the_other_arm_is_fine(tmp_path):
+    tasks = [make_task(tmp_path, f"t{i:02}") for i in range(14)]
+    arms = [fake_arm("a", usage_snippet(infra_error="401")), fake_arm("b", SOLVE)]
+    summary = run_experiment(make_exp(tmp_path, arms=arms, tasks=tasks), tmp_path / "run")
+    assert summary.infra_halt
 
 
 def test_trial_with_no_leak_check_is_recorded_and_reported_as_unverified(tmp_path, monkeypatch):
@@ -486,7 +607,7 @@ def test_halted_run_keeps_finished_trials_and_resumes(tmp_path, monkeypatch):
     exp = leaky_exp(tmp_path, monkeypatch, script, max_retries=0)
     first = run_experiment(exp, tmp_path / "run")
     before = records(tmp_path / "run")
-    assert first.isolation_halt and (first.completed, first.errors) == (1, 3)
+    assert first.isolation_halt and (first.completed, first.errors) == (1, 0)
     assert [r.status for r in before] == ["pass", "error", "error", "error"]
 
     flag.unlink()  # the owner fixes the leak

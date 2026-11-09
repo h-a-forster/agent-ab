@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -178,6 +179,8 @@ def test_is_done():
     assert is_done(rec(status="fail"), 2)
     assert not is_done(rec(status="error", attempt=1), 2)
     assert is_done(rec(status="error", attempt=2), 2)
+    assert not is_done(rec(status="error", attempt=3), 2, breaches=3)  # breaches use no retries
+    assert is_done(rec(status="error", attempt=5), 2, breaches=3)
 
 
 def test_env_values_are_redacted_in_run_json(tmp_path):

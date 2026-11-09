@@ -24,6 +24,7 @@ from .model import (
     TaskCell,
     TrialRecord,
 )
+from .store import breach_counts, is_done, stored_max_retries
 
 __all__ = [
     "analyze",
@@ -383,6 +384,7 @@ def _environments(
 
     envs: list[ArmEnvironment] = []
     leaky: dict[str, int] = {}  # arm -> trials whose agent loaded memory from outside
+    breached: dict[str, int] = {}  # arm -> those of them excluded as isolation breaches
     for arm in arms:
         models: set[str] = set()
         versions: set[str] = set()
@@ -401,6 +403,7 @@ def _environments(
             init_trials += 1
             if init.get("config_leaks"):
                 leaky[arm] = leaky.get(arm, 0) + 1
+                breached[arm] = breached.get(arm, 0) + bool(rec.isolation_breach)
             for key, field_name in (
                 ("tools", "tools"),
                 ("plugins", "plugins"),
@@ -433,6 +436,11 @@ def _environments(
         f"Arm {arm}: {n} trial(s) loaded memory or instruction files from outside the "
         "workspace (config_leaks in trials.jsonl), so they did not run with only the "
         "configuration under test."
+        + (
+            f" {breached[arm]} of them are excluded as isolation breaches until the run is resumed."
+            if breached.get(arm)
+            else ""
+        )
         for arm, n in leaky.items()
     ]
     for e in envs:
@@ -770,15 +778,25 @@ def analyze(
     planned = int(exp_meta.get("planned_trials") or 0)
     spent = [r.cost_usd for r in all_records if r.cost_usd is not None]
 
-    if errors:
+    max_retries = stored_max_retries(exp_meta)
+    breaches = breach_counts(all_records)
+    still_open = sum(not is_done(r, max_retries, breaches[r.trial_id]) for r in finals)
+    if still_open:
         notes.insert(
             0,
-            f"{_plural(errors, 'trial')} excluded as infrastructure errors "
+            f"{_plural(still_open, 'trial')} excluded for now: the last attempt was an "
+            "infrastructure error or isolation breach, and resuming the run tries again.",
+        )
+    if errors > still_open:
+        notes.insert(
+            0,
+            f"{_plural(errors - still_open, 'trial')} excluded as infrastructure errors "
             "(final attempt failed for reasons outside the configuration under test).",
         )
-    if planned and len(finals) < planned:
+    finished = len(finals) - still_open
+    if planned and finished < planned:
         notes.append(
-            f"The run is incomplete: {len(finals)} of {planned} planned trials finished "
+            f"The run is incomplete: {finished} of {planned} planned trials finished "
             "(stopped early, for example by the budget or an interruption)."
         )
     one_sided = sorted(t for t in tasks if 0 < sum(1 for a in arms if t in frac[a]) < len(arms))

@@ -12,6 +12,8 @@ import json
 import math
 import os
 import threading
+from collections import Counter
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -417,12 +419,24 @@ def _redact_env(value: Any) -> Any:
     return value
 
 
-def is_done(record: TrialRecord, max_retries: int) -> bool:
+def stored_max_retries(meta: dict) -> int:
+    """The run's ``max_retries`` as stored in run.json (the default if it cannot be read)."""
+    value = (meta.get("config") or {}).get("max_retries")
+    return value if isinstance(value, int) and value >= 0 else 2
+
+
+def breach_counts(records: Iterable[TrialRecord]) -> Counter[str]:
+    """Isolation breaches per trial id: attempts that used up none of its retries."""
+    return Counter(r.trial_id for r in records if r.isolation_breach)
+
+
+def is_done(record: TrialRecord, max_retries: int, breaches: int = 0) -> bool:
     """A trial needs no more attempts once it passed/failed or exhausted its retries.
 
     An isolation breach is never final: it says nothing about the trial, and it stops the run
-    without retries, so a resume after fixing the leak must run the trial again.
+    without retries, so a resume after fixing the leak must run the trial again. ``breaches``
+    (see ``breach_counts``) says how many of its attempts were breaches, which are not retries.
     """
     if record.isolation_breach:
         return False
-    return record.status in ("pass", "fail") or record.attempt >= max_retries
+    return record.status in ("pass", "fail") or record.attempt - breaches >= max_retries
