@@ -40,11 +40,17 @@ _INFRA = re.compile(
 # Agent-side failures: the agent ran out of turns or budget, which is a legitimate outcome.
 _AGENT_SUBTYPES = frozenset({"error_max_turns", "error_max_budget_usd"})
 
-# The one API failure that is the agent's doing: what it gathered no longer fits in a request (413,
-# or 400 with this text). Every other status blames the account, the provider or the setup, 400
-# included: the API also answers 400 at a spend limit, and 402 when out of credit.
-_REQUEST_TOO_LARGE_STATUS = 413
-_OUTGREW_CONTEXT = re.compile(r"prompt is too long|input is too long", re.IGNORECASE)
+# API statuses that blame the request, which the agent's work shaped (a context overflow, an image
+# too big): its outcome, because excluding a real failure can flip a comparison. Every other status
+# blames the account, the provider or the setup. But the API also answers 400 at a spend limit and
+# gives that no type of its own, so here wording has to decide: the text comes from the API, not the
+# agent. A 400 before any work was billed cannot be the agent's doing, whatever it says, which
+# leaves unfamiliar wording only for a limit reached in the middle of a trial.
+_REQUEST_STATUSES = frozenset({400, 413})
+_ACCOUNT_LIMIT = re.compile(
+    r"credit balance|usage limit|spend(?:ing)? (?:limit|cap)|billing|payment|quota|extra usage",
+    re.IGNORECASE,
+)
 
 _STDOUT_LIMIT = 16 * 1024 * 1024
 _HEAD_LIMIT = 1024 * 1024  # the init event is the first few events; stdout is read from the front
@@ -277,9 +283,11 @@ def _pick_result(objects: list[dict[str, Any]]) -> dict[str, Any] | None:
     return objects[-1] if objects else None
 
 
-def _outgrew_the_request(status: Any, message: str) -> bool:
-    return status == _REQUEST_TOO_LARGE_STATUS or (
-        status == 400 and _OUTGREW_CONTEXT.search(message) is not None
+def _agents_bad_request(obj: Mapping[str, Any], message: str) -> bool:
+    return (
+        obj.get("api_error_status") in _REQUEST_STATUSES
+        and obj.get("total_cost_usd") != 0
+        and _ACCOUNT_LIMIT.search(message) is None
     )
 
 
@@ -406,13 +414,13 @@ def parse_result_text(stdout: str, stderr: str, exit_code: int | None) -> AgentU
         usage.final_message = text
     subtype = obj.get("subtype")
 
-    # A failed run blames the agent only through a turn or budget limit, or by outgrowing what a
-    # request can hold. Anything else cannot be told apart from a machine, provider or account
-    # failure, so it does not count against the arm: it is retried, then excluded and reported.
+    # A failed run blames the agent only through a turn or budget limit, or a request its work made
+    # invalid. Anything else cannot be told apart from a machine, provider or account failure, so
+    # it does not count against the arm: it is retried, then excluded and reported.
     failed = obj.get("is_error") is True or (died and obj.get("is_error") is not False)
     status = obj.get("api_error_status")
     message = usage.final_message or ""
-    if failed and subtype not in _AGENT_SUBTYPES and not _outgrew_the_request(status, message):
+    if failed and subtype not in _AGENT_SUBTYPES and not _agents_bad_request(obj, message):
         detail = _tail(message, _TAIL - 20) or _tail(stderr, _TAIL - 20) or str(subtype)
         usage.infra_error = f"API error {status}: {detail}" if status is not None else detail
     if usage.final_message is None and isinstance(subtype, str) and subtype.startswith("error"):

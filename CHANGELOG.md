@@ -39,8 +39,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   check command that cannot start) is an infrastructure error, retried and excluded, not a final `fail`. Breaking the
   agent's own workspace still fails; `docs/safety.md` lists the routes by which an agent can still
   reach an excluded error.
-- `claude-code`: a failed result counts against the agent only for a turn or budget limit or for
-  outgrowing what a request can hold, and a CLI that dies with no result is an infrastructure
+- `claude-code`: a failed result counts against the agent only for a turn or budget limit or a
+  request its work made invalid (413, or a 400 not recognised as credit, billing or a spend limit,
+  after work was billed), and a CLI that dies with no result is an infrastructure
   error. A parser crash means usage unknown.
 - An isolation breach leaves the trial open everywhere: not counted as an error by `run`, exit code
   1 with a resume hint, and no retries used. The three-breach stop counts per arm and across

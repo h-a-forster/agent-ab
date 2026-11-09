@@ -323,17 +323,24 @@ def test_claude_error_classification_ignores_the_wording(tmp_path):
         ("Your credit balance is too low to access the Anthropic API.", 400),
         ("You have reached your specified API usage limits.", 400),
         ("Your credit balance is too low", 402),
-        ("some other request problem", 400),
     ):
         u = claude_parse(tmp_path, result(message, api_error_status=status), code=1)
         assert u.infra_error is not None, message
-    # The agent outgrowing what a request can hold is its own outcome.
+    # A request the agent's work made invalid is its own outcome, however it is worded.
     for message, status in (
         ("Prompt is too long: 210000 tokens > 200000 maximum", 400),
+        ("input length and `max_tokens` exceed context limit: 193125 + 21333 > 200000", 400),
+        ("This model's maximum context length is 200000 tokens.", 400),
+        ("image exceeds 5 MB maximum", 400),
         ("Request exceeds the maximum allowed number of bytes", 413),
     ):
-        u = claude_parse(tmp_path, result(message, api_error_status=status), code=1)
+        u = claude_parse(
+            tmp_path, result(message, api_error_status=status, total_cost_usd=0.5), code=1
+        )
         assert u.infra_error is None, message
+    # Refused before any work, an unfamiliar wording cannot be the agent's doing either.
+    u = claude_parse(tmp_path, result("new words", api_error_status=400, total_cost_usd=0), code=1)
+    assert u.infra_error is not None
 
 
 def test_claude_dying_mid_stream_is_infra_whatever_it_says(tmp_path):
@@ -730,7 +737,7 @@ def test_claude_real_unknown_model_is_infra(tmp_path):
 @pytest.mark.parametrize(
     "status, infra",
     [
-        (400, True),
+        (400, False),
         (401, True),
         (402, True),
         (404, True),
