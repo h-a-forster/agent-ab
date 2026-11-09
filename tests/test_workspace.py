@@ -789,6 +789,7 @@ def test_default_workspace_root_is_outside_home(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(home / "AppData" / "Temp"))
+    monkeypatch.setattr(os, "access", lambda path, mode: True)
     assert default_workspace_root() == Path(home.resolve().anchor) / HOME_SAFE_ROOT
     # An unprivileged POSIX user cannot create it at "/": keep the temp directory, whose parents
     # the adapter's check_workspace_root still inspects.

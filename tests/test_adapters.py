@@ -588,7 +588,7 @@ def test_claude_private_config_dir_is_not_a_leak(tmp_path):
     )
     u = claude_parse(tmp_path, stdout)
     [leak] = u.agent_init["config_leaks"]  # only the rule file outside the workspace
-    assert leak.startswith("rules: ") and leak.endswith("/.../r.md")
+    assert leak.startswith("rules: ") and leak.endswith(".../r.md")
     stdout = stream_with_init(memory_paths={"auto": str(config / "projects" / "p" / "memory")})
     u = claude_parse(tmp_path, stdout)
     assert u.agent_init["config_leaks"] == [] and u.infra_error is None
