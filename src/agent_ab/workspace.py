@@ -26,7 +26,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePath, PureWindowsPath
 
 from .config import expand_placeholders as _expand
-from .errors import GitDirAlteredError, WorkspaceError
+from .errors import (
+    GitDirAlteredError,
+    GitTimeoutError,
+    HostError,
+    WorkspaceError,
+    is_host_failure,
+)
 from .model import Arm, Command, ProcResult, Task
 from .proc import IS_WINDOWS, build_env, run_process
 
@@ -79,6 +85,11 @@ _CACHE_EXCLUDES = tuple(
 def _sanitize_label(label: str) -> str:
     clean = re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("-.")
     return clean[:60] or "ws"
+
+
+def workspace_prefix(label: str) -> str:
+    """What the name of every workspace created with ``label`` starts with."""
+    return f"agent-ab-{_sanitize_label(label)}"
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -211,7 +222,7 @@ def _copy_into(src: Path, ws: Path, what: str) -> None:
     except WorkspaceError:
         raise
     except (OSError, shutil.Error) as e:
-        raise WorkspaceError(f"copying {what} into the workspace failed: {e}") from e
+        raise _copy_error(f"copying {what} into the workspace failed", e) from e
 
 
 # --------------------------------------------------------------------------- git
@@ -261,6 +272,54 @@ def _git_argv(git: str, *args: str) -> list[str]:
     ]  # fmt: skip
 
 
+# git's own wording (its environment sets LC_ALL=C) when the machine, not the repository, failed:
+# the system's error text, which ends a line. File names, which the agent chooses, come earlier.
+_GIT_HOST_FAILURE = re.compile(
+    r"(?::\s(?:No space left on device|Disk quota exceeded|Cannot allocate memory|Not enough "
+    r"space|Not enough memory|Too many open files|Read-only file system|Input/output error)"
+    r"|^fatal: Out of memory.*)$",
+    re.MULTILINE,
+)
+
+
+def _copy_error(message: str, e: Exception) -> WorkspaceError:
+    return (HostError if is_host_failure(e) else WorkspaceError)(f"{message}: {e}")
+
+
+# A third of what git add was measured doing on one Windows PC (96 files/s, 23 MiB/s): adding this
+# much can account for git hitting its time limit. At the 600 s limit, about 20,000 files or 2 GiB.
+_GIT_MIN_FILES_PER_S = 33.0
+_GIT_MIN_BYTES_PER_S = 3.5 * 1024**2
+
+
+def _tree_size(root: Path) -> tuple[int, int]:
+    """(files, bytes) under ``root``, without its ``.git``, which grows just by being used."""
+    files = size = 0
+    for folder, dirs, names in os.walk(root):
+        if Path(folder) == root and ".git" in dirs:
+            dirs.remove(".git")
+        for name in names:
+            files += 1
+            with contextlib.suppress(OSError):
+                size += os.lstat(os.path.join(folder, name)).st_size
+    return files, size
+
+
+def added_enough_to_stall_git(ws: Path, pristine: Path) -> bool:
+    """Whether what ``ws`` holds beyond ``pristine`` can explain git hitting its time limit."""
+    files, size = _tree_size(ws)
+    base_files, base_size = _tree_size(pristine)
+    return (
+        files - base_files > _GIT_MIN_FILES_PER_S * _GIT_TIMEOUT_S
+        or size - base_size > _GIT_MIN_BYTES_PER_S * _GIT_TIMEOUT_S
+    )
+
+
+def grading_mode() -> str:
+    """How this process grades: in a clean copy with git, in the agent's workspace without."""
+    return "clean-copy" if _git() is not None else "agent-workspace"
+
+
 def _run_git(ws: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
     git = _git()
     if git is None:
@@ -279,11 +338,18 @@ def _run_git(ws: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
             timeout=_GIT_TIMEOUT_S,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError) as e:
+    except OSError as e:
+        # Anything else (a command line too long for what the agent staged) goes to the control.
+        error = HostError if is_host_failure(e) else WorkspaceError
+        raise error(f"git {args[0]} failed: {e}") from e
+    except subprocess.TimeoutExpired as e:
+        raise GitTimeoutError(f"git {args[0]} failed: {e}") from e
+    except subprocess.SubprocessError as e:
         raise WorkspaceError(f"git {args[0]} failed: {e}") from e
     if cp.returncode != 0:
         tail = (cp.stderr or b"").decode("utf-8", "replace").strip()[-500:]
-        raise WorkspaceError(f"git {args[0]} failed (exit {cp.returncode}): {tail}")
+        error = HostError if _GIT_HOST_FAILURE.search(tail) else WorkspaceError
+        raise error(f"git {args[0]} failed (exit {cp.returncode}): {tail}")
     return cp
 
 
@@ -342,9 +408,7 @@ def create_workspace(task: Task, arm: Arm, *, root: Path | None, label: str) -> 
     try:
         parent = resolve_workspace_root(root)
         parent.mkdir(parents=True, exist_ok=True)
-        path = Path(
-            tempfile.mkdtemp(prefix=f"agent-ab-{_sanitize_label(label)}-", dir=parent)
-        ).resolve()
+        path = Path(tempfile.mkdtemp(prefix=f"{workspace_prefix(label)}-", dir=parent)).resolve()
     except OSError as e:
         raise WorkspaceError(f"cannot create workspace directory: {e}") from e
     ws = Workspace(path=path)
@@ -574,15 +638,21 @@ def apply_patch(ws: Workspace, patch_path: Path) -> None:
     from the pristine task, so nothing outside that diff (interpreter caches, files written
     after the diff, the agent's ``.git``) reaches the checks. git refuses paths outside the
     work tree and writes through symlinks. An empty patch is a no-op. Raises
-    ``WorkspaceError`` if the patch does not apply.
+    ``WorkspaceError`` if the patch does not apply, and ``HostError`` if it would apply and the
+    writing failed: the copy is pristine, so that is the machine, whatever git's wording.
     """
     patch_path = Path(patch_path)
     try:
         if patch_path.stat().st_size == 0:
             return
     except OSError as e:
-        raise WorkspaceError(f"cannot read the agent's diff: {e}") from e
-    _run_git(ws.path, "apply", "--binary", "--whitespace=nowarn", str(patch_path.resolve()))
+        raise HostError(f"cannot read the agent's diff: {e}") from e
+    options = ("--binary", "--whitespace=nowarn", str(patch_path.resolve()))
+    _run_git(ws.path, "apply", "--check", *options)
+    try:
+        _run_git(ws.path, "apply", *options)
+    except WorkspaceError as e:
+        raise HostError(str(e)) from e
 
 
 def install_checks(ws: Workspace, task: Task) -> None:
@@ -608,7 +678,7 @@ def install_checks(ws: Workspace, task: Task) -> None:
                 continue
             _remove_path(ws.path / entry.name)
     except OSError as e:
-        raise WorkspaceError(f"clearing check paths in the workspace failed: {e}") from e
+        raise _copy_error("clearing check paths in the workspace failed", e) from e
     _copy_into(checks, ws.path, "checks")
 
 

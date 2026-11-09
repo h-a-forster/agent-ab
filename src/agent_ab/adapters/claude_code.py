@@ -28,8 +28,7 @@ PERMISSION_MODES: frozenset[str] = frozenset(
 SETTING_SOURCES: frozenset[str] = frozenset({"user", "project", "local"})
 SYSTEM_PROMPT_FILE = "append_system_prompt.md"
 
-# Failures of the provider or the account rather than of the configuration under test.
-# Only consulted when a run already failed, so a successful answer that mentions "429" is safe.
+# Failures of the provider or the account, for runs that left no result to go by.
 _INFRA = re.compile(
     r"authentication|invalid api key|not logged in|/login|oauth token|unauthori[sz]ed"
     r"|rate[ _-]?limit|too many requests|\b429\b|overloaded|\b529\b"
@@ -41,9 +40,17 @@ _INFRA = re.compile(
 # Agent-side failures: the agent ran out of turns or budget, which is a legitimate outcome.
 _AGENT_SUBTYPES = frozenset({"error_max_turns", "error_max_budget_usd"})
 
-# ``api_error_status`` values that blame the account or provider: auth, no access, unknown
-# model (404, which costs nothing and should not count against the arm), rate limits, outages.
-_INFRA_STATUSES = frozenset({401, 403, 404, 408, 429})
+# API statuses that blame the request, which the agent's work shaped (a context overflow, an image
+# too big): its outcome, because excluding a real failure can flip a comparison. Every other status
+# blames the account, the provider or the setup. But the API also answers 400 at a spend limit and
+# gives that no type of its own, so here wording has to decide: the text comes from the API, not the
+# agent. A 400 before any work was billed cannot be the agent's doing, whatever it says, which
+# leaves unfamiliar wording only for a limit reached in the middle of a trial.
+_REQUEST_STATUSES = frozenset({400, 413})
+_ACCOUNT_LIMIT = re.compile(
+    r"credit balance|usage limit|spend(?:ing)? (?:limit|cap)|billing|payment|quota|extra usage",
+    re.IGNORECASE,
+)
 
 _STDOUT_LIMIT = 16 * 1024 * 1024
 _HEAD_LIMIT = 1024 * 1024  # the init event is the first few events; stdout is read from the front
@@ -276,9 +283,12 @@ def _pick_result(objects: list[dict[str, Any]]) -> dict[str, Any] | None:
     return objects[-1] if objects else None
 
 
-def _infra_status(v: Any) -> bool:
-    status = _int(v)
-    return status is not None and (status in _INFRA_STATUSES or status >= 500)
+def _agents_bad_request(obj: Mapping[str, Any], message: str) -> bool:
+    return (
+        obj.get("api_error_status") in _REQUEST_STATUSES
+        and obj.get("total_cost_usd") != 0
+        and _ACCOUNT_LIMIT.search(message) is None
+    )
 
 
 def _int(v: Any) -> int | None:
@@ -376,7 +386,9 @@ def parse_result_text(stdout: str, stderr: str, exit_code: int | None) -> AgentU
     """Map Claude Code's JSON result (possibly preceded by log lines) onto ``AgentUsage``."""
     usage = AgentUsage()
     obj = _pick_result(_json_objects(stdout))
-    if obj is None:
+    died = exit_code not in (0, None)
+    if obj is None or (died and obj.get("type") not in ("result", None)):
+        # No result event: the CLI died, whatever the last event or its stderr says.
         if exit_code not in (0, None):
             detail = _tail(stderr) or _tail(stdout) or "no output"
             usage.infra_error = (
@@ -402,16 +414,15 @@ def parse_result_text(stdout: str, stderr: str, exit_code: int | None) -> AgentU
         usage.final_message = text
     subtype = obj.get("subtype")
 
-    failed = obj.get("is_error") is True or exit_code not in (0, None)
-    if failed and subtype not in _AGENT_SUBTYPES:
-        message = usage.final_message or ""
-        status = obj.get("api_error_status")
-        if _infra_status(status):
-            usage.infra_error = f"API error {status}: {_tail(message, _TAIL - 20)}"
-        elif _looks_like_infra(message):
-            usage.infra_error = _tail(message)
-        elif _looks_like_infra(stderr):
-            usage.infra_error = _tail(stderr)
+    # A failed run blames the agent only through a turn or budget limit, or a request its work made
+    # invalid. Anything else cannot be told apart from a machine, provider or account failure, so
+    # it does not count against the arm: it is retried, then excluded and reported.
+    failed = obj.get("is_error") is True or (died and obj.get("is_error") is not False)
+    status = obj.get("api_error_status")
+    message = usage.final_message or ""
+    if failed and subtype not in _AGENT_SUBTYPES and not _agents_bad_request(obj, message):
+        detail = _tail(message, _TAIL - 20) or _tail(stderr, _TAIL - 20) or str(subtype)
+        usage.infra_error = f"API error {status}: {detail}" if status is not None else detail
     if usage.final_message is None and isinstance(subtype, str) and subtype.startswith("error"):
         usage.final_message = subtype
     return usage
@@ -613,10 +624,8 @@ class ClaudeCodeAdapter(Adapter):
         stdout = read_text(result.stdout_path, _STDOUT_LIMIT)
         stderr = read_text(result.stderr_path, 64 * 1024)
         exit_code = None if result.timed_out else result.exit_code
-        try:
-            usage = parse_result_text(stdout, stderr, exit_code)
-        except Exception as e:  # noqa: BLE001 - parse must never raise
-            return AgentUsage(infra_error=f"could not parse claude output: {e}")
+        usage = parse_result_text(stdout, stderr, exit_code)
+        usage.leak_check = "unverified"  # until the check below has actually run
         if ctx.spec.options.get("capture_init", True):
             # Best effort: a missing init event leaves the fields unknown.
             with contextlib.suppress(Exception):
@@ -634,6 +643,9 @@ class ClaudeCodeAdapter(Adapter):
         isolated = ctx.spec.options.get("isolation", True)
         allowed = [ctx.workspace, config_dir(ctx.workspace)] if isolated else [ctx.workspace]
         leaks = config_leaks(event, allowed)
+        # memory_paths is what the check reads: with it gone or renamed, nothing was checked.
+        checked = isinstance(event.get("memory_paths"), Mapping)
+        usage.leak_check = "leaked" if leaks else "clean" if checked else "unverified"
         if leaks and isolated and usage.infra_error is None:
             shown = "; ".join(leaks[:5]) + ("; ..." if len(leaks) > 5 else "")
             usage.infra_error = (

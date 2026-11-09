@@ -67,12 +67,22 @@ def check_trial(art: Path) -> dict:
 
 
 def final_records(run_dir: Path) -> list[dict]:
+    """The trials the report counts: highest attempt, in the run's plan, not an excluded error."""
+    config = json.loads((run_dir / "run.json").read_text("utf-8"))["config"]
+    tasks = {t["id"] for t in config["tasks"]}
+    arms = {a["name"] for a in config["arms"]}
     final: dict[str, dict] = {}
     for line in (run_dir / "trials.jsonl").read_text("utf-8").splitlines():
         if line.strip():
             rec = json.loads(line)
-            final[rec["trial_id"]] = rec  # later attempts replace earlier ones
-    return [final[k] for k in sorted(final)]
+            if rec["task"] not in tasks or rec["arm"] not in arms:
+                continue
+            if rec["repeat"] >= config["repeats"]:
+                continue
+            prev = final.get(rec["trial_id"])
+            if prev is None or rec["attempt"] >= prev["attempt"]:
+                final[rec["trial_id"]] = rec
+    return [final[k] for k in sorted(final) if final[k]["status"] != "error"]
 
 
 def main(argv: list[str] | None = None) -> int:

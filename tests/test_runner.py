@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import shutil
@@ -34,6 +35,7 @@ from agent_ab.runner import (
     run_experiment,
     run_trial,
 )
+from agent_ab.stats import analyze
 from agent_ab.store import TRIALS_FILE, RunStore
 
 PY = sys.executable
@@ -428,15 +430,14 @@ def leaky_agent(counter: Path, leaks: str) -> str:
     )
 
 
-def leaky_exp(tmp_path, monkeypatch, script: str, **kw) -> Experiment:
+def leaky_exp(tmp_path, monkeypatch, script: str, *, arms=2, tasks=3, **kw) -> Experiment:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setitem(adapters._REGISTRY, "leaky", "unused:Unused")
     monkeypatch.setitem(adapters._INSTANCES, "leaky", LeakyClaude(script))
     agent = AgentSpec(adapter="leaky", options={"executable": PY})
-    tasks = [make_task(tmp_path, f"t{i}") for i in range(3)]
-    return make_exp(
-        tmp_path, arms=[Arm(name="a", agent=agent), Arm(name="b", agent=agent)], tasks=tasks, **kw
-    )
+    tasks = [make_task(tmp_path, f"t{i}") for i in range(tasks)]
+    arm_list = [Arm(name=n, agent=agent) for n in "ab"[:arms]]
+    return make_exp(tmp_path, arms=arm_list, tasks=tasks, **kw)
 
 
 @pytest.mark.parametrize("jobs", [1, 2])
@@ -453,13 +454,276 @@ def test_repeated_isolation_breach_halts_the_run(tmp_path, monkeypatch, jobs):
     assert summary.total_cost_usd == pytest.approx(0.1 * len(recs))
 
 
-def test_clean_trial_between_breaches_does_not_halt(tmp_path, monkeypatch):
-    # Breach, breach, clean, repeated: never three in a row. A single breach is not retried.
-    exp = leaky_exp(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "n % 3 != 2"))
+def test_clean_trial_in_the_arm_between_breaches_does_not_halt(tmp_path, monkeypatch):
+    # Breach, breach, clean, repeated in one arm: never three open. A breach is not retried.
+    exp = leaky_exp(
+        tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "n % 3 != 2"), arms=1, tasks=6
+    )
     summary = run_experiment(exp, tmp_path / "run")
     assert summary.isolation_halt is None
     assert len(records(tmp_path / "run")) == 6
-    assert (summary.completed, summary.errors) == (2, 4)
+    # Breached trials are not finished: they count neither as completed nor as errors.
+    assert (summary.completed, summary.errors, summary.open_breaches) == (2, 0, 4)
+
+
+def test_breaches_in_one_arm_halt_despite_clean_trials_in_the_other(tmp_path, monkeypatch):
+    script = leaky_agent(tmp_path / "n", "'LEAK' in __import__('sys').stdin.read()")
+    exp = leaky_exp(tmp_path, monkeypatch, script, tasks=6)
+    leaking = replace(exp.arms[0], prompt_prefix="LEAK")
+    exp = replace(exp, arms=(leaking, exp.arms[1]))
+    summary = run_experiment(exp, tmp_path / "run")
+    assert summary.isolation_halt
+    assert sum(r.isolation_breach for r in records(tmp_path / "run")) == 3
+
+
+def test_resuming_an_unfixed_leak_pays_for_one_more_attempt_not_three(tmp_path, monkeypatch):
+    exp = leaky_exp(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "True"), arms=1, tasks=6)
+    run_experiment(exp, tmp_path / "run")
+    assert len(records(tmp_path / "run")) == 3
+    again = run_experiment(exp, tmp_path / "run", resume=True)
+    assert again.isolation_halt and len(records(tmp_path / "run")) == 4
+
+
+def test_breach_attempts_do_not_use_up_retries(tmp_path, monkeypatch):
+    # Breaches at attempts 0, 1, 2 across sessions, then the leak is fixed and a 429 hits.
+    script = leaky_agent(tmp_path / "n", "n < 3").replace(
+        "print(json.dumps({'type': 'result'",
+        "if n == 3:\n"
+        "    print(json.dumps({'type': 'result', 'is_error': True, 'api_error_status': 429}))\n"
+        "    raise SystemExit(1)\n"
+        "print(json.dumps({'type': 'result'",
+    )
+    exp = leaky_exp(tmp_path, monkeypatch, script, arms=1, tasks=1, max_retries=2)
+    for _ in range(3):
+        run_experiment(exp, tmp_path / "run", resume=(tmp_path / "run").exists())
+    summary = run_experiment(exp, tmp_path / "run", resume=True)
+    assert [r.status for r in records(tmp_path / "run")][3:] == ["error", "pass"]
+    assert (summary.completed, summary.errors) == (1, 0)
+
+
+def leaky_cli_config(tmp_path, monkeypatch, script) -> Path:
+    leaky_exp(tmp_path, monkeypatch, script)  # registers the adapter
+    task = tmp_path / "cli" / "tasks" / "t0"
+    (task / "repo").mkdir(parents=True)
+    (task / "repo" / "README.md").write_text("x\n", encoding="utf-8")
+    (task / "task.toml").write_text(
+        'prompt = "p"\ncheck = ["{python}", "-c", "pass"]\n', encoding="utf-8"
+    )
+    config = tmp_path / "cli" / "experiment.toml"
+    config.write_text(
+        'name = "x"\ntasks = ["tasks/*"]\nrepeats = 2\n'
+        f"workspace_root = {json.dumps((tmp_path / 'ws').as_posix())}\n"
+        f'[agent]\nadapter = "leaky"\noptions = {{ executable = {json.dumps(PY)} }}\n'
+        '[[arms]]\nname = "a"\n',
+        encoding="utf-8",
+    )
+    return config
+
+
+def test_cli_does_not_call_a_run_with_a_breach_finished(tmp_path, monkeypatch, capsys):
+    from agent_ab.cli import main
+
+    config = leaky_cli_config(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "n == 0"))
+    code = main(["run", str(config), "--out", str(tmp_path / "run"), "--quiet"])
+    assert code == 1
+    assert "--resume" in capsys.readouterr().err
+
+
+def test_exhausted_errors_can_be_retried_without_discarding_paid_results(tmp_path):
+    flag = tmp_path / "outage"
+    flag.touch()
+    script = (
+        "import os, sys\n"
+        f"{usage_snippet(cost_usd=1.0)}\n"
+        f"{SOLVE}\n"
+        f"if os.path.exists({str(flag)!r}) and "
+        "os.path.basename(os.getcwd()).startswith('agent-ab-t1'):\n"
+        f"    {usage_snippet(cost_usd=1.0, infra_error='outage')}\n"
+    )
+    tasks = [make_task(tmp_path, "t0"), make_task(tmp_path, "t1")]
+    exp = make_exp(tmp_path, arms=[fake_arm("a", script)], tasks=tasks, max_retries=1)
+    first = run_experiment(exp, tmp_path / "run")
+    assert (first.completed, first.errors) == (1, 1)
+    flag.unlink()
+    before = records(tmp_path / "run")
+    run_experiment(exp, tmp_path / "run", resume=True)
+    assert records(tmp_path / "run") == before  # still final without being asked
+
+    summary = run_experiment(
+        exp, tmp_path / "run", resume=True, options=RunOptions(retry_errors=True)
+    )
+    assert (summary.completed, summary.errors) == (2, 0)
+    new = records(tmp_path / "run")[len(before) :]
+    assert [(r.task, r.attempt, r.status) for r in new] == [("t1", 2, "pass")]
+    assert records(tmp_path / "run")[: len(before)] == before
+    assert RunStore.open(tmp_path / "run").total_cost() == pytest.approx(4.0)
+
+
+def _fake_outcome_script(state: Path) -> str:
+    return (
+        "import json, os\n"
+        f"mode = open({str(state)!r}).read().strip()\n"
+        "usage = {'infra': {'infra_error': '429', 'cost_usd': 1.0},\n"
+        "         'breach': {'infra_error': 'leak', 'isolation_breach': True}}[mode]\n"
+        "path = os.path.join(os.environ['FAKE_ARTIFACTS'], 'usage.json')\n"
+        "open(path, 'w').write(json.dumps(usage))\n"
+    )
+
+
+def test_fresh_retries_survive_a_breach_in_a_later_session(tmp_path):
+    state = tmp_path / "mode"
+    exp = make_exp(tmp_path, arms=[fake_arm("a", _fake_outcome_script(state))], max_retries=2)
+    state.write_text("infra")
+    run_experiment(exp, tmp_path / "run")
+    state.write_text("breach")
+    run_experiment(exp, tmp_path / "run", resume=True, options=RunOptions(retry_errors=True))
+    state.write_text("infra")
+    run_experiment(exp, tmp_path / "run", resume=True)
+    assert [r.attempt for r in records(tmp_path / "run")] == [0, 1, 2, 3, 4, 5, 6]
+
+
+def test_fresh_retries_survive_a_budget_stop(tmp_path):
+    state = tmp_path / "mode"
+    state.write_text("infra")
+    exp = make_exp(tmp_path, arms=[fake_arm("a", _fake_outcome_script(state))], max_retries=2)
+    run_experiment(exp, tmp_path / "run")
+    options = RunOptions(retry_errors=True, budget_usd=4.0)
+    run_experiment(exp, tmp_path / "run", resume=True, options=options)
+    assert len(records(tmp_path / "run")) == 4
+    summary = run_experiment(exp, tmp_path / "run", resume=True)
+    assert [r.attempt for r in records(tmp_path / "run")] == [0, 1, 2, 3, 4, 5]
+    assert summary.errors == 1
+
+
+def test_retry_errors_needs_a_run_to_resume(tmp_path, monkeypatch):
+    from agent_ab.cli import main
+
+    config = leaky_cli_config(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "False"))
+    code = main(["run", str(config), "--out", str(tmp_path / "run"), "--retry-errors"])
+    assert code != 0 and not (tmp_path / "n").exists()
+
+
+def test_outage_stops_the_run_before_exhausting_every_trial(tmp_path):
+    tasks = [make_task(tmp_path, f"t{i:02}") for i in range(14)]
+    script = usage_snippet(infra_error="429")
+    exp = make_exp(tmp_path, arms=[fake_arm("a", script)], tasks=tasks)
+    summary = run_experiment(exp, tmp_path / "run")
+    assert summary.infra_halt
+    recs = records(tmp_path / "run")
+    assert len(recs) == 10 and summary.errors == 0  # nothing used up: all can resume
+    assert {r.attempt for r in recs} == {0}
+
+
+def test_errors_in_one_arm_stop_it_though_the_other_arm_is_fine(tmp_path):
+    tasks = [make_task(tmp_path, f"t{i:02}") for i in range(14)]
+    arms = [fake_arm("a", usage_snippet(infra_error="401")), fake_arm("b", SOLVE)]
+    summary = run_experiment(make_exp(tmp_path, arms=arms, tasks=tasks), tmp_path / "run")
+    assert summary.infra_halt
+
+
+def test_breach_flag_without_an_infra_error_cannot_pass(tmp_path):
+    # A third-party adapter can set the flag alone; resume would re-run what stats counted.
+    script = SOLVE + "\n" + usage_snippet(isolation_breach=True)
+    rec = run_one(tmp_path, script)
+    assert rec.status == "error" and rec.passed is None and rec.isolation_breach
+
+
+def test_one_trial_using_all_its_retries_is_not_an_outage(tmp_path):
+    arm = fake_arm("a", usage_snippet(infra_error="429"))
+    exp = make_exp(tmp_path, arms=[arm], max_retries=10)
+    summary = run_experiment(exp, tmp_path / "run")
+    assert summary.infra_halt is None and summary.errors == 1
+    assert len(records(tmp_path / "run")) == 11
+
+
+def test_breaches_of_arms_outside_the_plan_do_not_count_toward_the_halt(tmp_path, monkeypatch):
+    exp = leaky_exp(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "n == 0"), arms=1, tasks=2)
+    store = RunStore.create(tmp_path / "run", exp, planned_trials=2)
+    for i in range(3):
+        store.append(TrialRecord(trial_id=f"x__z__r{i}", task="x", arm="z", repeat=i, attempt=0,
+                                 status="error", isolation_breach=True))  # fmt: skip
+    summary = run_experiment(exp, tmp_path / "run", resume=True)
+    assert summary.isolation_halt is None
+
+
+def test_log_failure_while_shutting_down_does_not_abandon_running_agents(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    real = runner.run_trial
+
+    def then_interrupted(exp, spec, attempt, store, cancel, **kw):
+        rec = real(exp, spec, attempt, store, cancel, **kw)
+        cancel.set()
+        return rec
+
+    def full(self, record):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(runner, "run_trial", then_interrupted)
+    monkeypatch.setattr(RunStore, "append", full)
+    run_experiment(make_exp(tmp_path, arms=[fake_arm("a")]), tmp_path / "run")
+    assert ws_left(tmp_path) == []
+
+
+def test_attempt_that_finished_before_ctrl_c_is_kept(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    real = runner.run_trial
+
+    def then_interrupted(exp, spec, attempt, store, cancel, **kw):
+        rec = real(exp, spec, attempt, store, cancel, **kw)
+        cancel.set()  # Ctrl-C arrives after the attempt finished, before it is collected
+        return rec
+
+    monkeypatch.setattr(runner, "run_trial", then_interrupted)
+    arm = fake_arm("a", SOLVE + "\n" + usage_snippet(cost_usd=1.0))
+    run_experiment(make_exp(tmp_path, arms=[arm]), tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert rec.status == "pass" and rec.cost_usd == 1.0
+
+
+def test_stale_attempt_folder_that_cannot_be_removed_is_not_reused(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    exp = make_exp(tmp_path, arms=[fake_arm("a")])
+    RunStore.create(tmp_path / "run", exp, planned_trials=1)
+    stale = tmp_path / "run" / "trials" / "t1__a__r0" / "attempt-0"
+    stale.mkdir(parents=True)
+    (stale / "usage.json").write_text('{"cost_usd": 99.0}', encoding="utf-8")
+    real = runner.destroy_workspace
+    monkeypatch.setattr(
+        runner, "destroy_workspace", lambda ws: False if Path(ws.path) == stale else real(ws)
+    )
+    run_experiment(exp, tmp_path / "run", resume=True)
+    first, second = records(tmp_path / "run")
+    assert first.status == "error" and first.cost_usd is None
+    assert second.status == "pass" and second.cost_usd is None
+
+
+def test_trial_with_no_leak_check_is_recorded_and_reported_as_unverified(tmp_path, monkeypatch):
+    # A CLI release moves the init event: every trial is graded, none of them checked.
+    result = "{'type': 'result', 'subtype': 'success', 'total_cost_usd': 0.1}"
+    script = f"import json\n{SOLVE}\nprint(json.dumps({result}))\n"
+    exp = leaky_exp(tmp_path, monkeypatch, script)
+    run_experiment(exp, tmp_path / "run")
+    store = RunStore.open(tmp_path / "run")
+    recs = store.records()
+    assert all(r.status == "pass" and r.leak_check == "unverified" for r in recs)
+    noted = analyze(store.meta, recs).notes
+    checked = [replace(r, leak_check="clean") for r in recs]
+    assert set(noted) - set(analyze(store.meta, checked).notes)
+
+
+def test_running_out_of_credit_stops_the_run_without_grading_anything(tmp_path, monkeypatch):
+    result = (
+        "{'type': 'result', 'subtype': 'success', 'is_error': True, 'api_error_status': 400, "
+        "'result': 'Your credit balance is too low to access the Anthropic API.'}"
+    )
+    script = f"import json, sys\nprint(json.dumps({result}))\nsys.exit(1)\n"
+    exp = leaky_exp(tmp_path, monkeypatch, script, arms=1, tasks=14)
+    summary = run_experiment(exp, tmp_path / "run")
+    assert summary.infra_halt and summary.completed == 0
+    assert {r.status for r in records(tmp_path / "run")} == {"error"}
 
 
 def test_halted_run_keeps_finished_trials_and_resumes(tmp_path, monkeypatch):
@@ -470,7 +734,7 @@ def test_halted_run_keeps_finished_trials_and_resumes(tmp_path, monkeypatch):
     exp = leaky_exp(tmp_path, monkeypatch, script, max_retries=0)
     first = run_experiment(exp, tmp_path / "run")
     before = records(tmp_path / "run")
-    assert first.isolation_halt and (first.completed, first.errors) == (1, 3)
+    assert first.isolation_halt and (first.completed, first.errors) == (1, 0)
     assert [r.status for r in before] == ["pass", "error", "error", "error"]
 
     flag.unlink()  # the owner fixes the leak
@@ -834,25 +1098,285 @@ def test_parser_crash_means_usage_unknown_not_infra_error(tmp_path):
     assert "RecursionError" in warning
 
 
-def test_grading_breakage_after_agent_is_fail_not_error(tmp_path, monkeypatch):
+def test_grading_breakage_only_the_agents_diff_causes_is_fail(tmp_path, monkeypatch):
     from agent_ab import runner
     from agent_ab.errors import WorkspaceError
 
+    real = runner.install_checks
+
     def broken(ws, task):
-        raise WorkspaceError("refusing to write outside the workspace")
+        if (ws.path / "solution.txt").exists():  # not on a copy without the agent's changes
+            raise WorkspaceError("refusing to write outside the workspace")
+        real(ws, task)
 
     monkeypatch.setattr(runner, "install_checks", broken)
     exp = make_exp(tmp_path, arms=[fake_arm("a")])
     run_experiment(exp, tmp_path / "run")
     (rec,) = records(tmp_path / "run")  # one attempt: nothing retried
     assert rec.status == "fail" and rec.passed is False
-    assert "grading failed after the agent ran" in rec.error and "outside" in rec.error
     assert (tmp_path / "run" / rec.artifacts / "traceback.txt").is_file()
 
 
-def test_check_that_cannot_start_is_fail(tmp_path):
-    rec = run_one(tmp_path, SOLVE, task_kw={"check": ("agent-ab-no-such-check-exe",)})
-    assert rec.status == "fail" and "check could not start" in rec.error
+def test_checks_folder_gone_after_the_agent_ran_is_infrastructure(tmp_path, monkeypatch):
+    # A branch switch or moved folder during a long run: no copy of the task can be graded.
+    from agent_ab import runner
+
+    task = make_task(tmp_path)
+    checks = task.path / "checks"
+    checks.mkdir()
+    (checks / "c.txt").write_text("x", encoding="utf-8")
+    real = runner.diff_stats
+
+    def moved_before_grading(ws, patch):
+        shutil.rmtree(checks, ignore_errors=True)
+        return real(ws, patch)
+
+    monkeypatch.setattr(runner, "diff_stats", moved_before_grading)
+    exp = make_exp(tmp_path, arms=[fake_arm("a")], tasks=[replace(task, checks=checks)])
+    summary = run_experiment(exp, tmp_path / "run")
+    recs = records(tmp_path / "run")
+    assert [r.attempt for r in recs] == [0, 1, 2]  # retried like any infrastructure error
+    assert all(r.status == "error" and r.passed is None for r in recs)
+    assert (summary.completed, summary.errors) == (0, 1)
+    assert ws_left(tmp_path) == []
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_full_disk_while_recording_the_diff_is_infrastructure(tmp_path, monkeypatch):
+    from agent_ab import workspace as wsmod
+
+    real = wsmod.subprocess.run
+
+    def no_space(argv, **kw):
+        if "add" in argv and (Path(kw["cwd"]) / "solution.txt").exists():
+            stderr = b"error: unable to write loose object: No space left on device\n"
+            return subprocess.CompletedProcess(argv, 128, b"", stderr)
+        return real(argv, **kw)
+
+    monkeypatch.setattr(wsmod.subprocess, "run", no_space)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+def _git_fails(monkeypatch, when, outcome):
+    """``outcome(argv)`` stands in for git where ``when(argv, cwd)`` holds."""
+    from agent_ab import workspace as wsmod
+
+    real = wsmod.subprocess.run
+
+    def fake(argv, **kw):
+        return outcome(argv) if when(argv, Path(kw["cwd"])) else real(argv, **kw)
+
+    monkeypatch.setattr(wsmod.subprocess, "run", fake)
+
+
+def _timeout(argv):
+    raise subprocess.TimeoutExpired(argv, 600)
+
+
+def _adds_agent_files(argv, cwd):
+    return "add" in argv and (cwd / "solution.txt").exists()
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_apply_timing_out_on_the_clean_copy_is_infrastructure(tmp_path, monkeypatch):
+    _git_fails(monkeypatch, lambda argv, cwd: "apply" in argv, _timeout)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_apply_failing_to_write_a_valid_diff_is_infrastructure(tmp_path, monkeypatch):
+    # Whatever git says: --check found nothing wrong with the diff, so writing it is the machine.
+    def cannot_write(argv):
+        return subprocess.CompletedProcess(argv, 1, b"", b"error: unable to write file 'x'\n")
+
+    _git_fails(
+        monkeypatch, lambda argv, cwd: "apply" in argv and "--check" not in argv, cannot_write
+    )
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_diff_git_refuses_after_the_check_stays_the_agents_failure(tmp_path, monkeypatch):
+    def invalid(argv):
+        return subprocess.CompletedProcess(argv, 1, b"", b"error: patch failed: x:1\n")
+
+    _git_fails(monkeypatch, lambda argv, cwd: "apply" in argv and "--check" in argv, invalid)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "fail" and rec.passed is False
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_add_timing_out_on_a_small_workspace_is_infrastructure(tmp_path, monkeypatch):
+    _git_fails(monkeypatch, _adds_agent_files, _timeout)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_add_timing_out_on_a_big_task_is_the_machine(tmp_path, monkeypatch):
+    # Size alone would blame the agent; it added one file to thirty of the task's.
+    from agent_ab import workspace as wsmod
+
+    monkeypatch.setattr(wsmod, "_GIT_MIN_FILES_PER_S", 3 / 600)
+    _git_fails(monkeypatch, _adds_agent_files, _timeout)
+    task = make_task(tmp_path)
+    for i in range(30):
+        (task.repo / f"f{i}.txt").write_text(str(i), encoding="utf-8")
+    exp = make_exp(tmp_path, arms=[fake_arm("a")], tasks=[task], max_retries=0)
+    run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_add_timing_out_after_a_big_setup_is_the_machine(tmp_path, monkeypatch):
+    from agent_ab import workspace as wsmod
+
+    monkeypatch.setattr(wsmod, "_GIT_MIN_FILES_PER_S", 3 / 600)
+    _git_fails(monkeypatch, _adds_agent_files, _timeout)
+    setup = (PY, "-c", "for i in range(30): open('dep' + str(i), 'w').close()")
+    rec = run_one(tmp_path, SOLVE, max_retries=0, task_kw={"setup": setup})
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_add_timing_out_on_a_workspace_the_agent_bloated_is_its_failure(tmp_path, monkeypatch):
+    from agent_ab import workspace as wsmod
+
+    monkeypatch.setattr(wsmod, "_GIT_MIN_FILES_PER_S", 3 / 600)  # the agent's files exceed it
+    _git_fails(monkeypatch, _adds_agent_files, _timeout)
+    script = SOLVE + "\nfor i in range(5):\n    open(f'junk{i}', 'w').close()\n"
+    rec = run_one(tmp_path, script, max_retries=0)
+    assert rec.status == "fail" and rec.passed is False
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_file_name_saying_no_space_left_stays_the_agents_failure(tmp_path, monkeypatch):
+    def unreadable(argv):
+        stderr = b'error: open("no space left on device.txt"): Permission denied\n'
+        return subprocess.CompletedProcess(argv, 128, b"", stderr)
+
+    _git_fails(monkeypatch, _adds_agent_files, unreadable)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "fail" and rec.passed is False
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_real_git_disk_full_message_with_a_later_line_is_infrastructure(tmp_path, monkeypatch):
+    def no_space(argv):
+        stderr = (
+            b"error: unable to create temporary file: No space left on device\n"
+            b"error: x: failed to insert into database\nfatal: adding files failed\n"
+        )
+        return subprocess.CompletedProcess(argv, 128, b"", stderr)
+
+    _git_fails(monkeypatch, _adds_agent_files, no_space)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error"
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+@pytest.mark.parametrize("winerror", [None, 206])
+def test_gitlinks_overflowing_the_command_line_stay_the_agents_failure(
+    tmp_path, monkeypatch, winerror
+):
+    # An agent can stage enough long gitlinks that dropping them does not fit on a command line.
+    if winerror and os.name != "nt":
+        pytest.skip("the winerror argument only exists on Windows")
+
+    def too_long(argv):
+        raise OSError(errno.E2BIG, "Argument list too long", None, winerror)
+
+    _git_fails(monkeypatch, lambda argv, cwd: "update-index" in argv, too_long)
+    script = (
+        SOLVE + "\nimport subprocess\n"
+        "line = '160000 ' + 'a' * 40 + ' 0\\tmodule\\n'\n"
+        "subprocess.run(['git', 'update-index', '--add', '--index-info'], input=line.encode())\n"
+    )
+    rec = run_one(tmp_path, script, max_retries=0)
+    assert rec.status == "fail" and rec.passed is False
+
+
+def test_machine_out_of_memory_starting_the_check_is_infrastructure(tmp_path, monkeypatch):
+    from agent_ab import proc
+
+    real = proc.subprocess.Popen
+
+    def no_memory(command, **kw):
+        if command[0] == PY and (Path(kw["cwd"]) / "solution.txt").exists():  # the check
+            raise OSError(errno.ENOMEM, "Cannot allocate memory")
+        return real(command, **kw)
+
+    monkeypatch.setattr(proc.subprocess, "Popen", no_memory)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.parametrize("winerror", [8, 14, 39, 112, 1450, 1455])
+@pytest.mark.skipif(os.name != "nt", reason="the winerror argument only exists on Windows")
+def test_windows_out_of_resources_starting_the_check_is_infrastructure(
+    tmp_path, monkeypatch, winerror
+):
+    from agent_ab import proc
+
+    real = proc.subprocess.Popen
+
+    def no_resources(command, **kw):
+        if command[0] == PY and (Path(kw["cwd"]) / "solution.txt").exists():
+            raise OSError(None, "out of resources", None, winerror)
+        return real(command, **kw)
+
+    monkeypatch.setattr(proc.subprocess, "Popen", no_resources)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+def test_check_command_broken_for_every_copy_is_infrastructure(tmp_path):
+    rec = run_one(
+        tmp_path, SOLVE, task_kw={"check": ("agent-ab-no-such-check-exe",)}, max_retries=0
+    )
+    assert rec.status == "error" and rec.passed is None
+
+
+def test_agent_deleting_the_check_script_is_fail(tmp_path):
+    # The script lives in the task's repo and the agent's diff removes it: only its copy breaks.
+    task = make_task(tmp_path)
+    name = "run_check.cmd" if os.name == "nt" else "run_check.sh"
+    body = "@exit /b 0\r\n" if os.name == "nt" else "#!/bin/sh\nexit 0\n"
+    check = (f"{{workspace}}/{name}",)
+    (task.repo / name).write_text(body, encoding="utf-8", newline="")
+    os.chmod(task.repo / name, 0o755)
+    script = f"import os; os.remove({name!r})"
+    exp = make_exp(tmp_path, arms=[fake_arm("a", script)], tasks=[replace(task, check=check)])
+    run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert rec.status == "fail" and rec.check_exit_code is None
+
+
+DELETE_WORKSPACE = (
+    "import os, shutil, stat\n"
+    "def unlock(f, p, e):\n"
+    "    os.chmod(p, stat.S_IWRITE)\n"
+    "    f(p)\n"
+    "w = os.getcwd()\n"
+    "os.chdir(os.path.dirname(w))\n"
+    "shutil.rmtree(w, onerror=unlock)\n"
+)
+
+
+@pytest.mark.parametrize("git", [True, False])
+def test_agent_deleting_its_workspace_is_fail(tmp_path, monkeypatch, git):
+    from agent_ab import workspace as wsmod
+
+    if not git:
+        monkeypatch.setattr(wsmod, "_git", lambda: None)
+    elif not HAS_GIT:
+        pytest.skip("git not available")
+    rec = run_one(tmp_path, DELETE_WORKSPACE)
+    assert rec.status == "fail" and rec.attempt == 0, rec.error
 
 
 def test_agent_link_over_checks_dir_is_replaced(tmp_path):
@@ -1093,3 +1617,406 @@ def test_instruction_hashes_include_adapter_files(tmp_path):
     extra.write_text("b", encoding="utf-8")
     found = _instruction_hashes(Workspace(path=ws), [extra, tmp_path / "missing.md"])
     assert sorted(found) == ["AGENTS.md", "agent:append_system_prompt.md"]
+
+
+# --------------------------------------------------------------------------- forced resumes
+
+
+def _drop_last_record(run_dir: Path) -> None:
+    log = run_dir / TRIALS_FILE
+    log.write_text("".join(log.read_text("utf-8").splitlines(True)[:-1]), "utf-8", newline="\n")
+
+
+def test_resume_under_another_agent_ab_version_needs_force(tmp_path, monkeypatch):
+    from agent_ab import __version__, runner
+    from agent_ab import store as storemod
+
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    monkeypatch.setattr(storemod, "__version__", "9.9.9")
+    monkeypatch.setattr(runner, "__version__", "9.9.9")
+    with pytest.raises(RunStoreError):
+        run_experiment(exp, tmp_path / "run", resume=True)
+    assert len(records(tmp_path / "run")) == 1
+
+    run_experiment(exp, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    meta = RunStore.open(tmp_path / "run").meta
+    assert [f["version"] for f in meta["forced_resumes"]] == ["9.9.9"]
+    assert {r.tool_version for r in records(tmp_path / "run")} == {__version__, "9.9.9"}
+    # What was forced is accepted from here on; the log and report show the mix.
+    run_experiment(exp, tmp_path / "run", resume=True)
+    assert len(RunStore.open(tmp_path / "run").meta["forced_resumes"]) == 1
+    full = analyze(meta, records(tmp_path / "run"))
+    bare = analyze({k: v for k, v in meta.items() if k != "forced_resumes"}, [
+        replace(r, tool_version=None) for r in records(tmp_path / "run")
+    ])  # fmt: skip
+    assert set(full.notes) - set(bare.notes)
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_resume_without_git_after_clean_copy_grading_needs_force(tmp_path, monkeypatch):
+    from agent_ab import workspace as wsmod
+
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    monkeypatch.setattr(wsmod, "_git", lambda: None)
+    with pytest.raises(RunStoreError):
+        run_experiment(exp, tmp_path / "run", resume=True)
+    run_experiment(exp, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    assert [r.grading for r in records(tmp_path / "run")] == ["clean-copy", "agent-workspace"]
+
+
+def test_resume_of_a_run_without_recorded_grading_needs_force(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    path = tmp_path / "run" / "run.json"
+    meta = json.loads(path.read_text("utf-8"))
+    del meta["grading"]
+    path.write_text(json.dumps(meta), "utf-8")
+    with pytest.raises(RunStoreError):
+        run_experiment(exp, tmp_path / "run", resume=True)
+
+
+def test_forcing_an_old_run_does_not_claim_its_definition_changed(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    path = tmp_path / "run" / "run.json"
+    meta = json.loads(path.read_text("utf-8"))
+    del meta["grading"]  # as a run from before these fields existed
+    path.write_text(json.dumps(meta), "utf-8")
+    log = tmp_path / "run" / TRIALS_FILE
+    old = [json.loads(line) for line in log.read_text("utf-8").splitlines()]
+    log.write_text("".join(json.dumps({**r, "fingerprint": None}) + "\n" for r in old), "utf-8")
+    run_experiment(exp, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    store = RunStore.open(tmp_path / "run")
+    assert store.meta["forced_resumes"][0]["from_fingerprint"] == exp.fingerprint
+    notes = analyze(store.meta, store.records()).notes
+    assert not any(" of 2 recorded trials" in n for n in notes)
+
+
+def test_forced_change_counts_only_trials_known_or_possibly_under_the_old_definition(tmp_path):
+    arm = fake_arm("a")
+    exp = make_exp(tmp_path, arms=[arm], repeats=1)
+    run_experiment(exp, tmp_path / "run")
+    more = make_exp(tmp_path, arms=[arm], repeats=3)
+    run_experiment(more, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    store = RunStore.open(tmp_path / "run")
+    assert any("1 of 3 recorded trials" in n for n in analyze(store.meta, store.records()).notes)
+
+
+def test_forced_more_repeats_enter_the_analysis_and_total_cost(tmp_path):
+    arm = fake_arm("a", SOLVE + "\n" + usage_snippet(cost_usd=1.0))
+    exp = make_exp(tmp_path, arms=[arm], repeats=1)
+    run_experiment(exp, tmp_path / "run")
+    more = make_exp(tmp_path, arms=[arm], repeats=3)
+    run_experiment(more, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    store = RunStore.open(tmp_path / "run")
+    a = analyze(store.meta, store.records())
+    assert (a.completed_trials, a.planned_trials) == (3, 3)
+    assert a.total_cost_usd == pytest.approx(3.0)
+    assert store.meta["fingerprint"] == more.fingerprint and store.meta["forced_resumes"]
+
+
+def test_forced_narrower_selection_reports_and_counts_the_new_plan(tmp_path, capsys):
+    from agent_ab.cli import main
+
+    arms = [fake_arm(n, SOLVE + "\n" + usage_snippet(cost_usd=1.0)) for n in "ab"]
+    tasks = [make_task(tmp_path, f"t{i}") for i in range(3)]
+    exp = make_exp(tmp_path, arms=arms, tasks=tasks, budget_usd=2.0)
+    run_experiment(exp, tmp_path / "run")
+    assert len(records(tmp_path / "run")) == 2
+    only_a = make_exp(tmp_path, arms=arms[:1], tasks=tasks)
+    run_experiment(only_a, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    store = RunStore.open(tmp_path / "run")
+    a = analyze(store.meta, store.records())
+    assert [s.arm for s in a.arms] == ["a"]
+    assert (a.completed_trials, a.planned_trials) == (3, 3)
+    capsys.readouterr()
+    assert main(["status", str(tmp_path / "run")]) == 0
+    assert "3/3 done" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- run-directory lock
+
+HOLD_LOCK = """
+import sys, time
+from pathlib import Path
+from agent_ab.store import RunLock
+lock = RunLock()
+lock.acquire(Path(sys.argv[1]))
+print("held", flush=True)
+time.sleep(30)  # a test that forgets to kill this cannot hang for long
+"""
+
+
+def hold_lock(run_dir: Path) -> subprocess.Popen:
+    proc = subprocess.Popen([PY, "-c", HOLD_LOCK, str(run_dir)], stdout=subprocess.PIPE, text=True)
+    assert proc.stdout.readline().strip() == "held"
+    return proc
+
+
+def test_second_session_refused_until_the_first_crashes(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    holder = hold_lock(tmp_path / "run")
+    try:
+        with pytest.raises(RunStoreError):
+            run_experiment(exp, tmp_path / "run", resume=True)
+        assert len(records(tmp_path / "run")) == 1  # refused before anything ran
+        # Reading is not running: a dry run and the reports still work.
+        run_experiment(exp, tmp_path / "run", resume=True, options=RunOptions(dry_run=True))
+    finally:
+        holder.kill()  # a crash: nothing gets to release the lock
+        holder.wait(timeout=30)
+        holder.stdout.close()
+    summary = run_experiment(exp, tmp_path / "run", resume=True)
+    assert summary.completed == 2 and len(records(tmp_path / "run")) == 2
+
+
+def test_new_run_refused_while_its_directory_is_locked(tmp_path):
+    exp = make_exp(tmp_path)
+    (tmp_path / "run").mkdir()
+    holder = hold_lock(tmp_path / "run")
+    try:
+        with pytest.raises(RunStoreError):
+            run_experiment(exp, tmp_path / "run")
+        assert not (tmp_path / "run" / "run.json").exists()
+    finally:
+        holder.kill()
+        holder.wait(timeout=30)
+        holder.stdout.close()
+
+
+def test_lock_is_released_after_a_session_so_the_next_can_start(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    assert run_experiment(exp, tmp_path / "run", resume=True).completed == 2
+
+
+# --------------------------------------------------------------------------- small state fixes
+
+
+def test_record_json_failure_does_not_put_an_error_on_a_pass(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    real = runner._write_text
+
+    def refuse(path, text):
+        if path.name == "record.json":
+            raise OSError("no")
+        real(path, text)
+
+    monkeypatch.setattr(runner, "_write_text", refuse)
+    rec = run_one(tmp_path, SOLVE)
+    assert rec.status == "pass" and rec.error is None
+
+
+def test_status_marks_reports_older_than_the_log(tmp_path, capsys):
+    from agent_ab.cli import main
+
+    run_experiment(make_exp(tmp_path), tmp_path / "run")
+    report = tmp_path / "run" / "report.md"
+    report.write_text("x", encoding="utf-8")
+    capsys.readouterr()
+    main(["status", str(tmp_path / "run")])
+    fresh = capsys.readouterr().out
+    os.utime(report, (1, 1))
+    main(["status", str(tmp_path / "run")])
+    assert capsys.readouterr().out != fresh
+
+
+def test_status_does_not_call_reports_stale_for_a_newer_file_time_on_the_log(tmp_path, capsys):
+    # A fresh git checkout gives every file an arbitrary time; what the log holds is what counts.
+    from agent_ab.cli import main
+
+    run_experiment(make_exp(tmp_path), tmp_path / "run")
+    (tmp_path / "run" / "report.md").write_text("x", encoding="utf-8")
+    capsys.readouterr()
+    main(["status", str(tmp_path / "run")])
+    fresh = capsys.readouterr().out
+    log = tmp_path / "run" / TRIALS_FILE
+    later = time.time() + 1000
+    os.utime(log, (later, later))
+    main(["status", str(tmp_path / "run")])
+    assert capsys.readouterr().out == fresh
+
+
+def in_use(run_dir: Path) -> list[str]:
+    folder = run_dir / "workspaces-in-use"
+    lines = [line for f in sorted(folder.glob("*")) for line in f.read_text("utf-8").splitlines()]
+    return [line.rsplit("\t", 1)[0] for line in lines]
+
+
+def test_cancelled_attempt_keeps_a_pointer_to_what_it_leaked(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    cancel = threading.Event()
+    real = runner.destroy_workspace
+    monkeypatch.setattr(
+        runner,
+        "destroy_workspace",
+        lambda ws: False if Path(ws.path).name.startswith("agent-ab-") else real(ws),
+    )
+    real_prompt = runner._build_prompt
+
+    def interrupted(spec):
+        cancel.set()
+        return real_prompt(spec)
+
+    monkeypatch.setattr(runner, "_build_prompt", interrupted)
+    exp = make_exp(tmp_path, arms=[fake_arm("a")])
+    store = RunStore.create(tmp_path / "run", exp, planned_trials=1)
+    rec = run_trial(exp, plan_trials(exp)[0], 0, store, cancel)
+    assert rec.error == "cancelled"
+    leaked = ws_left(tmp_path)
+    assert leaked and sorted(in_use(tmp_path / "run")) == sorted(map(str, leaked))
+    for path in leaked:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def test_leaked_private_directory_gets_a_pointer(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    real = runner.destroy_workspace
+    monkeypatch.setattr(
+        runner, "destroy_workspace", lambda ws: False if ".private" in str(ws.path) else real(ws)
+    )
+    exp = make_exp(tmp_path, arms=[fake_arm("a", options={"isolate": True})])
+    run_experiment(exp, tmp_path / "run")
+    (leaked,) = ws_left(tmp_path)
+    assert in_use(tmp_path / "run") == [str(leaked)]
+    shutil.rmtree(leaked, ignore_errors=True)
+
+
+def test_leak_under_keep_workspaces_does_not_get_kept_ones_swept(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    real = runner.destroy_workspace
+    with monkeypatch.context() as m:
+        m.setattr(
+            runner,
+            "destroy_workspace",
+            lambda ws: False if ".private" in str(ws.path) else real(ws),
+        )
+        exp = make_exp(
+            tmp_path, arms=[fake_arm("a", options={"isolate": True})], keep_workspaces=True
+        )
+        run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    kept = Path((tmp_path / "run" / rec.artifacts / "workspace.txt").read_text("utf-8").strip())
+    (leaked,) = in_use(tmp_path / "run")
+    assert leaked.endswith(".private")
+    run_experiment(exp, tmp_path / "run", resume=True)
+    assert kept.is_dir() and not Path(leaked).exists()
+    for path in ws_left(tmp_path):
+        shutil.rmtree(path, onerror=lambda f, p, e: (os.chmod(p, 0o700), f(p)))
+
+
+def test_resume_removes_workspaces_a_crash_left_and_nothing_else(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    from agent_ab.runner import _LiveDirs
+
+    orphan = tmp_path / "ws" / "agent-ab-t1__b__r0-a0-orphan"
+    orphan.mkdir(parents=True)
+    _LiveDirs(RunStore.open(tmp_path / "run"), "t1__b__r0", 0).add(orphan)
+    folder = tmp_path / "run" / "workspaces-in-use"
+    run_experiment(exp, tmp_path / "run", resume=True)
+    assert not orphan.exists()
+    assert not folder.exists()
+
+
+def test_sweep_leaves_whatever_it_cannot_prove_it_created(tmp_path):
+    from agent_ab.runner import _LiveDirs
+
+    exp = make_exp(tmp_path)
+    label = "agent-ab-t1__b__r0-a0"
+    run = tmp_path / f"{label}-the-run-itself"
+    run_experiment(exp, run)
+    _drop_last_record(run)
+    live = _LiveDirs(RunStore.open(run), "t1__b__r0", 0)
+    # Each of these would pass a check of the name alone, or carries a real stamp.
+    fork = tmp_path / "elsewhere" / "agent-ab-fork"
+    root = tmp_path / "elsewhere" / "agent-ab-workspaces"
+    another_trial = tmp_path / "ws" / "agent-ab-t2__b__r0-a0-live"
+    for path in (fork, root, another_trial):
+        path.mkdir(parents=True)
+        live.add(path)
+    live.add(run)  # the run directory itself, correctly named and stamped
+    live.add(tmp_path)  # a folder holding the run directory
+    no_stamp = tmp_path / "ws" / f"{label}-unstamped"
+    swapped = tmp_path / "ws" / f"{label}-swapped"
+    no_stamp.mkdir()
+    swapped.mkdir()
+    live.add(swapped)  # stamped, then replaced by another folder of the same name
+    swapped.rmdir()
+    placeholder = tmp_path / "ws" / "occupy-the-inode"
+    placeholder.mkdir()
+    swapped.mkdir()
+    with open(live.file, "a", encoding="utf-8") as f:
+        f.write(f"{no_stamp}\n")
+    summary = run_experiment(exp, run, resume=True)
+    assert summary.completed == 2
+    survivors = (fork, root, another_trial, no_stamp, swapped)
+    assert all(path.is_dir() for path in survivors)
+    assert (run / "run.json").is_file() and (run / "trials").is_dir()
+    assert str(fork) in in_use(run)  # still listed for a person to look at
+
+
+def test_crash_while_creating_a_run_leaves_a_directory_that_can_be_used(tmp_path, monkeypatch):
+    exp = make_exp(tmp_path)
+
+    def crash(self):
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as m:
+        m.setattr(RunStore, "_write_meta", crash)
+        with pytest.raises(KeyboardInterrupt):
+            run_experiment(exp, tmp_path / "run")
+    assert run_experiment(exp, tmp_path / "run").completed == 2
+
+
+def test_claude_parser_crash_means_usage_unknown(tmp_path, monkeypatch):
+    from agent_ab.adapters import claude_code
+
+    def boom(*a):
+        raise RecursionError("too deep")
+
+    monkeypatch.setattr(claude_code, "parse_result_text", boom)
+    exp = leaky_exp(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "False"), arms=1, tasks=1)
+    run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert rec.status == "pass" and rec.cost_usd is None and rec.leak_check == "unverified"
+
+
+def test_manipulation_script_counts_only_what_the_report_counts(tmp_path):
+    import importlib.util
+
+    root = Path(__file__).parent.parent
+    spec = importlib.util.spec_from_file_location(
+        "manipulation", root / "docs" / "results" / "manipulation.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def line(tid, attempt, status):
+        task, arm, _ = tid.split("__")
+        return dict(trial_id=tid, task=task, arm=arm, repeat=0, attempt=attempt, status=status)
+
+    lines = [
+        line("t__a__r0", 1, "pass"),
+        line("t__a__r0", 0, "error"),  # out of order: the higher attempt still wins
+        line("u__a__r0", 2, "error"),  # excluded from the report
+        line("t__z__r0", 0, "pass"),  # outside the plan
+    ]
+    (tmp_path / "trials.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines), "utf-8")
+    config = {"tasks": [{"id": "t"}, {"id": "u"}], "arms": [{"name": "a"}], "repeats": 1}
+    (tmp_path / "run.json").write_text(json.dumps({"config": config}), "utf-8")
+    assert [r["trial_id"] for r in mod.final_records(tmp_path)] == ["t__a__r0"]

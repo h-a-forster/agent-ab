@@ -7,10 +7,13 @@ be resumed from what is on disk.
 
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
 import threading
+from collections import Counter
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -19,16 +22,76 @@ from agent_ab import __version__
 from agent_ab.config import FINGERPRINT_SCHEME, experiment_to_dict
 from agent_ab.errors import RunStoreError
 from agent_ab.model import SCHEMA_VERSION, Experiment, TrialRecord
+from agent_ab.workspace import grading_mode
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 RUN_FILE = "run.json"
+LOCK_FILE = "run.lock"
 TRIALS_FILE = "trials.jsonl"
 TRIALS_DIR = "trials"
+IN_USE_DIR = "workspaces-in-use"
 MAX_COST_USD = 1e6  # an agent-reported cost above this per attempt is treated as unknown
 
 
 def utc_now() -> str:
     """Current time as an ISO-8601 UTC string with second precision."""
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class RunLock:
+    """Exclusive use of a run directory by one session, across processes.
+
+    An operating-system lock on ``run.lock``: it goes away with the process however that ends,
+    so a crash leaves no stale lock to clear. Child processes do not inherit it. The file stays
+    behind and only says who holds it. On a network filesystem the lock is only as good as the
+    filesystem's support for it.
+    """
+
+    # Beyond the file's content, which Windows would otherwise refuse to let others read.
+    _OFFSET = 1 << 30
+    _HELD = frozenset({errno.EACCES, errno.EAGAIN, errno.EDEADLK, errno.EWOULDBLOCK})
+
+    def __init__(self) -> None:
+        self._file = None
+
+    def acquire(self, run_dir: Path) -> None:
+        """Take the lock, or raise ``RunStoreError`` at once if it cannot be had."""
+        path = Path(run_dir) / LOCK_FILE
+        try:
+            f = open(path, "a+b")  # noqa: SIM115 - held until release()
+        except OSError as e:
+            raise RunStoreError(f"cannot create {path}: {e}") from e
+        try:
+            if os.name == "nt":
+                f.seek(self._OFFSET)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            f.close()
+            if e.errno not in self._HELD:
+                raise RunStoreError(f"cannot lock {path}: {e}") from e
+            try:
+                holder = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                holder = "unknown"
+            raise RunStoreError(
+                f"{run_dir} is in use by another agent-ab session ({holder}); wait for it to "
+                "finish or stop it before running here"
+            ) from e
+        f.truncate(0)
+        f.write(f"pid {os.getpid()} since {utc_now()}\n".encode())
+        f.flush()
+        self._file = f
+
+    def release(self) -> None:
+        if self._file is not None:
+            self._file.close()  # closing the handle drops the lock
+            self._file = None
 
 
 class RunStore:
@@ -67,14 +130,16 @@ class RunStore:
             "planned_trials": planned_trials,
             "seed": exp.seed,
             "baseline": exp.baseline,
+            "grading": grading_mode(),
         }
+        # run.json first: a crash here leaves a run --resume can open, not a log both refuse.
+        store._write_meta()
         try:
             # "x": never adopt a log that appeared since the check above.
             with open(run_dir / TRIALS_FILE, "x", encoding="utf-8"):
                 pass
         except FileExistsError as e:
             raise RunStoreError(f"{run_dir / TRIALS_FILE} appeared while creating the run") from e
-        store._write_meta()
         return store
 
     @classmethod
@@ -118,6 +183,67 @@ class RunStore:
                 "mixing trials would bias the comparison. Start a new run, or pass --force "
                 "to resume anyway."
             )
+        if force:
+            return
+        if self.meta.get("grading") is None:
+            raise RunStoreError(
+                f"this run was started by agent-ab {self.meta.get('version')}, which did not "
+                "record how it grades or isolates trials; continuing may mix them. Start a new "
+                "run, or pass --force to resume anyway."
+            )
+        if self.meta["grading"] != grading_mode():
+            raise RunStoreError(
+                f"this run graded trials by {self.meta['grading']}, but this session would use "
+                f"{grading_mode()} (is git on PATH?); mixing them would bias the comparison. "
+                "Fix that, or pass --force to resume anyway."
+            )
+        if self._last_version() != __version__:
+            raise RunStoreError(
+                f"this run was last run by agent-ab {self._last_version()}, not {__version__}; "
+                "grading or isolation may differ between versions. Start a new run, or pass "
+                "--force to resume anyway."
+            )
+
+    def _last_version(self) -> Any:
+        forced = self.meta.get("forced_resumes") or [{}]
+        return forced[-1].get("version", self.meta.get("version"))
+
+    def forced_changes(self, exp: Experiment) -> list[str]:
+        """What differs from the stored run; only a forced resume gets this far with any."""
+        changes = {
+            "experiment name": self.meta.get("experiment") != exp.name,
+            "experiment definition": self.meta.get("fingerprint") != exp.fingerprint,
+            "grading": self.meta.get("grading") != grading_mode(),
+            "agent-ab version": self._last_version() != __version__,
+        }
+        return [what for what, changed in changes.items() if changed]
+
+    def record_forced_resume(
+        self, exp: Experiment, planned_trials: int, changes: list[str]
+    ) -> None:
+        """Make run.json describe the experiment as forced, and keep a record of the change.
+
+        Analysis and ``status`` read the plan from here, so a stale copy would drop trials that
+        were paid for (more repeats) or count ones no longer selected.
+        """
+        entry = {
+            "at": utc_now(),
+            "changed": changes,
+            "version": __version__,
+            "from_fingerprint": self.meta.get("fingerprint"),
+            "from_grading": self.meta.get("grading"),
+        }
+        self.update_meta(
+            experiment=exp.name,
+            fingerprint=exp.fingerprint,
+            fingerprint_scheme=FINGERPRINT_SCHEME,
+            config=_redact_env(experiment_to_dict(exp, self.run_dir)),
+            planned_trials=planned_trials,
+            seed=exp.seed,
+            baseline=exp.baseline,
+            grading=grading_mode(),
+            forced_resumes=[*(self.meta.get("forced_resumes") or []), entry],
+        )
 
     def update_meta(self, **changes: Any) -> None:
         """Merge ``changes`` into run.json (e.g. a new planned-trial count after a resume)."""
@@ -128,8 +254,12 @@ class RunStore:
     def _write_meta(self) -> None:
         path = self.run_dir / RUN_FILE
         tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(self.meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(self.meta, indent=2, sort_keys=True) + "\n")
+            f.flush()
+            os.fsync(f.fileno())  # or power loss can leave an empty run.json over a paid log
         os.replace(tmp, path)
+        _fsync_dir(self.run_dir)
 
     # ------------------------------------------------------------------ trial log
 
@@ -255,6 +385,16 @@ def check_new_run_dir(run_dir: Path) -> None:
         )
 
 
+def _fsync_dir(path: Path) -> None:
+    # Makes a rename durable on POSIX; Windows cannot open a directory this way.
+    if os.name != "nt":
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
 def _cost(record: TrialRecord) -> float:
     # Logs written by older versions may hold absurd agent-reported costs (huge ints, 1e308)
     # that would overflow the sum and wedge the budget forever; such values count as unknown.
@@ -295,12 +435,39 @@ def _redact_env(value: Any) -> Any:
     return value
 
 
-def is_done(record: TrialRecord, max_retries: int) -> bool:
+def stored_max_retries(meta: dict) -> int:
+    """The run's ``max_retries`` as stored in run.json (the default if it cannot be read)."""
+    value = (meta.get("config") or {}).get("max_retries")
+    return value if isinstance(value, int) and value >= 0 else 2
+
+
+def breach_counts(records: Iterable[TrialRecord]) -> Counter[str]:
+    """Isolation breaches per trial id: attempts that used up none of its retries."""
+    return Counter(r.trial_id for r in records if r.isolation_breach)
+
+
+def retry_bases(records: Iterable[TrialRecord]) -> dict[str, int]:
+    """Per trial id, the attempt number its next attempt's ``retries_used`` is counted from."""
+    bases: dict[str, int] = dict(breach_counts(records := list(records)))
+    last: dict[str, TrialRecord] = {}
+    for rec in records:
+        if rec.trial_id not in last or rec.attempt >= last[rec.trial_id].attempt:
+            last[rec.trial_id] = rec
+    for tid, rec in last.items():
+        if rec.retries_used is not None:
+            bases[tid] = rec.attempt - rec.retries_used + bool(rec.isolation_breach)
+    return bases
+
+
+def is_done(record: TrialRecord, max_retries: int, breaches: int = 0) -> bool:
     """A trial needs no more attempts once it passed/failed or exhausted its retries.
 
     An isolation breach is never final: it says nothing about the trial, and it stops the run
-    without retries, so a resume after fixing the leak must run the trial again.
+    without retries, so a resume after fixing the leak must run the trial again. ``breaches``
+    (see ``breach_counts``) says how many of its attempts were breaches, which are not retries;
+    records that carry ``retries_used`` say it themselves.
     """
     if record.isolation_breach:
         return False
-    return record.status in ("pass", "fail") or record.attempt >= max_retries
+    used = record.attempt - breaches if record.retries_used is None else record.retries_used
+    return record.status in ("pass", "fail") or used >= max_retries

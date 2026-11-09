@@ -1091,3 +1091,36 @@ def test_fingerprint_ignores_caches_and_git(exp_dir: Path):
 
 def test_fingerprint_sensitive_to_task_selection(exp_dir: Path):
     assert load(exp_dir, select_tasks=["t1"]).fingerprint != _fp(exp_dir)
+
+
+def _collision_config(tmp_path, tasks, arms):
+    for tid in tasks:
+        task = tmp_path / "tasks" / tid
+        task.mkdir(parents=True)
+        (task / "task.toml").write_text(
+            'prompt = "p"\ncheck = ["{python}", "-c", "pass"]\n', encoding="utf-8"
+        )
+    arm_tables = "".join(f'[[arms]]\nname = "{a}"\n' for a in arms)
+    config = tmp_path / "experiment.toml"
+    config.write_text(
+        f'name = "x"\ntasks = ["tasks/*"]\n[agent]\nadapter = "mock"\n{arm_tables}',
+        encoding="utf-8",
+    )
+    return config
+
+
+@pytest.mark.parametrize(
+    "tasks, arms",
+    [
+        (["a", "a__x"], ["x__y", "y"]),  # both give a__x__y__r0
+        (["a"], ["Control", "control"]),  # one folder on Windows and macOS
+    ],
+)
+def test_cells_that_would_share_a_trial_id_are_refused(tmp_path, tasks, arms):
+    with pytest.raises(ConfigError):
+        load_experiment(_collision_config(tmp_path, tasks, arms))
+
+
+def test_double_underscores_alone_are_fine(tmp_path):
+    exp = load_experiment(_collision_config(tmp_path, ["a__b"], ["c__d", "e"]))
+    assert len(exp.arms) == 2

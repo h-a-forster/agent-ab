@@ -1,5 +1,29 @@
 """Exception types shared across agent-ab."""
 
+from __future__ import annotations
+
+import errno
+
+# The machine ran out of something or its storage failed; no workspace content causes these.
+_HOST_ERRNOS = frozenset(
+    getattr(errno, name)
+    for name in ("ENOSPC", "EDQUOT", "ENOMEM", "EMFILE", "ENFILE", "EAGAIN", "EROFS", "EIO")
+    if hasattr(errno, name)
+)
+# Python maps many Windows errors to EINVAL, so these need their own check: not enough memory,
+# outofmemory, handle disk full, disk full, no system resources, nonpaged and paged pool, working
+# set quota, paging file quota, commitment limit.
+_HOST_WINERRORS = frozenset({8, 14, 39, 112, 1450, 1451, 1452, 1453, 1454, 1455})
+
+
+def is_host_failure(e: BaseException) -> bool:
+    """True when ``e`` says the machine failed (disk full, no memory or handles)."""
+    if isinstance(e, MemoryError):
+        return True
+    if not isinstance(e, OSError):
+        return False
+    return e.errno in _HOST_ERRNOS or getattr(e, "winerror", None) in _HOST_WINERRORS
+
 
 class AgentABError(Exception):
     """Base class for all agent-ab errors."""
@@ -23,6 +47,14 @@ class WorkspaceError(AgentABError):
 
 class GitDirAlteredError(WorkspaceError):
     """A workspace's ``.git`` directory is gone or was replaced, so its diff cannot be taken."""
+
+
+class HostError(WorkspaceError):
+    """The machine failed (disk full, no memory, a stalled git), whatever is in the workspace."""
+
+
+class GitTimeoutError(HostError):
+    """git hit its time limit: the machine, unless what the agent added explains it."""
 
 
 class AdapterError(AgentABError):

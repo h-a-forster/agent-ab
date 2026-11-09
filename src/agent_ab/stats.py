@@ -24,6 +24,7 @@ from .model import (
     TaskCell,
     TrialRecord,
 )
+from .store import _cost, breach_counts, is_done, stored_max_retries
 
 __all__ = [
     "analyze",
@@ -383,6 +384,7 @@ def _environments(
 
     envs: list[ArmEnvironment] = []
     leaky: dict[str, int] = {}  # arm -> trials whose agent loaded memory from outside
+    breached: dict[str, int] = {}  # arm -> those of them excluded as isolation breaches
     for arm in arms:
         models: set[str] = set()
         versions: set[str] = set()
@@ -401,6 +403,7 @@ def _environments(
             init_trials += 1
             if init.get("config_leaks"):
                 leaky[arm] = leaky.get(arm, 0) + 1
+                breached[arm] = breached.get(arm, 0) + bool(rec.isolation_breach)
             for key, field_name in (
                 ("tools", "tools"),
                 ("plugins", "plugins"),
@@ -433,6 +436,11 @@ def _environments(
         f"Arm {arm}: {n} trial(s) loaded memory or instruction files from outside the "
         "workspace (config_leaks in trials.jsonl), so they did not run with only the "
         "configuration under test."
+        + (
+            f" {breached[arm]} of them are excluded as isolation breaches until the run is resumed."
+            if breached.get(arm)
+            else ""
+        )
         for arm, n in leaky.items()
     ]
     for e in envs:
@@ -527,6 +535,55 @@ def _planned_only(exp_meta: dict, records: list[TrialRecord]) -> tuple[list[Tria
     return kept, len(records) - len(kept)
 
 
+def _unverified_notes(arms: Sequence[str], finals: Sequence[TrialRecord]) -> list[str]:
+    """A trial nobody could check for leaks must not read as a trial that was checked."""
+    notes: list[str] = []
+    for arm in arms:
+        n = sum(
+            r.arm == arm and r.status != "error" and r.leak_check == "unverified" for r in finals
+        )
+        if n:
+            notes.append(
+                f"Arm {arm}: {_plural(n, 'trial')} could not be checked for configuration loaded "
+                "from outside the workspace (no init event listing memory paths), so they may "
+                "not have run with only the configuration under test."
+            )
+    return notes
+
+
+def _resume_notes(exp_meta: dict, finals: Sequence[TrialRecord]) -> list[str]:
+    """Caveats on trials pooled across forced resumes, versions or grading modes."""
+    notes: list[str] = []
+    forced = exp_meta.get("forced_resumes")
+    if isinstance(forced, list) and forced:
+        changed = sorted({c for f in forced if isinstance(f, dict) for c in f.get("changed") or []})
+        note = (
+            f"This run was resumed {_plural(len(forced), 'time')} with --force past a change "
+            f"({', '.join(changed)})."
+        )
+        current = exp_meta.get("fingerprint")
+        earlier = sum(r.fingerprint is not None and r.fingerprint != current for r in finals)
+        if earlier:
+            note += (
+                f" {earlier} of {len(finals)} recorded trials ran under an earlier experiment "
+                "definition and are pooled here."
+            )
+        # Records from before the field existed: only a change of definition puts them in doubt.
+        unknown = sum(r.fingerprint is None for r in finals)
+        if unknown and "experiment definition" in changed:
+            note += (
+                f" {unknown} of {len(finals)} recorded trials do not say which definition they "
+                "ran under and are pooled here."
+            )
+        notes.append(note)
+    for label, attr in (("agent-ab versions", "tool_version"), ("grading modes", "grading")):
+        seen = {getattr(r, attr) for r in finals if r.status != "error"}
+        if len(seen) > 1:
+            shown = ", ".join(sorted(str(v) if v else "not recorded" for v in seen))
+            notes.append(f"Trials were graded under more than one of {label}: {shown}.")
+    return notes
+
+
 def analyze(
     exp_meta: dict,
     records: Iterable[TrialRecord],
@@ -542,7 +599,9 @@ def analyze(
     infrastructure error are excluded from rates and costs but counted in ``errors``.
     Deterministic for a given ``seed``.
     """
-    all_records, foreign = _planned_only(exp_meta, list(records))
+    records = list(records)
+    all_records, foreign = _planned_only(exp_meta, records)
+    foreign_cost = math.fsum(map(_cost, records)) - math.fsum(map(_cost, all_records))
     finals = sorted(_final_attempts(all_records).values(), key=lambda r: r.trial_id)
     arms = _arm_order(exp_meta, finals)
     base = (
@@ -589,6 +648,7 @@ def analyze(
         notes.append(
             f"{foreign} recorded attempt(s) do not belong to this run's tasks, arms or repeats "
             "and were ignored."
+            + (f" Their spend of ${foreign_cost:.2f} is not in the totals." if foreign_cost else "")
         )
     summaries: list[ArmSummary] = []
     z_wilson = NormalDist().inv_cdf(1 - alpha / 2)
@@ -728,15 +788,33 @@ def analyze(
     planned = int(exp_meta.get("planned_trials") or 0)
     spent = [r.cost_usd for r in all_records if r.cost_usd is not None]
 
-    if errors:
+    max_retries = stored_max_retries(exp_meta)
+    breaches = breach_counts(all_records)
+    still_open = sum(not is_done(r, max_retries, breaches[r.trial_id]) for r in finals)
+    if still_open:
         notes.insert(
             0,
-            f"{_plural(errors, 'trial')} excluded as infrastructure errors "
+            f"{_plural(still_open, 'trial')} excluded for now: the last attempt was an "
+            "infrastructure error or isolation breach, and resuming the run tries again.",
+        )
+    if errors > still_open:
+        notes.insert(
+            0,
+            f"{_plural(errors - still_open, 'trial')} excluded as infrastructure errors "
             "(final attempt failed for reasons outside the configuration under test).",
         )
-    if planned and len(finals) < planned:
+    shares = {s.arm: (s.errors, s.errors + s.trials) for s in summaries if s.errors + s.trials}
+    if len({e / n for e, n in shares.values()}) > 1:
+        shown = ", ".join(f"{arm} {e} of {n}" for arm, (e, n) in shares.items())
         notes.append(
-            f"The run is incomplete: {len(finals)} of {planned} planned trials finished "
+            f"Arms lost different shares of their trials to exclusion ({shown}). If an arm's "
+            "failures were misread as infrastructure, its pass rate is too high: read the "
+            "excluded attempts before trusting the comparison."
+        )
+    finished = len(finals) - still_open
+    if planned and finished < planned:
+        notes.append(
+            f"The run is incomplete: {finished} of {planned} planned trials finished "
             "(stopped early, for example by the budget or an interruption)."
         )
     one_sided = sorted(t for t in tasks if 0 < sum(1 for a in arms if t in frac[a]) < len(arms))
@@ -754,6 +832,8 @@ def analyze(
 
     environment, environment_notes = _environments(exp_meta, finals, arms)
     notes.extend(environment_notes)
+    notes.extend(_unverified_notes(arms, finals))
+    notes.extend(_resume_notes(exp_meta, finals))
 
     return Analysis(
         experiment=str(exp_meta.get("experiment", "")),

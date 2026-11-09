@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -178,6 +179,8 @@ def test_is_done():
     assert is_done(rec(status="fail"), 2)
     assert not is_done(rec(status="error", attempt=1), 2)
     assert is_done(rec(status="error", attempt=2), 2)
+    assert not is_done(rec(status="error", attempt=3), 2, breaches=3)  # breaches use no retries
+    assert is_done(rec(status="error", attempt=5), 2, breaches=3)
 
 
 def test_env_values_are_redacted_in_run_json(tmp_path):
@@ -263,3 +266,18 @@ def test_total_cost_ignores_absurd_logged_costs(tmp_path):
                 + "\n"
             )
     assert store.total_cost() == 0.5
+
+
+def test_run_json_reaches_the_disk_before_it_replaces_the_old_one(tmp_path, monkeypatch):
+    # Without this, power loss can leave run.json empty and an intact, paid log stuck.
+    store = RunStore(tmp_path)
+    store.meta = {"tool": "agent-ab"}
+    events = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(os, "fsync", lambda fd: (events.append("fsync"), real_fsync(fd))[1])
+    monkeypatch.setattr(
+        os, "replace", lambda a, b: (events.append("replace"), real_replace(a, b))[1]
+    )
+    store.update_meta(planned_trials=1)
+    assert events[:2] == ["fsync", "replace"]
+    assert json.loads((tmp_path / "run.json").read_text("utf-8"))["planned_trials"] == 1

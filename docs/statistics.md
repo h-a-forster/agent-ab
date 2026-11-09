@@ -103,8 +103,11 @@ If the baseline cost is mostly zero, a note says the ratio's interval is unrelia
 Trials whose final attempt is an infrastructure error are excluded from every statistic,
 and the report counts them. Exclusion is unbiased only if errors are unrelated to the arm
 and the outcome. An arm with longer sessions may hit rate limits more often, and lose its
-hardest trials. If error counts differ between arms, resume the run to retry them (see
-[run-directory.md](run-directory.md#resume)).
+hardest trials. If error counts differ between arms, resume the run to retry them, with
+`--retry-errors` for those whose retries ran out (see
+[run-directory.md](run-directory.md#resume)). The report separates trials whose retries ran out
+from trials still open (awaiting a retry, or after an isolation breach), and counts the latter
+as unfinished. When arms lose different shares of their trials to exclusion, it says so.
 
 Agent timeouts are not infrastructure errors. With `timeout_is_failure = true` (the
 default) they are fails.

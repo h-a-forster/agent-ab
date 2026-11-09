@@ -12,7 +12,9 @@ import contextlib
 import hashlib
 import json
 import math
+import os
 import random
+import re
 import threading
 import traceback
 from collections import deque
@@ -23,14 +25,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from agent_ab import __version__
 from agent_ab.adapters import get_adapter
 from agent_ab.adapters.base import Adapter
 from agent_ab.errors import (
     AdapterError,
     AgentABError,
     GitDirAlteredError,
+    GitTimeoutError,
+    HostError,
     RunStoreError,
     WorkspaceError,
+    is_host_failure,
 )
 from agent_ab.model import (
     AgentUsage,
@@ -45,15 +51,20 @@ from agent_ab.model import (
 )
 from agent_ab.proc import build_env, run_process
 from agent_ab.store import (
+    IN_USE_DIR,
     MAX_COST_USD,
     TRIALS_DIR,
+    RunLock,
     RunStore,
     check_new_run_dir,
     is_done,
+    retry_bases,
     utc_now,
 )
 from agent_ab.workspace import (
     Workspace,
+    _is_link,
+    added_enough_to_stall_git,
     apply_patch,
     create_workspace,
     destroy_workspace,
@@ -63,12 +74,16 @@ from agent_ab.workspace import (
     resolve_workspace_root,
     run_check,
     run_command,
+    workspace_prefix,
 )
 
 _WAIT_S = 0.2  # main-thread wait slice; short so Ctrl-C is delivered promptly on Windows
-# Breaches in a row, with no graded trial between them, that stop the run. A leak comes from the
-# machine, so every further trial would pay for an attempt the statistics exclude.
+# Isolation breaches, each with no graded trial of its arm since, that stop the run. A leak comes
+# from the machine, so every further trial would pay for an attempt the statistics exclude.
 _MAX_CONSECUTIVE_BREACHES = 3
+# Infrastructure errors in one arm, with none of its trials graded between them, that stop the run.
+# In an outage every further attempt would only use up retries the trials need afterwards.
+_MAX_CONSECUTIVE_ERRORS = 10
 
 ProgressKind = Literal["start", "finish", "retry", "budget", "halt", "info"]
 
@@ -96,6 +111,7 @@ class RunOptions:
     dry_run: bool = False
     keep_workspaces: bool | None = None
     force: bool = False  # resume even if the experiment fingerprint changed
+    retry_errors: bool = False  # resume: give trials with exhausted errors a fresh set of retries
     progress: Callable[[ProgressEvent], None] | None = field(default=None, repr=False)
 
 
@@ -107,15 +123,26 @@ class RunSummary:
     planned: int
     completed: int  # trials whose final attempt passed or failed
     errors: int  # trials whose retries are exhausted with an infrastructure error
+    # planned - completed - errors = trials still open: not reached, awaiting a retry or breached
     skipped_budget: int  # trials left unfinished because the budget ran out
     cancelled: bool
     total_cost_usd: float
     budget_exhausted: bool
     isolation_halt: str | None = None  # why repeated isolation breaches stopped the run
+    infra_halt: str | None = None  # why repeated infrastructure errors stopped the run
+    open_breaches: int = 0  # trials this session left open after an isolation breach
 
 
 class _Cancelled(Exception):
     """Internal: the attempt was interrupted and must not be recorded."""
+
+
+class _GradingBroken(Exception):
+    """Internal: a grading step failed. ``host``: the machine is known to be the cause."""
+
+    def __init__(self, message: str, *, host: bool = False):
+        super().__init__(message)
+        self.host = host
 
 
 # --------------------------------------------------------------------------- planning
@@ -169,9 +196,104 @@ def _exception_summary(e: BaseException) -> str:
     return text[:2000]
 
 
-def _note_leak(art: Path | None, ws: Workspace) -> None:
+class _LiveDirs:
+    """Directories one attempt created outside the run directory, listed inside it.
+
+    The list goes once they are all gone (or kept on purpose). What stays says what a crash or a
+    failed delete left behind, also when the attempt folder itself was removed, and the next
+    resume removes it (``_sweep_leftovers``).
+    """
+
+    def __init__(self, store: RunStore, tid: str, attempt: int):
+        self.file = store.run_dir / IN_USE_DIR / f"{tid}.a{attempt}.txt"
+        self.added: set[str] = set()
+        self.leaked: set[str] = set()
+
+    def add(self, path: Path) -> None:
+        with contextlib.suppress(OSError):
+            self.file.parent.mkdir(exist_ok=True)
+            with open(self.file, "a", encoding="utf-8", newline="\n") as f:
+                f.write(f"{path}\t{_dir_identity(path)}\n")
+            self.added.add(str(path))
+
+    def close(self) -> None:
+        # An unrecorded attempt re-runs under its number, so the file can hold what a sweep left.
+        with contextlib.suppress(OSError):
+            lines = self.file.read_text(encoding="utf-8").splitlines()
+            done = self.added - self.leaked
+            left = [x for x in lines if x.rpartition("\t")[0] not in done]
+            if left:
+                self.file.write_text(
+                    "".join(f"{x}\n" for x in left), encoding="utf-8", newline="\n"
+                )
+            else:
+                self.file.unlink()
+
+
+def _dir_identity(path: Path) -> str:
+    st = os.lstat(path)
+    return f"{st.st_dev}:{st.st_ino}"
+
+
+def _created_by_listing(line: str, label: str, run_dir: Path) -> Path | None:
+    """The folder a line names, if it can only be the one the attempt recorded when it made it.
+
+    The list is in reach of agents and of mistakes, so all of this must hold: the name the attempt
+    gave it, the identity it had then, not a link, and not the run directory or a folder holding it.
+    """
+    path_text, _, identity = line.rpartition("\t")
+    path = Path(path_text)
+    try:
+        return (
+            path
+            if path.is_absolute()
+            and path.name.startswith(label)
+            and not _is_link(path)
+            and _dir_identity(path) == identity
+            and not run_dir.is_relative_to(path.resolve())
+            else None
+        )
+    except OSError:
+        return None
+
+
+def _sweep_leftovers(run_dir: Path) -> None:
+    """Remove what earlier sessions left. Call holding the run lock: nothing here is in use.
+
+    Never removes what it cannot prove an attempt of this run created. That stays listed, and
+    ``status`` says so, for a person to look at.
+    """
+    folder = run_dir / IN_USE_DIR
+    if not folder.is_dir():
+        return
+    for entry in folder.iterdir():
+        named = re.fullmatch(r"(.+)\.a(\d+)\.txt", entry.name)
+        if named is None:
+            continue
+        label = workspace_prefix(f"{named[1]}-a{named[2]}")
+        with contextlib.suppress(OSError):
+            left: list[str] = []
+            for line in entry.read_text(encoding="utf-8").splitlines():
+                path = _created_by_listing(line, label, run_dir)
+                gone = not os.path.lexists(line.rpartition("\t")[0] or line)
+                if not gone and (path is None or not destroy_workspace(Workspace(path=path))):
+                    left.append(line)
+            if left:
+                entry.write_text("".join(f"{x}\n" for x in left), encoding="utf-8", newline="\n")
+            else:
+                entry.unlink()
+    _drop_empty(folder)
+
+
+def _drop_empty(folder: Path) -> None:
+    with contextlib.suppress(OSError):
+        folder.rmdir()
+
+
+def _note_leak(art: Path | None, ws: Workspace, live: _LiveDirs) -> None:
     # Something still holds files in the workspace; leave a pointer so it can be cleaned up.
     # One line per workspace: the agent's and the grading copy can both leak.
+    live.leaked.add(str(ws.path))
     if art is not None and art.is_dir():
         with (
             contextlib.suppress(OSError),
@@ -188,8 +310,8 @@ def _fresh_attempt_dir(store: RunStore, tid: str, attempt: int) -> Path:
     # A crash or Ctrl-C in an earlier session may have left an unrecorded attempt folder
     # behind; its files must not be mistaken for this attempt's.
     stale = store.run_dir / TRIALS_DIR / tid / f"attempt-{attempt}"
-    if stale.exists():
-        _remove_dir(stale)
+    if stale.exists() and not destroy_workspace(Workspace(path=stale)):
+        raise WorkspaceError(f"cannot clear the stale attempt folder {stale}")
     return store.attempt_dir(tid, attempt)
 
 
@@ -212,6 +334,7 @@ def _check_cancel(cancel: threading.Event, r: ProcResult | None = None) -> None:
 
 
 _MAX_MODELS = 20
+_LEAK_CHECKS = ("clean", "leaked", "unverified")
 _MAX_VERSION = 100
 _MAX_COUNT = 10**12  # tokens/turns above this are not plausible for one attempt
 _USAGE_COUNTS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
@@ -254,6 +377,7 @@ def _copy_usage(rec: TrialRecord, usage: AgentUsage) -> list[str]:
         dropped.append(f"cost_usd: {_short_repr(usage.cost_usd)}")
     rec.cost_usd = cost
     rec.isolation_breach = usage.isolation_breach
+    rec.leak_check = usage.leak_check if usage.leak_check in _LEAK_CHECKS else None
     _copy_identity(rec, usage)
     for name in _USAGE_COUNTS:
         raw = getattr(usage, name)
@@ -350,10 +474,10 @@ def _parse_usage(adapter: Adapter, ctx: TrialContext, result: ProcResult, art: P
         usage = adapter.parse(ctx, result)
     except Exception as e:
         _write_usage_warning(art, [f"usage could not be parsed: {_exception_summary(e)}"])
-        return AgentUsage()
+        return AgentUsage(leak_check="unverified")
     if not isinstance(usage, AgentUsage):
         _write_usage_warning(art, [f"adapter returned {type(usage).__name__}; usage ignored"])
-        return AgentUsage()
+        return AgentUsage(leak_check="unverified")
     return usage
 
 
@@ -365,6 +489,7 @@ def _execute(
     art: Path,
     ws: Workspace,
     cancel: threading.Event,
+    live: _LiveDirs,
     keep: bool = False,
 ) -> None:
     """The attempt pipeline after the workspace exists. Fills ``rec`` in place."""
@@ -397,6 +522,8 @@ def _execute(
         root=exp.root,
     )  # fmt: skip
     inv = adapter.build(ctx)
+    for path in inv.temp_dirs:
+        live.add(path)
     try:
         rec.prompt_sha256 = _sha256(prompt.encode("utf-8"))
         rec.instructions_sha256 = _instruction_hashes(ws, inv.instruction_files) or None
@@ -412,7 +539,8 @@ def _execute(
         )
     finally:
         for path in inv.temp_dirs:
-            _remove_dir(path)
+            if not destroy_workspace(Workspace(path=path)):
+                _note_leak(art, Workspace(path=path), live)
     _check_cancel(cancel, result)
     rec.agent_exit_code = result.exit_code
     rec.agent_timed_out = result.timed_out
@@ -424,24 +552,140 @@ def _execute(
     dropped = _copy_usage(rec, usage)
     if dropped:
         _write_usage_warning(art, ["implausible usage values dropped:", *dropped])
-    if usage.infra_error:
-        rec.error = f"infrastructure error: {usage.infra_error}"
+    if usage.infra_error or usage.isolation_breach:
+        rec.error = f"infrastructure error: {usage.infra_error or 'isolation breach'}"
         return
 
     try:
-        _grade(exp, rec, art, ws, spec, result, agent_timeout, check_timeout, cancel, keep)
+        _grade(exp, rec, art, ws, spec, result, agent_timeout, check_timeout, cancel, live, keep)
     except _Cancelled:
         raise
     except Exception as e:
         if cancel.is_set():
             raise _Cancelled from e
-        # The agent ran; whatever it did to the workspace that breaks grading (deleted .git,
-        # links over check paths, unreadable files) is its outcome, not an infrastructure
-        # problem. Retrying would bill again and excluding would hide sabotage.
-        rec.status, rec.passed = "fail", False
-        rec.error = f"grading failed after the agent ran: {_exception_summary(e)}"
+        broken = isinstance(e, _GradingBroken)
+        message = (
+            str(e) if broken else f"grading failed after the agent ran: {_exception_summary(e)}"
+        )
+        # What the agent did to its workspace that breaks grading (links over check paths,
+        # unreadable files) is its outcome: retrying would bill again and excluding would hide
+        # sabotage. So a copy it never touched goes through every step that does not need its
+        # changes (snapshot, setup, checks, starting the check): what fails there, or what is
+        # known to be the machine (a full disk), is an infrastructure error.
+        host = e.host if broken else isinstance(e, HostError) or is_host_failure(e)
+        machine = "the machine" if host else _control_problem(
+            exp, spec, attempt, art, agent_timeout, check_timeout, cancel, live
+        )  # fmt: skip
+        if machine:
+            rec.status, rec.passed = "error", None
+            rec.error = f"{message} (not the agent's doing: {machine})"
+        else:
+            rec.status, rec.passed = "fail", False
+            rec.error = message
         with contextlib.suppress(OSError):
             _write_text(art / "traceback.txt", traceback.format_exc())
+
+
+def _prepare_pristine(
+    task: Task,
+    ws: Workspace,
+    art: Path,
+    timeout_s: float,
+    cancel: threading.Event,
+    what: str,
+    prefix: str,
+) -> str | None:
+    """Run the task's setup in a fresh copy and snapshot the result; return what went wrong."""
+    if task.setup is None:
+        return None
+    r = run_command(
+        task.setup, ws, timeout_s=timeout_s,
+        stdout_path=art / f"{prefix}.stdout", stderr_path=art / f"{prefix}.stderr", cancel=cancel,
+    )  # fmt: skip
+    _check_cancel(cancel, r)
+    problem = _proc_failure(f"setup of {what}", r, timeout_s)
+    if problem is None and r.exit_code != 0:
+        problem = f"setup of {what} failed with exit code {r.exit_code} (see {prefix}.stderr)"
+    if problem:
+        return problem
+    try:
+        rebaseline(ws)
+    except WorkspaceError as e:
+        return f"cannot snapshot {what} after setup: {e}"
+    return None
+
+
+def _control_problem(
+    exp: Experiment,
+    spec: TrialSpec,
+    attempt: int,
+    art: Path,
+    agent_timeout: float,
+    check_timeout: float,
+    cancel: threading.Event,
+    live: _LiveDirs,
+) -> str | None:
+    """Why grading also breaks on a copy of the task the agent never touched, or None.
+
+    Only whether the check can start matters here: on an unsolved task it is expected to fail.
+    """
+    task = spec.task
+    try:
+        ws = create_workspace(
+            task, spec.arm, root=exp.workspace_root, label=f"{spec.id}-a{attempt}-control"
+        )
+    except WorkspaceError as e:
+        return str(e)
+    live.add(ws.path)
+    try:
+        problem = _prepare_pristine(
+            task, ws, art, agent_timeout, cancel, "the control copy", "control-setup"
+        )
+        if problem:
+            return problem
+        install_checks(ws, task)
+        outcome = run_check(
+            task.check, ws, timeout_s=check_timeout,
+            stdout_path=art / "control-check.stdout", stderr_path=art / "control-check.stderr",
+            report_path=art / "control-check-report.json", cancel=cancel,
+        )  # fmt: skip
+        _check_cancel(cancel, outcome.proc)
+        return outcome.proc.start_error
+    except _Cancelled:
+        raise
+    except Exception as e:
+        return _exception_summary(e)
+    finally:
+        if not destroy_workspace(ws):
+            _note_leak(art, ws, live)
+
+
+def _agent_bloated_workspace(
+    exp: Experiment,
+    spec: TrialSpec,
+    attempt: int,
+    art: Path,
+    ws: Workspace,
+    timeout_s: float,
+    cancel: threading.Event,
+    live: _LiveDirs,
+) -> bool:
+    """Whether what the agent added explains git timing out, measured against a clean copy."""
+    try:
+        copy = create_workspace(
+            spec.task, spec.arm, root=exp.workspace_root, label=f"{spec.id}-a{attempt}-size"
+        )
+    except WorkspaceError:
+        return False
+    live.add(copy.path)
+    try:
+        problem = _prepare_pristine(
+            spec.task, copy, art, timeout_s, cancel, "the size copy", "size-setup"
+        )
+        return problem is None and added_enough_to_stall_git(Path(ws.path), Path(copy.path))
+    finally:
+        if not destroy_workspace(copy):
+            _note_leak(art, copy, live)
 
 
 def _grade(
@@ -454,6 +698,7 @@ def _grade(
     agent_timeout: float,
     check_timeout: float,
     cancel: threading.Event,
+    live: _LiveDirs,
     keep: bool,
 ) -> None:
     """Diff, rebuild a clean copy with the agent's diff, install the checks and run them.
@@ -467,18 +712,20 @@ def _grade(
     # Measured before the checks are copied in so they never count as agent changes.
     patch = art / "diff.patch"
     stats: tuple[int, int, int] | None = None
-    diff_problem: str | None = None
+    git_dir_altered = False
+    diff_error: WorkspaceError | None = None
     try:
         stats = diff_stats(ws, patch)
     except GitDirAlteredError:
-        diff_problem = "the agent's changes could not be recorded (its .git directory was altered)"
+        git_dir_altered = True
     except WorkspaceError as e:
-        diff_problem = f"the agent's changes could not be recorded: {e}"
+        diff_error = e
     except OSError as e:
         rec.error = f"cannot write the agent's diff: {e}"  # infrastructure, not the agent
         return
     if stats is not None:
         rec.files_changed, rec.lines_added, rec.lines_removed = stats
+    rec.grading = "agent-workspace" if ws.baseline_commit is None else "clean-copy"
 
     if result.timed_out and exp.timeout_is_failure:
         rec.status, rec.passed = "fail", False
@@ -488,15 +735,17 @@ def _grade(
     if ws.baseline_commit is None:
         _run_checks(exp, rec, art, ws, task, check_timeout, cancel)
         return
-    if diff_problem is not None:
-        # The baseline existed and git works on the host, so the workspace's state is the cause.
+    if git_dir_altered:
         rec.status, rec.passed = "fail", False
-        rec.error = diff_problem
+        rec.error = "the agent's changes could not be recorded (its .git directory was altered)"
         return
-    if stats is None:
-        rec.error = "git became unavailable before the agent's diff was taken"  # infrastructure
-        return
-
+    if diff_error is not None:
+        host = isinstance(diff_error, HostError)
+        if isinstance(diff_error, GitTimeoutError):
+            host = not _agent_bloated_workspace(
+                exp, spec, rec.attempt, art, ws, agent_timeout, cancel, live
+            )
+        raise _GradingBroken(f"the agent's changes could not be recorded: {diff_error}", host=host)
     try:
         grade_ws = create_workspace(
             task, spec.arm, root=exp.workspace_root, label=f"{spec.id}-a{rec.attempt}-grade"
@@ -504,6 +753,7 @@ def _grade(
     except WorkspaceError as e:
         rec.error = f"cannot create the grading copy: {e}"  # infrastructure, not the agent
         return
+    live.add(grade_ws.path)
     try:
         if keep:
             try:
@@ -511,31 +761,17 @@ def _grade(
             except OSError as e:
                 rec.error = f"cannot write grade-workspace.txt: {e}"  # infrastructure
                 return
-        if task.setup is not None:
-            r = run_command(
-                task.setup, grade_ws, timeout_s=agent_timeout,
-                stdout_path=art / "grade-setup.stdout", stderr_path=art / "grade-setup.stderr",
-                cancel=cancel,
-            )  # fmt: skip
-            _check_cancel(cancel, r)
-            problem = _proc_failure("setup of the grading copy", r, agent_timeout)
-            if problem is None and r.exit_code != 0:
-                problem = (
-                    f"setup of the grading copy failed with exit code {r.exit_code} "
-                    "(see grade-setup.stderr)"
-                )
-            if problem:
-                # The grading copy is pristine, so this is not the agent's doing.
-                rec.error = problem
-                return
-            try:
-                rebaseline(grade_ws)
-            except WorkspaceError as e:
-                # Still the pristine copy: an infrastructure error, retried like one.
-                rec.error = f"cannot snapshot the grading copy after setup: {e}"
-                return
+        problem = _prepare_pristine(
+            task, grade_ws, art, agent_timeout, cancel, "the grading copy", "grade-setup"
+        )
+        if problem:
+            # The grading copy is pristine, so this is not the agent's doing.
+            rec.error = problem
+            return
         try:
             apply_patch(grade_ws, patch)
+        except HostError as e:
+            raise _GradingBroken(f"the agent's diff could not be applied: {e}", host=True) from e
         except WorkspaceError as e:
             rec.status, rec.passed = "fail", False
             rec.error = f"the agent's diff does not apply to a clean copy of the task: {e}"
@@ -543,7 +779,7 @@ def _grade(
         _run_checks(exp, rec, art, grade_ws, task, check_timeout, cancel)
     finally:
         if (cancel.is_set() or not keep) and not destroy_workspace(grade_ws):
-            _note_leak(art, grade_ws)
+            _note_leak(art, grade_ws, live)
 
 
 def _run_checks(
@@ -568,11 +804,8 @@ def _run_checks(
     rec.check_timed_out = check.timed_out
     rec.check_duration_s = round(check.duration_s, 3)
     if check.start_error:
-        # Also how an agent that deleted the workspace ends up; a broken check command is
-        # caught by `validate --tasks` before anything is spent.
-        rec.status, rec.passed = "fail", False
-        rec.error = f"check could not start: {check.start_error}"
-        return
+        # An agent that deleted the workspace or a script the check runs ends up here too.
+        raise _GradingBroken(f"check could not start: {check.start_error}", host=check.host_error)
     if check.timed_out:
         rec.status, rec.passed = "fail", False
         rec.error = f"check timed out after {check_timeout:g}s"
@@ -593,6 +826,7 @@ def run_trial(
     keep_workspaces: bool | None = None,
     concurrency: int | None = None,
     agent_version: str | None = None,
+    retries_used: int | None = None,
 ) -> TrialRecord:
     """Run one attempt of one trial and return its record. Never raises.
 
@@ -607,11 +841,13 @@ def run_trial(
     rec = TrialRecord(
         trial_id=spec.id, task=spec.task.id, arm=spec.arm.name, repeat=spec.repeat,
         attempt=attempt, status="error", started_at=utc_now(), concurrency=concurrency,
-        agent_version=agent_version,
+        agent_version=agent_version, fingerprint=exp.fingerprint, retries_used=retries_used,
     )  # fmt: skip
+    rec.tool_version = __version__
     art: Path | None = None
     ws: Workspace | None = None
     cancelled = False
+    live = _LiveDirs(store, spec.id, attempt)
     try:
         art = _fresh_attempt_dir(store, spec.id, attempt)
         rec.artifacts = store.relpath(art)
@@ -619,9 +855,10 @@ def run_trial(
         ws = create_workspace(
             spec.task, spec.arm, root=exp.workspace_root, label=f"{spec.id}-a{attempt}"
         )
+        live.add(ws.path)
         if keep:
             _write_text(art / "workspace.txt", str(ws.path) + "\n")
-        _execute(exp, spec, attempt, rec, art, ws, cancel, keep)
+        _execute(exp, spec, attempt, rec, art, ws, cancel, live, keep)
     except _Cancelled:
         cancelled = True
     except Exception as e:  # an attempt must never take the run down with it
@@ -635,7 +872,8 @@ def run_trial(
                     _write_text(art / "traceback.txt", traceback.format_exc())
     finally:
         if ws is not None and (cancelled or not keep) and not destroy_workspace(ws):
-            _note_leak(art, ws)
+            _note_leak(art, ws, live)
+        live.close()
     rec.finished_at = utc_now()
     if cancelled:
         rec.status, rec.passed, rec.error = "error", None, "cancelled"
@@ -646,7 +884,8 @@ def run_trial(
         try:
             _write_text(art / "record.json", json.dumps(rec.to_dict(), indent=2) + "\n")
         except (OSError, ValueError) as e:
-            if rec.error is None:
+            # The log is the record, so this changes nothing about the outcome.
+            if rec.status == "error" and rec.error is None:
                 rec.error = f"cannot write record.json: {e}"
     return rec
 
@@ -707,9 +946,20 @@ def run_experiment(
     and with ``RunStoreError`` when the run directory is unusable. ``options.dry_run`` plans
     only: no directories, no processes. A KeyboardInterrupt in the calling thread cancels the
     run: running agents are killed, their attempts are not recorded, and the summary says
-    ``cancelled=True``.
+    ``cancelled=True``. A run directory takes one session at a time: a second one gets
+    ``RunStoreError`` before anything runs, and a crashed one holds nothing (see ``RunLock``).
     """
     options = options or RunOptions()
+    lock = RunLock()
+    try:
+        return _run_experiment(exp, run_dir, resume, options, lock)
+    finally:
+        lock.release()
+
+
+def _run_experiment(
+    exp: Experiment, run_dir: Path | None, resume: bool, options: RunOptions, lock: RunLock
+) -> RunSummary:
     jobs = max(1, options.jobs if options.jobs is not None else exp.jobs)
     budget = options.budget_usd if options.budget_usd is not None else exp.budget_usd
     keep = options.keep_workspaces if options.keep_workspaces is not None else exp.keep_workspaces
@@ -726,12 +976,29 @@ def run_experiment(
     # Resolve the run directory and prior state without writing anything yet.
     store: RunStore | None = None
     finals: dict[str, TrialRecord] = {}
+    # trial id -> attempts that do not count against max_retries
+    retry_base: dict[str, int] = {}
+    # arm -> isolation breaches since its last graded trial
+    breaches: dict[str, int] = {}
     if resume:
         if run_dir is None:
             raise RunStoreError("resuming needs the run directory to continue")
         store = RunStore.open(Path(run_dir))
+        if not options.dry_run:
+            lock.acquire(store.run_dir)
+            store = RunStore.open(Path(run_dir))  # what the previous session left, now settled
         store.check_compatible(exp, force=options.force)
+        recorded = store.records()
         finals = store.final_records()
+        retry_base.update(retry_bases(recorded))
+        arm_names = {arm.name for arm in exp.arms}
+        for prior in recorded:  # across sessions, or each resume would pay for a full streak
+            if prior.arm not in arm_names:
+                continue
+            if prior.isolation_breach:
+                breaches[prior.arm] = breaches.get(prior.arm, 0) + 1
+            elif prior.status != "error":
+                breaches[prior.arm] = 0
         # Records of trials outside the current plan (e.g. arms or tasks filtered out) must
         # not count as progress for this session.
         planned_ids = {spec.id for spec in plan}
@@ -756,22 +1023,28 @@ def run_experiment(
         rec = finals.get(spec.id)
         if rec is None:
             pending.append((spec, 0))
-        elif is_done(rec, exp.max_retries):
-            final_status[spec.id] = rec.status
-        else:
+        elif not is_done(rec, exp.max_retries, retry_base.get(spec.id, 0)):
             pending.append((spec, rec.attempt + 1))
+        elif rec.status == "error" and options.retry_errors:
+            retry_base[spec.id] = rec.attempt + 1
+            pending.append((spec, rec.attempt + 1))
+        else:
+            final_status[spec.id] = rec.status
     done = len(final_status)
     spent = prior_cost
 
-    def summary(
-        *, cancelled: bool, budget_exhausted: bool, skipped: int, isolation_halt: str | None = None
-    ) -> RunSummary:
+    isolation_halt: str | None = None
+    infra_halt: str | None = None
+    open_breaches: set[str] = set()
+
+    def summary(*, cancelled: bool, budget_exhausted: bool, skipped: int) -> RunSummary:
         values = list(final_status.values())
         return RunSummary(
             run_dir=run_dir, planned=total, completed=sum(v != "error" for v in values),
             errors=values.count("error"), skipped_budget=skipped, cancelled=cancelled,
             total_cost_usd=round(spent, 6), budget_exhausted=budget_exhausted,
-            isolation_halt=isolation_halt,
+            isolation_halt=isolation_halt, infra_halt=infra_halt,
+            open_breaches=len(open_breaches),
         )  # fmt: skip
 
     if options.dry_run:
@@ -779,9 +1052,14 @@ def run_experiment(
         return summary(cancelled=False, budget_exhausted=False, skipped=0)
 
     if store is None:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        lock.acquire(run_dir)
         store = RunStore.create(run_dir, exp, planned_trials=total)
+    elif changes := store.forced_changes(exp):
+        store.record_forced_resume(exp, total, changes)
     elif store.meta.get("planned_trials") != total:
         store.update_meta(planned_trials=total)
+    _sweep_leftovers(store.run_dir)
     versions = _probe_versions(exp)
     if versions:
         store.update_meta(agent_versions=versions)
@@ -799,12 +1077,11 @@ def run_experiment(
     cancel = threading.Event()
     running: dict[Future[TrialRecord], tuple[TrialSpec, int]] = {}
     budget_exhausted = cancelled = False
-    breaches = 0  # isolation breaches since the last graded trial
-    isolation_halt: str | None = None
+    errors_in_row: dict[str, int] = {}  # arm -> infrastructure errors since its last graded trial
     pool = ThreadPoolExecutor(max_workers=jobs, thread_name_prefix="agent-ab-trial")
 
     def collect(fut: Future[TrialRecord]) -> None:
-        nonlocal done, spent, breaches, isolation_halt
+        nonlocal done, spent, isolation_halt, infra_halt
         spec, attempt = running.pop(fut)
         try:
             rec = fut.result()
@@ -814,15 +1091,43 @@ def run_experiment(
                 attempt=attempt, status="error", error=_exception_summary(e),
                 started_at=utc_now(), finished_at=utc_now(),
             )  # fmt: skip
-        if cancel.is_set():
-            return  # interrupted attempts are discarded, not recorded
-        store.append(rec)
+        if cancel.is_set() and rec.status == "error":
+            return  # interrupted attempts are discarded; ones that finished were paid for
+        try:
+            store.append(rec)
+        except OSError:
+            if cancel.is_set():
+                return  # shutting down: the other agents still have to be collected
+            raise
         spent += rec.cost_usd or 0.0
+        arm = spec.arm.name
         if rec.isolation_breach:
-            breaches += 1
+            breaches[arm] = breaches.get(arm, 0) + 1
+            retry_base[spec.id] = retry_base.get(spec.id, 0) + 1
+            open_breaches.add(spec.id)
         elif rec.status != "error":
-            breaches = 0
-        if rec.status == "error" and attempt < exp.max_retries and not rec.isolation_breach:
+            breaches[arm] = errors_in_row[arm] = 0
+        else:
+            errors_in_row[arm] = errors_in_row.get(arm, 0) + 1
+            # One trial using all its retries is not an outage.
+            limit = max(_MAX_CONSECUTIVE_ERRORS, exp.max_retries + 2)
+            if errors_in_row[arm] >= limit and infra_halt is None:
+                infra_halt = (
+                    f"{errors_in_row[arm]} attempts in a row in arm {arm} ended in an "
+                    f"infrastructure error; not starting more trials. Last one: {rec.error}"
+                )
+                emit("halt", message=infra_halt)
+        if rec.isolation_breach:
+            emit("finish", trial_id=spec.id, attempt=attempt, record=rec)
+            streak = sum(breaches.values())
+            if streak >= _MAX_CONSECUTIVE_BREACHES and isolation_halt is None:
+                isolation_halt = (
+                    f"{streak} isolation breaches with no graded trial since in their arms; not "
+                    f"starting more trials. Last one: {rec.error}"
+                )
+                emit("halt", message=isolation_halt)
+            return
+        if rec.status == "error" and attempt - retry_base.get(spec.id, 0) < exp.max_retries:
             pending.append((spec, attempt + 1))
             emit(
                 "retry",
@@ -835,12 +1140,6 @@ def run_experiment(
         final_status[spec.id] = rec.status
         done += 1
         emit("finish", trial_id=spec.id, attempt=attempt, record=rec)
-        if breaches >= _MAX_CONSECUTIVE_BREACHES and isolation_halt is None:
-            isolation_halt = (
-                f"{breaches} trials in a row ended in an isolation breach; not starting more "
-                f"trials. Last one: {rec.error}"
-            )
-            emit("halt", message=isolation_halt)
 
     def drain() -> None:
         # Wait in short slices: an unbounded wait would swallow Ctrl-C on Windows.
@@ -854,7 +1153,11 @@ def run_experiment(
 
     try:
         while pending or running:
-            while pending and len(running) < jobs and not budget_exhausted and not isolation_halt:
+            while (
+                pending
+                and len(running) < jobs
+                and not (budget_exhausted or isolation_halt or infra_halt)
+            ):
                 if budget is not None and spent >= budget:
                     budget_exhausted = True
                     emit(
@@ -875,6 +1178,7 @@ def run_experiment(
                     keep_workspaces=keep,
                     concurrency=len(running) + 1,
                     agent_version=versions.get(spec.arm.name),
+                    retries_used=attempt - retry_base.get(spec.id, 0),
                 )
                 running[fut] = (spec, attempt)
             if not running:
@@ -893,9 +1197,7 @@ def run_experiment(
         raise
     drain()
     pool.shutdown(wait=True)
+    _drop_empty(store.run_dir / IN_USE_DIR)
 
     skipped = len({spec.id for spec, _ in pending}) if budget_exhausted and not cancelled else 0
-    return summary(
-        cancelled=cancelled, budget_exhausted=budget_exhausted, skipped=skipped,
-        isolation_halt=isolation_halt,
-    )  # fmt: skip
+    return summary(cancelled=cancelled, budget_exhausted=budget_exhausted, skipped=skipped)

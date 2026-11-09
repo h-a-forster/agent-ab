@@ -157,7 +157,7 @@ Each trial runs isolated from your own Claude Code configuration: an empty confi
 an allow-listed environment and a workspace outside your home directory, and the run refuses to
 start if a parent of that workspace holds instruction files, skills, agents or commands
 ([details](docs/adapters.md#isolation)). The agent therefore needs a credential in the environment: `ANTHROPIC_API_KEY`, or the `CLAUDE_CODE_OAUTH_TOKEN`
-that `claude setup-token` prints. Isolation has not yet been exercised in an authenticated trial,
+that `claude setup-token` prints. Isolation has run in authenticated trials only on Windows with Claude Code 2.1.308 (two Haiku trials, 2026-11-09, no leaks),
 so start a real experiment with one trial and a small budget; repeated breaches stop the run.
 
 Check the config, then check that every task fails without its solution and passes with it:
@@ -241,7 +241,7 @@ Details: [docs/statistics.md](docs/statistics.md).
 |---|---|
 | `agent-ab init [DIR] [--force]` | Write the offline demo and a Claude Code template. |
 | `agent-ab validate CONFIG [--tasks] [--jobs N] [--arms A,B] [--only GLOB]` | Check a config. `--tasks` checks each task fails before and passes after its solution. |
-| `agent-ab run CONFIG [--out DIR \| --resume DIR] [--jobs N] [--repeats N] [--budget USD] [--arms A,B] [--only GLOB] [--dry-run] [--keep-workspaces] [--force] [--quiet]` | Run or resume an experiment and write the reports. |
+| `agent-ab run CONFIG [--out DIR \| --resume DIR] [--jobs N] [--repeats N] [--budget USD] [--arms A,B] [--only GLOB] [--dry-run] [--keep-workspaces] [--force] [--retry-errors] [--quiet]` | Run or resume an experiment and write the reports. |
 | `agent-ab report RUN_DIR [--format text\|md\|json\|html] [--out FILE] [--baseline ARM] [--alpha A] [--seed S]` | Re-analyse a run. |
 | `agent-ab status RUN_DIR` | Progress, errors and spend of a run. |
 | `agent-ab show RUN_DIR TRIAL_ID` | One trial's record and artifact paths. |

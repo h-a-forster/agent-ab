@@ -58,7 +58,7 @@ class Adapter(ABC):
 
     @abstractmethod
     def parse(self, ctx: TrialContext, result: ProcResult) -> AgentUsage:
-        """Extract usage from the finished process. Must never raise on malformed output."""
+        """Extract usage from the finished process. An exception means usage unknown."""
 
 
 def read_text(path: Path, limit: int | None = None) -> str:

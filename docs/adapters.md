@@ -28,14 +28,32 @@ counted in the report. Two kinds:
 
 - failures before the agent starts: workspace creation, `setup`, or launching the agent;
 - problems the adapter reports: authentication, rate limits, provider outages, an unusable
-  model, or (Codex) a sandbox that cannot run commands.
+  model, or (Codex) a sandbox that cannot run commands. For `claude-code` this goes by structure,
+  not wording, but for one case below: a CLI that dies without a result event, or a result with `is_error`, including
+  API statuses such as 402 and 429. Hitting a turn or budget limit, or a request its work made
+  invalid (status 413, or 400 such as a context overflow), is the agent's. The API gives a spend
+  limit a plain 400 too, so a 400 counts as infrastructure when its text names credit, billing, a
+  usage or spend limit or a quota, or when nothing had been billed. So a limit reached mid-trial in
+  wording not on that list reads as a `fail`, and a provoked 400 whose text happens to use one of
+  those words as an exclusion;
+- a grading step that fails because of the machine: a full disk, no memory, git that cannot
+  start, or anything that also fails on a copy of the task the agent never touched (a moved
+  `checks/` folder, an argv check command that cannot start). What cannot be told from a failing
+  check stays a `fail`: a string check goes through the shell, so a broken command is just a
+  non-zero exit (`validate --tasks` catches it before anything is spent), and a disk that fills
+  while the check runs looks like a failing check.
 
-An [isolation breach](#isolation) is the exception: it is not retried, and three in a row stop
-the run.
+An [isolation breach](#isolation) is an exception: it is not retried and uses no retries. Ten
+attempts in a row in one arm ending in an infrastructure error (or `max_retries + 2`, if that is
+more), with none of its trials graded between them, stop the run: `agent-ab run` exits 1, and trials that were not reached keep all
+their retries. Resume once it is fixed; `--retry-errors` reopens trials whose retries ran out
+([run-directory.md](run-directory.md#resume)).
 
 Everything else is the agent's outcome. Exiting non-zero, giving up, running out of turns or
-budget, or breaking the workspace so grading fails (deleting `.git`, replacing check paths
-with links) is a `fail`.
+budget, or breaking its own workspace or diff so grading fails (deleting `.git` or the
+workspace, replacing check paths with links) is a `fail`. An agent can still reach an
+infrastructure error on purpose by a few routes, listed in
+[safety.md](safety.md).
 
 After every trial, leftover agent processes are killed: through a job object on Windows,
 through the process group on Linux and macOS.
@@ -186,10 +204,13 @@ With `isolation = true` (the default) each trial gets:
   recorded in `agent_init.config_leaks`, reduced to the key and the last path component (for
   example `memory_paths.auto: ~/.../memory`), and makes the attempt an infrastructure error
   excluded from the statistics. A leak comes from the machine, so it is not retried, and three
-  breaches in a row with no graded trial between them stop the run: no new trials start, agents
-  already running finish and are recorded, and `agent-ab run` exits 1. Finished trials are kept.
-  Fix the leak and resume: breached trials run again, whatever `max_retries` says, and a breach
-  that recurs stops the run again. The report notes arms with leaks. The init event does not list every file Claude Code loads (2.1.308 listed only the
+  breaches with no graded trial of their arm since, counted across sessions, stop the run: no new
+  trials start, agents already running finish and are recorded, and `agent-ab run` exits 1. A run
+  that ends with fewer also exits 1 and says to resume. Finished trials are kept. Fix the leak
+  and resume: breached trials run again, whatever `max_retries` says, and a breach that recurs
+  stops the run again. The report notes arms with leaks. `leak_check` on each record says whether
+  the check ran: without an init event holding `memory_paths` it is `unverified`, never clean, and the report counts
+  those trials. The init event does not list every file Claude Code loads (2.1.308 listed only the
   auto-memory directory, and `config_leaks` stayed empty with a parent directory's
   `.claude/CLAUDE.md` loaded), so the check catches a foreign config directory but cannot
   prove that nothing else was loaded; the three measures above are what keep user files out.
@@ -210,7 +231,7 @@ used for one yet. On 2026-11-06 it was checked without a credential, on Windows 
 2.1.308, which starts, prints its init event and stops at "Not logged in": auto memory lay in
 the private config directory, Bash was available without `CLAUDE_CODE_GIT_BASH_PATH`, and an
 `InstructionsLoaded` hook passed with `--settings` listed only the workspace's own `CLAUDE.md`.
-An authenticated trial is still untested.
+Authenticated trials have run only on Windows with Claude Code 2.1.308 (two Haiku trials, 2026-11-09): both used Bash, `config_leaks` was empty, and no user-level rules appeared in the transcripts.
 
 `isolation = false` runs the agent with your config directory and full environment, as
 agent-ab 0.1.1 did. The leak check still records `config_leaks` (such trials normally list the
@@ -302,7 +323,7 @@ keys. Missing keys and wrong types are recorded as unknown.
 | `cache_read_tokens`, `cache_write_tokens` | integer | Cache tokens. |
 | `turns` | integer | Turns or model calls. |
 | `final_message` | string | Final message. |
-| `infra_error` | string | Marks the attempt as an infrastructure error. Use only for failures unrelated to the configuration. |
+| `infra_error` | string | Marks the attempt as an infrastructure error. Use only for failures unrelated to the configuration. Self-reported like every key here: an agent that knows `{artifacts}` can write it and buy itself a retry, so have a wrapper write `usage.json` and do not pass the path on if that matters. |
 
 ### Example: wrapping your own agent
 
@@ -383,7 +404,7 @@ Use it to test a new task suite and the whole pipeline for free.
    - `build(ctx)`: return an `AgentInvocation` (argv, env, stdin, cwd; optionally `base_env`
      to replace the inherited environment and `temp_dirs` for the runner to remove after the
      agent exits);
-   - `parse(ctx, result)`: return `AgentUsage`. It must never raise. Set `infra_error` only
+   - `parse(ctx, result)`: return `AgentUsage`. An exception means usage unknown. Set `infra_error` only
      for failures unrelated to the configuration under test.
 2. Register it in `_REGISTRY` in `src/agent_ab/adapters/__init__.py` as
    `"name": "agent_ab.adapters.<module>:<Class>"`.
