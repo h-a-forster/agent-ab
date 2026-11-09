@@ -446,13 +446,28 @@ def breach_counts(records: Iterable[TrialRecord]) -> Counter[str]:
     return Counter(r.trial_id for r in records if r.isolation_breach)
 
 
+def retry_bases(records: Iterable[TrialRecord]) -> dict[str, int]:
+    """Per trial id, the attempt number its next attempt's ``retries_used`` is counted from."""
+    bases: dict[str, int] = dict(breach_counts(records := list(records)))
+    last: dict[str, TrialRecord] = {}
+    for rec in records:
+        if rec.trial_id not in last or rec.attempt >= last[rec.trial_id].attempt:
+            last[rec.trial_id] = rec
+    for tid, rec in last.items():
+        if rec.retries_used is not None:
+            bases[tid] = rec.attempt - rec.retries_used + bool(rec.isolation_breach)
+    return bases
+
+
 def is_done(record: TrialRecord, max_retries: int, breaches: int = 0) -> bool:
     """A trial needs no more attempts once it passed/failed or exhausted its retries.
 
     An isolation breach is never final: it says nothing about the trial, and it stops the run
     without retries, so a resume after fixing the leak must run the trial again. ``breaches``
-    (see ``breach_counts``) says how many of its attempts were breaches, which are not retries.
+    (see ``breach_counts``) says how many of its attempts were breaches, which are not retries;
+    records that carry ``retries_used`` say it themselves.
     """
     if record.isolation_breach:
         return False
-    return record.status in ("pass", "fail") or record.attempt - breaches >= max_retries
+    used = record.attempt - breaches if record.retries_used is None else record.retries_used
+    return record.status in ("pass", "fail") or used >= max_retries

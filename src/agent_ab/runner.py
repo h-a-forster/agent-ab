@@ -55,9 +55,9 @@ from agent_ab.store import (
     TRIALS_DIR,
     RunLock,
     RunStore,
-    breach_counts,
     check_new_run_dir,
     is_done,
+    retry_bases,
     utc_now,
 )
 from agent_ab.workspace import (
@@ -794,6 +794,7 @@ def run_trial(
     keep_workspaces: bool | None = None,
     concurrency: int | None = None,
     agent_version: str | None = None,
+    retries_used: int | None = None,
 ) -> TrialRecord:
     """Run one attempt of one trial and return its record. Never raises.
 
@@ -808,7 +809,7 @@ def run_trial(
     rec = TrialRecord(
         trial_id=spec.id, task=spec.task.id, arm=spec.arm.name, repeat=spec.repeat,
         attempt=attempt, status="error", started_at=utc_now(), concurrency=concurrency,
-        agent_version=agent_version, fingerprint=exp.fingerprint,
+        agent_version=agent_version, fingerprint=exp.fingerprint, retries_used=retries_used,
     )  # fmt: skip
     rec.tool_version = __version__
     art: Path | None = None
@@ -957,7 +958,7 @@ def _run_experiment(
         store.check_compatible(exp, force=options.force)
         recorded = store.records()
         finals = store.final_records()
-        retry_base.update(breach_counts(recorded))
+        retry_base.update(retry_bases(recorded))
         arm_names = {arm.name for arm in exp.arms}
         for prior in recorded:  # across sessions, or each resume would pay for a full streak
             if prior.arm not in arm_names:
@@ -1145,6 +1146,7 @@ def _run_experiment(
                     keep_workspaces=keep,
                     concurrency=len(running) + 1,
                     agent_version=versions.get(spec.arm.name),
+                    retries_used=attempt - retry_base.get(spec.id, 0),
                 )
                 running[fut] = (spec, attempt)
             if not running:

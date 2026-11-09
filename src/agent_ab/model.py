@@ -235,6 +235,7 @@ class TrialRecord:
     instructions_sha256: dict[str, str] | None = None
     isolation_breach: bool = False  # the agent loaded configuration from outside its isolation
     leak_check: str | None = None  # "clean", "leaked", "unverified"; None if the adapter has none
+    retries_used: int | None = None  # of max_retries, at this attempt; None in older records
     tool_version: str | None = None  # agent-ab version that ran this attempt
     fingerprint: str | None = None  # experiment fingerprint this attempt ran under
     grading: str | None = None  # "clean-copy" or "agent-workspace"; None if it was not graded

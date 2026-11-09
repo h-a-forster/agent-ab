@@ -559,6 +559,42 @@ def test_exhausted_errors_can_be_retried_without_discarding_paid_results(tmp_pat
     assert RunStore.open(tmp_path / "run").total_cost() == pytest.approx(4.0)
 
 
+def _fake_outcome_script(state: Path) -> str:
+    return (
+        "import json, os\n"
+        f"mode = open({str(state)!r}).read().strip()\n"
+        "usage = {'infra': {'infra_error': '429', 'cost_usd': 1.0},\n"
+        "         'breach': {'infra_error': 'leak', 'isolation_breach': True}}[mode]\n"
+        "path = os.path.join(os.environ['FAKE_ARTIFACTS'], 'usage.json')\n"
+        "open(path, 'w').write(json.dumps(usage))\n"
+    )
+
+
+def test_fresh_retries_survive_a_breach_in_a_later_session(tmp_path):
+    state = tmp_path / "mode"
+    exp = make_exp(tmp_path, arms=[fake_arm("a", _fake_outcome_script(state))], max_retries=2)
+    state.write_text("infra")
+    run_experiment(exp, tmp_path / "run")
+    state.write_text("breach")
+    run_experiment(exp, tmp_path / "run", resume=True, options=RunOptions(retry_errors=True))
+    state.write_text("infra")
+    run_experiment(exp, tmp_path / "run", resume=True)
+    assert [r.attempt for r in records(tmp_path / "run")] == [0, 1, 2, 3, 4, 5, 6]
+
+
+def test_fresh_retries_survive_a_budget_stop(tmp_path):
+    state = tmp_path / "mode"
+    state.write_text("infra")
+    exp = make_exp(tmp_path, arms=[fake_arm("a", _fake_outcome_script(state))], max_retries=2)
+    run_experiment(exp, tmp_path / "run")
+    options = RunOptions(retry_errors=True, budget_usd=4.0)
+    run_experiment(exp, tmp_path / "run", resume=True, options=options)
+    assert len(records(tmp_path / "run")) == 4
+    summary = run_experiment(exp, tmp_path / "run", resume=True)
+    assert [r.attempt for r in records(tmp_path / "run")] == [0, 1, 2, 3, 4, 5]
+    assert summary.errors == 1
+
+
 def test_retry_errors_needs_a_run_to_resume(tmp_path, monkeypatch):
     from agent_ab.cli import main
 
