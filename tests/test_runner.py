@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,7 @@ import pytest
 
 from agent_ab import adapters
 from agent_ab.adapters.base import Adapter
+from agent_ab.adapters.claude_code import ClaudeCodeAdapter
 from agent_ab.config import compute_fingerprint
 from agent_ab.errors import AdapterError, RunStoreError
 from agent_ab.model import (
@@ -57,7 +59,16 @@ class FakeAdapter(Adapter):
 
     name = "fake"
     option_keys = frozenset(
-        {"script", "missing", "build_error", "argv", "parse_error", "version", "version_error"}
+        {
+            "script",
+            "missing",
+            "build_error",
+            "argv",
+            "parse_error",
+            "version",
+            "version_error",
+            "isolate",
+        }
     )
 
     def check_available(self, spec: AgentSpec) -> str | None:
@@ -73,7 +84,15 @@ class FakeAdapter(Adapter):
             raise RuntimeError("boom in build")
         argv = ctx.spec.options.get("argv") or [PY, "-c", ctx.spec.options.get("script", "")]
         env = {"FAKE_ATTEMPT": str(ctx.attempt), "FAKE_ARTIFACTS": str(ctx.artifacts)}
-        return AgentInvocation(argv=list(argv), env=env)
+        if not ctx.spec.options.get("isolate"):
+            return AgentInvocation(argv=list(argv), env=env)
+        temp = ctx.workspace.with_name(ctx.workspace.name + ".private")
+        temp.mkdir()
+        base = {k: v for k, v in os.environ.items() if k.upper() in ("PATH", "SYSTEMROOT")}
+        env["FAKE_TEMP"] = str(temp)
+        return AgentInvocation(
+            argv=list(argv), env=env, base_env={**base, "BASE_ONLY": "1"}, temp_dirs=[temp]
+        )
 
     def parse(self, ctx: TrialContext, result: ProcResult) -> AgentUsage:
         if ctx.spec.options.get("parse_error"):
@@ -375,6 +394,95 @@ def test_unexpected_exception_is_error(tmp_path):
     assert ws_left(tmp_path) == []
 
 
+# --------------------------------------------------------------------------- isolation breach
+
+
+class LeakyClaude(ClaudeCodeAdapter):
+    """The real adapter and parser, with a Python script in place of the ``claude`` binary."""
+
+    def __init__(self, script: str):
+        self.script = script
+
+    def check_workspace_root(self, spec, root):
+        return None  # the temp directory may sit under a home directory with its own CLAUDE.md
+
+    def _argv(self, spec, exe, system_prompt_file):
+        return [PY, "-c", self.script]
+
+
+def leaky_agent(counter: Path, leaks: str) -> str:
+    """A stream-json agent charging $0.10 that reports user memory when ``leaks`` is true.
+
+    ``n`` is how many agents started before this one.
+    """
+    memory = str(Path.home() / ".claude" / "projects" / "x" / "memory")
+    return (
+        "import json, os, pathlib\n"
+        f"counter = pathlib.Path({str(counter)!r})\n"
+        "n = len(counter.read_text()) if counter.exists() else 0\n"
+        "counter.write_text('x' * (n + 1))\n"
+        f"paths = {{'auto': {memory!r}}} if ({leaks}) else {{}}\n"
+        "print(json.dumps({'type': 'system', 'subtype': 'init', 'memory_paths': paths}))\n"
+        f"{SOLVE}\n"
+        "print(json.dumps({'type': 'result', 'subtype': 'success', 'total_cost_usd': 0.1}))\n"
+    )
+
+
+def leaky_exp(tmp_path, monkeypatch, script: str, **kw) -> Experiment:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setitem(adapters._REGISTRY, "leaky", "unused:Unused")
+    monkeypatch.setitem(adapters._INSTANCES, "leaky", LeakyClaude(script))
+    agent = AgentSpec(adapter="leaky", options={"executable": PY})
+    tasks = [make_task(tmp_path, f"t{i}") for i in range(3)]
+    return make_exp(
+        tmp_path, arms=[Arm(name="a", agent=agent), Arm(name="b", agent=agent)], tasks=tasks, **kw
+    )
+
+
+@pytest.mark.parametrize("jobs", [1, 2])
+def test_repeated_isolation_breach_halts_the_run(tmp_path, monkeypatch, jobs):
+    exp = leaky_exp(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "True"), jobs=jobs)
+    summary = run_experiment(exp, tmp_path / "run")
+    recs = records(tmp_path / "run")
+    assert 3 <= len(recs) <= 2 + jobs  # one more per agent already running when it stops
+    assert {r.attempt for r in recs} == {0}  # a breach is not retried
+    assert len({r.trial_id for r in recs}) == len(recs)
+    assert all(r.status == "error" and "isolation breach" in r.error for r in recs)
+    assert all(r.agent_init["config_leaks"] == ["memory_paths.auto: ~/.../memory"] for r in recs)
+    assert summary.isolation_halt and "isolation breach" in summary.isolation_halt
+    assert summary.total_cost_usd == pytest.approx(0.1 * len(recs))
+
+
+def test_clean_trial_between_breaches_does_not_halt(tmp_path, monkeypatch):
+    # Breach, breach, clean, repeated: never three in a row. A single breach is not retried.
+    exp = leaky_exp(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "n % 3 != 2"))
+    summary = run_experiment(exp, tmp_path / "run")
+    assert summary.isolation_halt is None
+    assert len(records(tmp_path / "run")) == 6
+    assert (summary.completed, summary.errors) == (2, 4)
+
+
+def test_halted_run_keeps_finished_trials_and_resumes(tmp_path, monkeypatch):
+    # max_retries = 0: a breach must stay resumable even with no retries to spare.
+    flag = tmp_path / "leak-is-unfixed"
+    flag.touch()
+    script = leaky_agent(tmp_path / "n", f"n > 0 and os.path.exists({str(flag)!r})")
+    exp = leaky_exp(tmp_path, monkeypatch, script, max_retries=0)
+    first = run_experiment(exp, tmp_path / "run")
+    before = records(tmp_path / "run")
+    assert first.isolation_halt and (first.completed, first.errors) == (1, 3)
+    assert [r.status for r in before] == ["pass", "error", "error", "error"]
+
+    flag.unlink()  # the owner fixes the leak
+    second = run_experiment(exp, tmp_path / "run", resume=True)
+    after = records(tmp_path / "run")
+    assert second.isolation_halt is None
+    assert (second.completed, second.errors) == (6, 0)
+    assert after[:4] == before  # nothing finished was rewritten or run again
+    assert len(after) == 9  # the three breached trials and the two never started, once each
+    assert {r.attempt for r in after[4:] if r.trial_id == before[1].trial_id} == {1}
+
+
 # --------------------------------------------------------------------------- isolation
 
 
@@ -563,6 +671,33 @@ def test_unavailable_adapter_fails_fast(tmp_path):
     with pytest.raises(AdapterError) as info:
         run_experiment(exp, tmp_path / "run")
     assert "not installed" in str(info.value) and "too old" in str(info.value)
+    assert not (tmp_path / "run").exists()
+
+
+def test_base_env_replaces_inherited_env_and_temp_dirs_are_removed(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_AB_TEST_INHERITED", "x")
+    script = (
+        "import json, os\n"
+        "seen = {k: os.environ.get(k) for k in ('AGENT_AB_TEST_INHERITED', 'BASE_ONLY')}\n"
+        "seen['temp'] = os.path.isdir(os.environ['FAKE_TEMP'])\n"
+        "json.dump(seen, open(os.path.join(os.environ['FAKE_ARTIFACTS'], 'seen.json'), 'w'))\n"
+    )
+    exp = make_exp(tmp_path, arms=[fake_arm("a", script, options={"isolate": True})])
+    run_experiment(exp, tmp_path / "run")
+    [rec] = records(tmp_path / "run")
+    seen = json.loads((tmp_path / "run" / rec.artifacts / "seen.json").read_text("utf-8"))
+    assert seen == {"AGENT_AB_TEST_INHERITED": None, "BASE_ONLY": "1", "temp": True}
+    assert ws_left(tmp_path) == []  # the private directory beside the workspace is gone
+
+
+def test_claude_isolation_checks_parents_of_workspace_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")  # isolation needs a credential
+    (tmp_path / "CLAUDE.md").write_text("user rules\n", encoding="utf-8")
+    arm = Arm(name="a", agent=AgentSpec(adapter="claude-code", options={"executable": PY}))
+    exp = make_exp(tmp_path, arms=[arm])  # workspace_root = tmp_path / "ws"
+    with pytest.raises(AdapterError) as info:
+        run_experiment(exp, tmp_path / "run")
+    assert str(tmp_path / "CLAUDE.md") in str(info.value)
     assert not (tmp_path / "run").exists()
 
 

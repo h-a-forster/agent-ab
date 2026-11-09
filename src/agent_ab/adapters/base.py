@@ -43,6 +43,11 @@ class Adapter(ABC):
         """Return a message if the agent cannot be launched on this machine, else None."""
         return None
 
+    def check_workspace_root(self, spec: AgentSpec, root: Path) -> str | None:
+        """Return a message if workspaces under ``root`` would expose the agent to files it must
+        not see (e.g. instruction files in parent directories), else None. No side effects."""
+        return None
+
     def version(self, spec: AgentSpec) -> str | None:
         """The agent CLI's version, or None when unknown. Must never raise; called once per arm."""
         return None

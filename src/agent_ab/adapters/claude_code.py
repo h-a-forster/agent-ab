@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,164 @@ _INIT_DROP = frozenset(
     }
 )
 _ABSOLUTE_PATH = re.compile(r"^(?:/|~[/\\]|\\\\|[A-Za-z]:[/\\])")
+
+# ---- isolation (option ``isolation``, on by default)
+#
+# Claude Code reads user-level configuration from its config directory (``~/.claude``, or
+# CLAUDE_CONFIG_DIR): settings, memory (CLAUDE.md, rules), auto memory, plugins and skills. It
+# also loads CLAUDE.md files from every parent of its working directory and inherits the
+# environment. An isolated trial gets an empty config directory beside its workspace, an
+# allow-listed environment, and a check of its init event for memory loaded from elsewhere.
+
+CONFIG_DIR_SUFFIX = ".claude-config"
+
+# Passed through to an isolated agent (names compared case-insensitively). Everything else is
+# dropped, e.g. what a parent Claude Code session sets (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+# CLAUDE_CODE_SIMPLE, CLAUDE_CODE_GIT_BASH_PATH), CLAUDE_CONFIG_DIR, model overrides
+# (ANTHROPIC_MODEL), Python environments (PYTHONHOME, PYTHONPATH, VIRTUAL_ENV) and unrelated
+# secrets. Option ``pass_env`` adds names; ``[agent].env`` is always applied on top.
+_ENV_ALLOW = frozenset(
+    {
+        # operating system and locale
+        "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "OS",
+        "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+        "USERNAME", "USERDOMAIN", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "LANGUAGE", "TZ",
+        "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "ALLUSERSPROFILE", "PUBLIC",
+        "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "COMMONPROGRAMFILES",
+        "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432", "PSMODULEPATH",
+        "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+        # network and certificates
+        "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "NODE_EXTRA_CA_CERTS",
+        "NODE_USE_SYSTEM_CA", "SSL_CERT_FILE", "SSL_CERT_DIR", "CLAUDE_CODE_CERT_STORE",
+        "CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+        # credentials and API provider
+        "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_PROFILE",
+        "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+        "CLOUD_ML_REGION", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT",
+    }
+)  # fmt: skip
+_ENV_ALLOW_PREFIXES = (
+    "LC_",
+    "AWS_",
+    "ANTHROPIC_VERTEX_",
+    "ANTHROPIC_BEDROCK_",
+    "ANTHROPIC_FOUNDRY_",
+    "ANTHROPIC_AWS_",
+    "VERTEX_REGION_",
+)
+# An isolated agent has no saved login, so it needs one of these. --bare reads neither an OAuth
+# token nor a profile.
+_AUTH_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_PROFILE",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CODE_USE_MANTLE",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+)
+_BARE_UNREAD = frozenset({"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_PROFILE"})
+# What Claude Code loads from the parents of its working directory, whatever --setting-sources
+# says (checked on 2.1.308); in the home directory, these ``.claude`` entries are the user's own.
+_ANCESTOR_FILES = (
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "AGENTS.md",
+    ".claude/CLAUDE.md",
+    ".claude/rules",
+    ".claude/skills",
+    ".claude/agents",
+    ".claude/commands",
+)
+_INSTRUCTION_NAMES = frozenset({"claude.md", "claude.local.md", "agents.md"})
+
+
+def config_dir(workspace: Path) -> Path:
+    """The private config directory of an isolated trial: a sibling of its workspace."""
+    return workspace.with_name(workspace.name + CONFIG_DIR_SUFFIX)
+
+
+def isolated_env(environ: Mapping[str, str], extra: Iterable[str] = ()) -> dict[str, str]:
+    """The allow-listed part of ``environ``, plus the names in ``extra``.
+
+    When VIRTUAL_ENV is set (``uv run``, an activated venv), its ``bin``/``Scripts`` directory
+    is also taken off PATH, so the agent's ``python`` is not agent-ab's own interpreter.
+    """
+    allow = _ENV_ALLOW | {name.upper() for name in extra}
+    env = {
+        k: v
+        for k, v in environ.items()
+        if k.upper() in allow or k.upper().startswith(_ENV_ALLOW_PREFIXES)
+    }
+    venv = next((v for k, v in environ.items() if k.upper() == "VIRTUAL_ENV" and v), None)
+    path_key = next((k for k in env if k.upper() == "PATH"), None)
+    if venv and path_key and "VIRTUAL_ENV" not in allow:
+        drop = {_norm(os.path.join(venv, d)) for d in ("bin", "Scripts")}
+        parts = env[path_key].split(os.pathsep)
+        env[path_key] = os.pathsep.join(p for p in parts if p and _norm(p) not in drop)
+    return env
+
+
+def _norm(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path))
+
+
+def _inside(path: str, root: str) -> bool:
+    p, r = _norm(path), _norm(root)
+    return p == r or p.startswith(r.rstrip(os.sep) + os.sep)
+
+
+def _describe(path: str) -> str:
+    """A path reduced to its last component and whether it is in the home directory, so records
+    stay free of user names (which also appear in encoded project directory names)."""
+    name = path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    try:
+        home = str(Path.home())
+    except (RuntimeError, OSError):
+        home = None
+    return f"~/.../{name}" if home and _inside(path, home) else f".../{name}"
+
+
+def config_leaks(event: Mapping[str, Any], allowed: Sequence[Path]) -> list[str]:
+    """Memory and instruction files the init event shows were loaded from outside ``allowed``.
+
+    Looks at every path under ``memory_paths`` and every path anywhere in the event that names
+    a CLAUDE.md, CLAUDE.local.md, AGENTS.md or ``.claude/rules`` entry. Returns sorted entries
+    such as ``"memory_paths.auto: ~/.../memory"``. The event does not list every loaded file
+    (Claude Code 2.1.308 listed only the auto-memory directory), so an empty result is not
+    proof that nothing else was loaded.
+    """
+    roots = {str(r) for r in allowed} | {os.path.realpath(r) for r in allowed}
+    found: set[str] = set()
+
+    def walk(value: Any, key: str) -> None:
+        if isinstance(value, Mapping):
+            for k, v in value.items():
+                walk(v, f"{key}.{k}" if key else str(k))
+        elif isinstance(value, list):
+            for v in value:
+                walk(v, key)
+        elif _is_path(value):
+            name = value.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+            memory = key == "memory_paths" or key.startswith("memory_paths.")
+            rules = "/.claude/rules" in value.replace("\\", "/").lower()
+            if (memory or rules or name in _INSTRUCTION_NAMES) and not any(
+                _inside(value, r) for r in roots
+            ):
+                found.add(f"{key}: {_describe(value)}"[:_MAX_TEXT])
+
+    walk(event, "")
+    return sorted(found)[:_MAX_LIST]
+
+
+def instruction_files_above(root: Path) -> list[Path]:
+    """Instruction files and agent definitions Claude Code would load from ``root`` and its
+    parents."""
+    root = Path(root).resolve()
+    return [d / rel for d in (root, *root.parents) for rel in _ANCESTOR_FILES if (d / rel).exists()]
 
 
 def _looks_like_infra(text: str) -> bool:
@@ -279,6 +438,8 @@ class ClaudeCodeAdapter(Adapter):
             "append_system_prompt",
             "capture_init",
             "strict_mcp_config",
+            "isolation",
+            "pass_env",
         }
     )
 
@@ -319,6 +480,27 @@ class ClaudeCodeAdapter(Adapter):
             problems.append("option 'append_system_prompt' must be a string")
         problems += _check_bool(o, "capture_init")
         problems += _check_bool(o, "strict_mcp_config")
+        problems += _check_bool(o, "isolation")
+        isolated = o.get("isolation", True) is True
+        if "pass_env" in o:
+            names = o["pass_env"]
+            if not isinstance(names, list) or not all(
+                isinstance(n, str) and n.strip() and "=" not in n for n in names
+            ):
+                problems.append("option 'pass_env' must be a list of environment variable names")
+            elif not isolated:
+                problems.append("option 'pass_env' only applies with isolation = true")
+        if isolated:
+            if o.get("capture_init", True) is False:
+                problems.append(
+                    "isolation = true needs capture_init = true: the init event is how leaks "
+                    "of user-level memory are detected"
+                )
+            if any(k.upper() == "CLAUDE_CONFIG_DIR" for k in spec.env):
+                problems.append(
+                    "env sets CLAUDE_CONFIG_DIR, which isolation replaces with an empty "
+                    "directory per trial; set isolation = false to use your own"
+                )
         return problems
 
     def check_available(self, spec: AgentSpec) -> str | None:
@@ -331,7 +513,35 @@ class ClaudeCodeAdapter(Adapter):
             )
         # The system-prompt file path is only known per attempt; build() checks it.
         issue = batch_argv_issue(self._argv(spec, resolved, None))
-        return f"claude-code: {issue}" if issue else None
+        if issue:
+            return f"claude-code: {issue}"
+        return self._auth_problem(spec) if spec.options.get("isolation", True) else None
+
+    @staticmethod
+    def _auth_problem(spec: AgentSpec) -> str | None:
+        env = {k.upper(): v for k, v in isolated_env(os.environ).items() if v}
+        env.update({k.upper(): v for k, v in spec.env.items() if v})
+        usable = [n for n in _AUTH_ENV if not (spec.options.get("bare") and n in _BARE_UNREAD)]
+        if any(env.get(n) for n in usable):
+            return None
+        return (
+            "claude-code: isolation (on by default) gives each trial an empty config "
+            "directory, so the agent cannot use your saved login. Set one of "
+            f"{', '.join(usable)} in the environment or in [agent.env] (`claude setup-token` "
+            "prints a CLAUDE_CODE_OAUTH_TOKEN), or set isolation = false"
+        )
+
+    def check_workspace_root(self, spec: AgentSpec, root: Path) -> str | None:
+        if not spec.options.get("isolation", True):
+            return None
+        found = instruction_files_above(root)
+        if not found:
+            return None
+        return (
+            "claude-code: Claude Code would load these from the parents of the workspaces "
+            f"under {root}: {', '.join(str(f) for f in found)}. Move them, set "
+            "workspace_root elsewhere, or set isolation = false"
+        )
 
     def version(self, spec: AgentSpec) -> str | None:
         return probe_version(spec, "claude")  # prints e.g. "2.1.296 (Claude Code)"
@@ -385,10 +595,17 @@ class ClaudeCodeAdapter(Adapter):
         check_batch_argv(argv)
         # The prompt goes on stdin: no argv length limits or Windows quoting pitfalls.
         files = [Path(system_prompt_file)] if system_prompt_file is not None else []
-        return AgentInvocation(
+        inv = AgentInvocation(
             argv=argv, env=dict(spec.env), stdin=ctx.prompt, cwd=ctx.workspace,
             instruction_files=files,
         )  # fmt: skip
+        if o.get("isolation", True):
+            config = config_dir(ctx.workspace)
+            config.mkdir()
+            inv.base_env = isolated_env(os.environ, o.get("pass_env", ()))
+            inv.env["CLAUDE_CONFIG_DIR"] = str(config)
+            inv.temp_dirs.append(config)
+        return inv
 
     def parse(self, ctx: TrialContext, result: ProcResult) -> AgentUsage:
         if result.start_error:
@@ -413,8 +630,19 @@ class ClaudeCodeAdapter(Adapter):
         event = find_init(read_head(result.stdout_path, _HEAD_LIMIT))
         if event is None:
             return
+        # From the raw event: init.json and the summary have no absolute paths left to check.
+        isolated = ctx.spec.options.get("isolation", True)
+        allowed = [ctx.workspace, config_dir(ctx.workspace)] if isolated else [ctx.workspace]
+        leaks = config_leaks(event, allowed)
+        if leaks and isolated and usage.infra_error is None:
+            shown = "; ".join(leaks[:5]) + ("; ..." if len(leaks) > 5 else "")
+            usage.infra_error = (
+                "isolation breach: the agent loaded memory or instructions from outside its "
+                f"workspace and private config directory ({shown}); see agent.stdout"
+            )
+            usage.isolation_breach = True
+        usage.agent_init = {**summarise_init(scrub_init(event)), "config_leaks": leaks}
+        usage.agent_version = usage.agent_init.get("claude_code_version")
         ctx.artifacts.mkdir(parents=True, exist_ok=True)
         text = json.dumps(scrub_init(event), indent=2, ensure_ascii=False) + "\n"
         (ctx.artifacts / INIT_FILE).write_text(text, encoding="utf-8", newline="\n")
-        usage.agent_init = summarise_init(scrub_init(event))
-        usage.agent_version = usage.agent_init.get("claude_code_version")

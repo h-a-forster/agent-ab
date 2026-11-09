@@ -34,7 +34,9 @@ max_retries = 2          # extra attempts after infrastructure errors (auth, rat
 baseline = "control"
 
 [agent]
-adapter = "claude-code"  # requires the `claude` CLI on PATH, signed in
+adapter = "claude-code"  # requires the `claude` CLI on PATH and a credential in the
+                         # environment: ANTHROPIC_API_KEY, or the CLAUDE_CODE_OAUTH_TOKEN that
+                         # `claude setup-token` prints (isolation, see below)
 model = "sonnet"
 # effort = "medium"      # optional: low, medium, high, xhigh, max
 
@@ -45,10 +47,11 @@ permission_mode = "bypassPermissions"
 # max_budget_usd = 1.0   # optional per-trial spending cap passed to the CLI
 # max_turns = 60         # optional per-trial turn cap
 # setting_sources = "project"  # optional: comma-separated settings sources the CLI loads
-#                              # (user, project, local); "project" keeps your personal
-#                              # configuration out of the experiment
-# Defaults worth knowing: strict_mcp_config = true (no MCP servers, not even your own) and
-# capture_init = true (records the model, tools, MCP servers and plugins each trial ran with).
+#                              # (user, project, local)
+# Defaults worth knowing: isolation = true (an empty config directory and an allow-listed
+# environment per trial, so your CLAUDE.md, settings and login stay out; docs/adapters.md),
+# strict_mcp_config = true (no MCP servers, not even your own) and capture_init = true
+# (records the model, tools, MCP servers and plugins each trial ran with).
 
 [[arms]]
 name = "control"

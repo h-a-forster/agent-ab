@@ -328,6 +328,31 @@ def test_cancelled_summary_exits_130(demo, capsys, monkeypatch):
     assert "resume with" in err
 
 
+def test_isolation_halt_exits_nonzero_with_resume_hint(demo, capsys, monkeypatch):
+    import agent_ab.runner as runner
+
+    def halted(exp, run_dir, **kwargs):
+        if kwargs["options"].dry_run:  # the CLI's silent preflight
+            return None
+        RunStore.create(run_dir, exp, planned_trials=4)
+        return runner.RunSummary(
+            run_dir=run_dir,
+            planned=4,
+            completed=1,
+            errors=3,
+            skipped_budget=0,
+            cancelled=False,
+            total_cost_usd=0.0,
+            budget_exhausted=False,
+            isolation_halt="3 trials in a row ended in an isolation breach",
+        )
+
+    monkeypatch.setattr(runner, "run_experiment", halted)
+    code, _, err = run_cli(capsys, "run", demo / "experiment.toml", "--out", demo / "r")
+    assert code == 1
+    assert "isolation breach" in err and "resume with" in err
+
+
 # --------------------------------------------------------------------------- report
 
 

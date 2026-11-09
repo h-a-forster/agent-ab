@@ -7,6 +7,28 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `claude-code` option `isolation`, on by default: each trial gets an empty
+  `CLAUDE_CONFIG_DIR` beside its workspace (removed after the agent exits) and an allow-listed
+  environment (option `pass_env` adds names), and the raw init event is checked for memory or
+  instruction files loaded from outside the workspace. Leaks are recorded in
+  `agent_init.config_leaks`, make the attempt an infrastructure error, and are noted in the
+  report. A run refuses to start when `CLAUDE.md`, `AGENTS.md` or similar files exist in the
+  workspace root or its parents, or when no credential is set in the environment.
+- Adapter hook `check_workspace_root`, and `AgentInvocation.base_env` and `temp_dirs`.
+
+### Changed
+
+- `claude-code` no longer uses your saved login by default: set `ANTHROPIC_API_KEY` or
+  `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`), or set `isolation = false`. A run
+  started with 0.1.1 and resumed now runs its remaining trials isolated; to keep it as it
+  was, set `isolation = false`, which changes the configuration, and resume with `--force`.
+- Default `workspace_root`: when the system temp directory is inside the home directory (as
+  on Windows), workspaces go to `agent-ab-workspaces` at the root of the home drive.
+
+## 0.1.1 - 2026-10-30
+
+### Added
+
 - 40 example tasks (50 in total): 20 round-1 tasks, 10 bug hunts and 10 large features.
 - `claude-code` options `capture_init` and `strict_mcp_config`, both on by default.
 - Per trial: the models actually used, the CLI version and a scrubbed summary of the agent's
@@ -19,6 +41,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `AGENTS.override.md`) are not hashed.
 - One-arm runs, for pilots that measure baseline difficulty.
 - Manipulation check script, `docs/results/manipulation.py`.
+- Example result: a re-run of the no-tests experiment with the current grader and Claude Code
+  2.1.308 (`docs/results/haiku-5-5-no-tests-rerun`). Both of its arms also loaded the
+  machine's user-level `CLAUDE.md`, so it is not a clean replication.
 
 ### Changed
 
@@ -64,7 +89,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hidden tests and runs with no tests now count as failures.
 - `feature-uri-resolve`: the hidden oracle and the reference solution lowercased percent-encoding
   hex digits in a host, contradicting the prompt (and RFC 3986 section 6.2.2.1). They now keep
-  them uppercase, and the check has an explicit case. Published results predate the fix.
+  them uppercase, and the check has an explicit case. Earlier results predate the fix; the
+  no-tests re-run uses it.
 - Hardened grading: checks run with `PYTHONSAFEPATH=1`, and check-only paths are cleared before
   checks are installed, so agent-planted files cannot shadow the standard library or add tests.
 - `run.json` no longer leaks absolute home-directory paths.

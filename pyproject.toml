@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-ab"
-version = "0.1.0"
+version = "0.1.1"
 description = "Controlled A/B experiments for coding-agent setups: instructions, skills, models, effort and prompts, measured on hidden tests with paired statistics."
 readme = "README.md"
 license = "MIT"

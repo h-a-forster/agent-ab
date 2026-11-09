@@ -16,9 +16,10 @@ uv run agent-ab --version
 ```sh
 uv run pytest
 uv run ruff check .
+uv run ruff format --check .
 ```
 
-CI runs both on Linux, macOS and Windows with Python 3.11-3.13, and smoke-tests a built wheel
+CI runs them on Linux, macOS and Windows with Python 3.11-3.13, and smoke-tests a built wheel
 with the offline demo.
 
 Tests must run offline and fast: no real agents, no network. Use the `mock` adapter or a fake
@@ -58,6 +59,6 @@ See [docs/tasks.md](docs/tasks.md).
 
 - One change per pull request, with tests and docs.
 - Add an entry under "Unreleased" in [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
-- `uv run pytest` and `uv run ruff check .` must pass.
+- `uv run pytest`, `uv run ruff check .` and `uv run ruff format --check .` must pass.
 
 Security issues: see [SECURITY.md](SECURITY.md). Do not open a public issue.

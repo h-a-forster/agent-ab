@@ -1,0 +1,1172 @@
+{
+  "analysis": {
+    "alpha": 0.05,
+    "arms": [
+      {
+        "arm": "control",
+        "cost_per_pass_usd": 0.04749957220689655,
+        "errors": 0,
+        "mean_cost_usd": {
+          "estimate": 0.045916253133333335,
+          "high": 0.07092685184,
+          "low": 0.028273140385
+        },
+        "mean_duration_s": {
+          "estimate": 169.63279999999997,
+          "high": 212.5656618333333,
+          "low": 134.63480966666665
+        },
+        "mean_input_tokens": 24.053333333333335,
+        "mean_output_tokens": 26071.293333333335,
+        "mean_turns": 17.606666666666666,
+        "pass_rate": {
+          "estimate": 0.9666666666666667,
+          "high": 0.9933333333333333,
+          "low": 0.9398333333333334
+        },
+        "pass_rate_wilson": {
+          "estimate": 0.9666666666666667,
+          "high": 0.9856795681019074,
+          "low": 0.9243482038212211
+        },
+        "passes": 145,
+        "tasks": 50,
+        "total_cost_usd": 6.887437970000001,
+        "trials": 150
+      },
+      {
+        "arm": "no-tests",
+        "cost_per_pass_usd": 0.028309923475177304,
+        "errors": 0,
+        "mean_cost_usd": {
+          "estimate": 0.02661132806666667,
+          "high": 0.0413440063,
+          "low": 0.017431529553333335
+        },
+        "mean_duration_s": {
+          "estimate": 102.38901999999999,
+          "high": 126.51147249999998,
+          "low": 82.3826025
+        },
+        "mean_input_tokens": 12.8,
+        "mean_output_tokens": 19534.146666666667,
+        "mean_turns": 10.84,
+        "pass_rate": {
+          "estimate": 0.94,
+          "high": 0.98,
+          "low": 0.9
+        },
+        "pass_rate_wilson": {
+          "estimate": 0.94,
+          "high": 0.9681159557907947,
+          "low": 0.8899102291652979
+        },
+        "passes": 141,
+        "tasks": 50,
+        "total_cost_usd": 3.99169921,
+        "trials": 150
+      }
+    ],
+    "baseline": "control",
+    "cells": [
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.033091956666666665,
+        "mean_duration_s": 158.823,
+        "passes": 3,
+        "task": "api-config-layers",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.026278800000000005,
+        "mean_duration_s": 117.58366666666666,
+        "passes": 3,
+        "task": "api-config-layers",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.025500003333333337,
+        "mean_duration_s": 143.969,
+        "passes": 3,
+        "task": "api-miniargs-clusters",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01817082,
+        "mean_duration_s": 91.31733333333334,
+        "passes": 3,
+        "task": "api-miniargs-clusters",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.027456883333333335,
+        "mean_duration_s": 121.03666666666668,
+        "passes": 3,
+        "task": "bughunt-depres",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.017710903333333333,
+        "mean_duration_s": 72.42166666666667,
+        "passes": 3,
+        "task": "bughunt-depres",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.021245990000000003,
+        "mean_duration_s": 84.05233333333332,
+        "passes": 3,
+        "task": "bughunt-inventory",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01305016,
+        "mean_duration_s": 50.03633333333334,
+        "passes": 3,
+        "task": "bughunt-inventory",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.031173603333333338,
+        "mean_duration_s": 126.34866666666666,
+        "passes": 3,
+        "task": "bughunt-ledger",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01665769,
+        "mean_duration_s": 67.459,
+        "passes": 2,
+        "task": "bughunt-ledger",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.02261639,
+        "mean_duration_s": 96.66666666666667,
+        "passes": 3,
+        "task": "bughunt-logpipe",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.012671486666666667,
+        "mean_duration_s": 55.98466666666667,
+        "passes": 3,
+        "task": "bughunt-logpipe",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.02912300666666667,
+        "mean_duration_s": 128.00033333333332,
+        "passes": 3,
+        "task": "bughunt-mdhtml",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01898256,
+        "mean_duration_s": 91.02133333333332,
+        "passes": 2,
+        "task": "bughunt-mdhtml",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.026974203333333332,
+        "mean_duration_s": 113.22366666666666,
+        "passes": 3,
+        "task": "bughunt-miniql",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01718488666666667,
+        "mean_duration_s": 69.70333333333333,
+        "passes": 3,
+        "task": "bughunt-miniql",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.022919096666666666,
+        "mean_duration_s": 81.96333333333332,
+        "passes": 3,
+        "task": "bughunt-ratelimit",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.0117835,
+        "mean_duration_s": 45.92733333333333,
+        "passes": 3,
+        "task": "bughunt-ratelimit",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03154595,
+        "mean_duration_s": 127.276,
+        "passes": 3,
+        "task": "bughunt-sheet",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01790636,
+        "mean_duration_s": 70.68766666666666,
+        "passes": 3,
+        "task": "bughunt-sheet",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.020711496666666666,
+        "mean_duration_s": 82.104,
+        "passes": 3,
+        "task": "bughunt-sitegen",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.013229840000000001,
+        "mean_duration_s": 48.427,
+        "passes": 3,
+        "task": "bughunt-sitegen",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.028794926666666668,
+        "mean_duration_s": 130.89066666666668,
+        "passes": 3,
+        "task": "bughunt-textadv",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01391803,
+        "mean_duration_s": 59.82266666666667,
+        "passes": 3,
+        "task": "bughunt-textadv",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.010788223333333334,
+        "mean_duration_s": 61.760333333333335,
+        "passes": 3,
+        "task": "cli-min-level-flag",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.007695070000000001,
+        "mean_duration_s": 39.245,
+        "passes": 3,
+        "task": "cli-min-level-flag",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.013080106666666666,
+        "mean_duration_s": 61.39033333333333,
+        "passes": 3,
+        "task": "config-validation-errors",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.011668796666666667,
+        "mean_duration_s": 55.77066666666667,
+        "passes": 1,
+        "task": "config-validation-errors",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.016878763333333335,
+        "mean_duration_s": 94.65666666666668,
+        "passes": 3,
+        "task": "csv-quoted-newlines",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01319931,
+        "mean_duration_s": 64.98433333333334,
+        "passes": 3,
+        "task": "csv-quoted-newlines",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.04265700333333334,
+        "mean_duration_s": 250.29666666666665,
+        "passes": 2,
+        "task": "data-interval-sets",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.032465523333333336,
+        "mean_duration_s": 186.35933333333332,
+        "passes": 2,
+        "task": "data-interval-sets",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.031158050000000003,
+        "mean_duration_s": 167.745,
+        "passes": 3,
+        "task": "data-json-patch",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01997372,
+        "mean_duration_s": 117.61966666666667,
+        "passes": 3,
+        "task": "data-json-patch",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.020992866666666665,
+        "mean_duration_s": 93.91133333333333,
+        "passes": 3,
+        "task": "data-sessionize",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.013706273333333333,
+        "mean_duration_s": 66.83333333333333,
+        "passes": 3,
+        "task": "data-sessionize",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.0112202,
+        "mean_duration_s": 59.672333333333334,
+        "passes": 3,
+        "task": "dedupe-quadratic",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.0062047000000000005,
+        "mean_duration_s": 27.36966666666667,
+        "passes": 3,
+        "task": "dedupe-quadratic",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.010484750000000001,
+        "mean_duration_s": 51.448,
+        "passes": 3,
+        "task": "dst-daily-schedule",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.005826363333333334,
+        "mean_duration_s": 26.45866666666667,
+        "passes": 3,
+        "task": "dst-daily-schedule",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.11180040000000001,
+        "mean_duration_s": 303.64566666666667,
+        "passes": 3,
+        "task": "feature-decimal-context",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.03871752,
+        "mean_duration_s": 201.448,
+        "passes": 3,
+        "task": "feature-decimal-context",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03222697,
+        "mean_duration_s": 167.16166666666666,
+        "passes": 3,
+        "task": "feature-diff3-merge",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.022758360000000002,
+        "mean_duration_s": 119.93233333333335,
+        "passes": 3,
+        "task": "feature-diff3-merge",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03858503,
+        "mean_duration_s": 208.729,
+        "passes": 3,
+        "task": "feature-md-emphasis",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.025389320000000003,
+        "mean_duration_s": 139.95866666666666,
+        "passes": 3,
+        "task": "feature-md-emphasis",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.26845416333333333,
+        "mean_duration_s": 815.3753333333333,
+        "passes": 2,
+        "task": "feature-minire",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.09896371666666666,
+        "mean_duration_s": 265.02066666666667,
+        "passes": 3,
+        "task": "feature-minire",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03838742333333333,
+        "mean_duration_s": 203.42666666666665,
+        "passes": 3,
+        "task": "feature-paragraph-layout",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.02484925666666667,
+        "mean_duration_s": 124.79700000000001,
+        "passes": 3,
+        "task": "feature-paragraph-layout",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.029062663333333336,
+        "mean_duration_s": 167.42166666666665,
+        "passes": 3,
+        "task": "feature-rga-text-crdt",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.022582389999999997,
+        "mean_duration_s": 126.89066666666668,
+        "passes": 3,
+        "task": "feature-rga-text-crdt",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.037022479999999997,
+        "mean_duration_s": 249.41133333333332,
+        "passes": 3,
+        "task": "feature-rope-buffer",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.02584595666666667,
+        "mean_duration_s": 140.52633333333333,
+        "passes": 2,
+        "task": "feature-rope-buffer",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.5063835400000001,
+        "mean_duration_s": 682.8123333333333,
+        "passes": 3,
+        "task": "feature-sql-select",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.32632964000000003,
+        "mean_duration_s": 490.50499999999994,
+        "passes": 3,
+        "task": "feature-sql-select",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.16243983999999997,
+        "mean_duration_s": 336.9583333333333,
+        "passes": 3,
+        "task": "feature-toml-config",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.04899962333333333,
+        "mean_duration_s": 246.292,
+        "passes": 2,
+        "task": "feature-toml-config",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03889078666666666,
+        "mean_duration_s": 188.50033333333332,
+        "passes": 2,
+        "task": "feature-uri-resolve",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.027819423333333333,
+        "mean_duration_s": 142.72400000000002,
+        "passes": 2,
+        "task": "feature-uri-resolve",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03902883333333334,
+        "mean_duration_s": 181.797,
+        "passes": 3,
+        "task": "graph-build-plan",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.025714393333333335,
+        "mean_duration_s": 131.286,
+        "passes": 3,
+        "task": "graph-build-plan",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.04688372000000001,
+        "mean_duration_s": 441.8233333333333,
+        "passes": 3,
+        "task": "graph-transit-router",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.02942839,
+        "mean_duration_s": 163.323,
+        "passes": 3,
+        "task": "graph-transit-router",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.02290813333333333,
+        "mean_duration_s": 182.25466666666668,
+        "passes": 3,
+        "task": "lru-cache-thread-safety",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.007979883333333333,
+        "mean_duration_s": 37.01533333333333,
+        "passes": 3,
+        "task": "lru-cache-thread-safety",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.01296121,
+        "mean_duration_s": 64.026,
+        "passes": 3,
+        "task": "money-decimal-rounding",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.00822136,
+        "mean_duration_s": 40.041666666666664,
+        "passes": 3,
+        "task": "money-decimal-rounding",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.007211433333333334,
+        "mean_duration_s": 36.08833333333333,
+        "passes": 3,
+        "task": "pagination-off-by-one",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.00485752,
+        "mean_duration_s": 16.442666666666668,
+        "passes": 3,
+        "task": "pagination-off-by-one",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.030410326666666664,
+        "mean_duration_s": 225.38566666666665,
+        "passes": 3,
+        "task": "parse-cron-schedule",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.016966283333333335,
+        "mean_duration_s": 87.63033333333333,
+        "passes": 3,
+        "task": "parse-cron-schedule",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03158330333333334,
+        "mean_duration_s": 144.98433333333332,
+        "passes": 3,
+        "task": "parse-expr-operators",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.026491453333333335,
+        "mean_duration_s": 121.76033333333334,
+        "passes": 3,
+        "task": "parse-expr-operators",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.02029916333333333,
+        "mean_duration_s": 108.875,
+        "passes": 3,
+        "task": "parse-ini-interpolation",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.013354333333333334,
+        "mean_duration_s": 71.79700000000001,
+        "passes": 3,
+        "task": "parse-ini-interpolation",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.0181432,
+        "mean_duration_s": 94.906,
+        "passes": 3,
+        "task": "parse-query-nested",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.014272736666666667,
+        "mean_duration_s": 70.18233333333335,
+        "passes": 3,
+        "task": "parse-query-nested",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.011258983333333333,
+        "mean_duration_s": 61.724,
+        "passes": 3,
+        "task": "portable-path-normalize",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.006791366666666666,
+        "mean_duration_s": 31.192999999999998,
+        "passes": 3,
+        "task": "portable-path-normalize",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.02339474666666667,
+        "mean_duration_s": 141.72933333333333,
+        "passes": 3,
+        "task": "sched-interval-bounds",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.016505886666666664,
+        "mean_duration_s": 82.80766666666666,
+        "passes": 3,
+        "task": "sched-interval-bounds",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.021371590000000006,
+        "mean_duration_s": 105.71366666666667,
+        "passes": 3,
+        "task": "sched-recurrence-rules",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.013609833333333335,
+        "mean_duration_s": 62.64566666666667,
+        "passes": 3,
+        "task": "sched-recurrence-rules",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.028248726666666668,
+        "mean_duration_s": 153.08866666666665,
+        "passes": 3,
+        "task": "sched-working-hours",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01680221,
+        "mean_duration_s": 91.026,
+        "passes": 3,
+        "task": "sched-working-hours",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.014263213333333335,
+        "mean_duration_s": 71.724,
+        "passes": 3,
+        "task": "semver-precedence",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.008876656666666665,
+        "mean_duration_s": 43.125,
+        "passes": 3,
+        "task": "semver-precedence",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.020785176666666665,
+        "mean_duration_s": 100.13533333333334,
+        "passes": 3,
+        "task": "state-hierarchical-machine",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.013211273333333334,
+        "mean_duration_s": 65.80233333333332,
+        "passes": 3,
+        "task": "state-hierarchical-machine",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.019544,
+        "mean_duration_s": 97.86433333333333,
+        "passes": 2,
+        "task": "state-ttl-cache-tags",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.010019486666666667,
+        "mean_duration_s": 42.776,
+        "passes": 3,
+        "task": "state-ttl-cache-tags",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03665613666666667,
+        "mean_duration_s": 182.56266666666667,
+        "passes": 3,
+        "task": "state-undo-history",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.02235611,
+        "mean_duration_s": 115.92733333333332,
+        "passes": 3,
+        "task": "state-undo-history",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.09063112333333334,
+        "mean_duration_s": 249.90066666666667,
+        "passes": 2,
+        "task": "text-template-engine",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.06555414,
+        "mean_duration_s": 226.63033333333337,
+        "passes": 2,
+        "task": "text-template-engine",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.03387458,
+        "mean_duration_s": 162.83333333333334,
+        "passes": 3,
+        "task": "text-unified-patch",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.02257984,
+        "mean_duration_s": 111.10433333333333,
+        "passes": 3,
+        "task": "text-unified-patch",
+        "trials": 3
+      },
+      {
+        "arm": "control",
+        "errors": 0,
+        "mean_cost_usd": 0.024688289999999998,
+        "mean_duration_s": 115.54633333333334,
+        "passes": 3,
+        "task": "text-wrap-display-width",
+        "trials": 3
+      },
+      {
+        "arm": "no-tests",
+        "errors": 0,
+        "mean_cost_usd": 0.01643324666666667,
+        "mean_duration_s": 83.80733333333335,
+        "passes": 3,
+        "task": "text-wrap-display-width",
+        "trials": 3
+      }
+    ],
+    "comparisons": [
+      {
+        "arm": "no-tests",
+        "baseline": "control",
+        "cost_ratio": {
+          "estimate": 0.5795622737201943,
+          "high": 0.6529147713864418,
+          "low": 0.5039690796507049
+        },
+        "duration_ratio": {
+          "estimate": 0.6035921119028869,
+          "high": 0.6697615858515561,
+          "low": 0.5344312653624226
+        },
+        "p_value": 0.359375,
+        "p_value_adjusted": 0.359375,
+        "paired_tasks": 50,
+        "pass_rate_diff": {
+          "estimate": -0.02666666666666667,
+          "high": 0.013333333333333334,
+          "low": -0.06666666666666668
+        },
+        "tasks_better": 2,
+        "tasks_tied": 43,
+        "tasks_worse": 5,
+        "verdict": "no detectable difference"
+      }
+    ],
+    "completed_trials": 300,
+    "environment": [
+      {
+        "arm": "control",
+        "init_trials": 150,
+        "mcp_servers": [],
+        "models": [
+          "claude-haiku-5-5"
+        ],
+        "plugins": [
+          "cc-plugin-agents-md",
+          "cc-plugin-plugin-authoring",
+          "cc-plugin-telemetry"
+        ],
+        "requested_model": "claude-haiku-5-5",
+        "skills": [
+          "artifact-capabilities",
+          "artifact-diagramming",
+          "batch",
+          "claude-api",
+          "code-review",
+          "dataviz",
+          "debug",
+          "deep-research",
+          "design",
+          "design-sync",
+          "doctor",
+          "fewer-permission-prompts",
+          "loop",
+          "plugin-authoring",
+          "run",
+          "run-skill-generator",
+          "schedule",
+          "simplify",
+          "slides",
+          "update-config",
+          "verify",
+          "workflow-authoring"
+        ],
+        "tools": [
+          "Artifact",
+          "ArtifactComments",
+          "ArtifactData",
+          "Bash",
+          "CronCreate",
+          "CronDelete",
+          "CronList",
+          "DesignSync",
+          "Edit",
+          "EnterWorktree",
+          "ExitWorktree",
+          "Glob",
+          "Grep",
+          "ListAgents",
+          "Monitor",
+          "NotebookEdit",
+          "PowerShell",
+          "PushNotification",
+          "Read",
+          "RemoteTrigger",
+          "ReportFindings",
+          "ScheduleWakeup",
+          "SendMessage",
+          "Skill",
+          "Task",
+          "TaskStop",
+          "ToolSearch",
+          "WebFetch",
+          "WebSearch",
+          "Workflow",
+          "Write"
+        ],
+        "versions": [
+          "2.1.308"
+        ]
+      },
+      {
+        "arm": "no-tests",
+        "init_trials": 150,
+        "mcp_servers": [],
+        "models": [
+          "claude-haiku-5-5"
+        ],
+        "plugins": [
+          "cc-plugin-agents-md",
+          "cc-plugin-plugin-authoring",
+          "cc-plugin-telemetry"
+        ],
+        "requested_model": "claude-haiku-5-5",
+        "skills": [
+          "artifact-capabilities",
+          "artifact-diagramming",
+          "batch",
+          "claude-api",
+          "code-review",
+          "dataviz",
+          "debug",
+          "deep-research",
+          "design",
+          "design-sync",
+          "doctor",
+          "fewer-permission-prompts",
+          "loop",
+          "plugin-authoring",
+          "run",
+          "run-skill-generator",
+          "schedule",
+          "simplify",
+          "slides",
+          "update-config",
+          "verify",
+          "workflow-authoring"
+        ],
+        "tools": [
+          "Artifact",
+          "ArtifactComments",
+          "ArtifactData",
+          "Bash",
+          "CronCreate",
+          "CronDelete",
+          "CronList",
+          "DesignSync",
+          "Edit",
+          "EnterWorktree",
+          "ExitWorktree",
+          "Glob",
+          "Grep",
+          "ListAgents",
+          "Monitor",
+          "NotebookEdit",
+          "PowerShell",
+          "PushNotification",
+          "Read",
+          "RemoteTrigger",
+          "ReportFindings",
+          "ScheduleWakeup",
+          "SendMessage",
+          "Skill",
+          "Task",
+          "TaskStop",
+          "ToolSearch",
+          "WebFetch",
+          "WebSearch",
+          "Workflow",
+          "Write"
+        ],
+        "versions": [
+          "2.1.308"
+        ]
+      }
+    ],
+    "error_trials": 0,
+    "experiment": "haiku-5-5-no-tests",
+    "flaky_tasks": [
+      "bughunt-ledger",
+      "bughunt-mdhtml",
+      "config-validation-errors",
+      "data-interval-sets",
+      "feature-minire",
+      "feature-rope-buffer",
+      "feature-toml-config",
+      "feature-uri-resolve",
+      "state-ttl-cache-tags",
+      "text-template-engine"
+    ],
+    "notes": [],
+    "planned_trials": 300,
+    "total_cost_usd": 10.87913718
+  },
+  "schema": 1,
+  "tool": "agent-ab"
+}

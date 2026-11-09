@@ -32,7 +32,6 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from agent_ab import __version__, power
-from agent_ab.adapters import get_adapter
 from agent_ab.config import compute_fingerprint, load_experiment
 from agent_ab.errors import AgentABError, ConfigError, RunStoreError
 from agent_ab.model import AgentSpec, Arm, Experiment, Task, TrialRecord, trial_id
@@ -454,10 +453,12 @@ def _rel(path: Path | None, root: Path) -> str:
 
 def _availability(exp: Experiment) -> list[tuple[str, str | None]]:
     """(arm name, problem or None) for every arm's adapter."""
+    from agent_ab.runner import arm_problem
+
     out: list[tuple[str, str | None]] = []
     for arm in exp.arms:
         try:
-            msg = get_adapter(arm.agent.adapter).check_available(arm.agent)
+            msg = arm_problem(exp, arm)
         except AgentABError as e:
             msg = str(e)
         except Exception as e:  # availability probes run external tools; never crash on them
@@ -806,7 +807,7 @@ class _Progress:
                     f"{self._prefix(ev, rec)}  retry  attempt {rec.attempt} error: "
                     f"{_short(rec.error, 80)}"
                 )
-        elif ev.kind == "budget":
+        elif ev.kind in ("budget", "halt"):
             _warn(ev.message)
         elif ev.kind == "info" and ev.message:
             _err(ev.message)
@@ -915,6 +916,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     for name in outputs:
         _err(f"wrote {_display_path(run_dir / name)}")
     remaining = summary.planned - summary.completed - summary.errors
+    if summary.isolation_halt:
+        _err(
+            f"{PROG}: run stopped: {summary.isolation_halt}\n"
+            f"Finished trials are kept. Fix the leak (see docs/adapters.md, Isolation), then "
+            f"resume with: {resume_hint}"
+        )
+        return EXIT_FAILURE
     if summary.budget_exhausted and remaining:
         _warn(
             f"budget {_budget_text(budget)} reached with {remaining} of {summary.planned} "

@@ -83,7 +83,7 @@ class Experiment:
     max_retries: int = 2  # extra attempts after an infrastructure error
     timeout_is_failure: bool = True  # agent timeout => fail, without running the check
     keep_workspaces: bool = False
-    workspace_root: Path | None = None  # default: the system temp directory
+    workspace_root: Path | None = None  # default: see workspace.default_workspace_root
     fingerprint: str = ""  # sha256 over resolved config + task/overlay file contents
     description: str = ""
 
@@ -157,11 +157,16 @@ class TrialContext:
 class AgentInvocation:
     argv: list[str]
     env: dict[str, str] = field(default_factory=dict)  # additions to the inherited environment
+    # Replaces the inherited environment (``os.environ``) when set; ``env`` still applies on top.
+    base_env: dict[str, str] | None = None
     stdin: str | None = None
     cwd: Path | None = None  # default: the workspace
     # Files outside the workspace that instruct the agent (e.g. a system-prompt file); their
     # SHA-256 is recorded with the trial.
     instruction_files: list[Path] = field(default_factory=list)
+    # Directories the adapter created for this attempt (e.g. a private config directory); the
+    # runner removes them once the agent has exited.
+    temp_dirs: list[Path] = field(default_factory=list)
 
 
 @dataclass
@@ -182,6 +187,9 @@ class AgentUsage:
     # (authentication, rate limiting, provider outage). The attempt is retried and,
     # if it never succeeds, excluded from statistics.
     infra_error: str | None = None
+    # The infrastructure error is a breach of trial isolation. It will recur on this machine, so
+    # the attempt is not retried and repeated breaches stop the run.
+    isolation_breach: bool = False
 
 
 @dataclass
@@ -222,6 +230,7 @@ class TrialRecord:
     # SHA-256 per instruction file the agent received: workspace files by relative path,
     # adapter files (outside the workspace) as "agent:<name>"
     instructions_sha256: dict[str, str] | None = None
+    isolation_breach: bool = False  # the agent loaded configuration from outside its isolation
     schema: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:

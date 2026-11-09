@@ -5,7 +5,7 @@
 ## Checklist
 
 - [ ] `uv run pytest` passes
-- [ ] `uv run ruff check .` passes
+- [ ] `uv run ruff check .` and `uv run ruff format --check .` pass
 - [ ] Tests added or updated (offline, no real agents, Windows-safe)
 - [ ] Documentation updated (`README.md`, `docs/`) if behaviour or options changed
 - [ ] Entry added under "Unreleased" in `CHANGELOG.md` for user-visible changes

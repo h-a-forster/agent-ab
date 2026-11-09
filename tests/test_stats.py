@@ -554,3 +554,14 @@ def test_analyze_environment_models_fall_back_to_init():
     a = analyze(env_meta(), records, n_boot=100)
     assert [e.models for e in a.environment] == [["claude-haiku-4-5"]] * 2
     assert not any("Arms differ" in n for n in a.notes)
+
+
+def test_analyze_environment_flags_config_leaks():
+    leak = {**init(), "config_leaks": ["memory_paths.auto: ~/.../memory"]}
+    records = env_grid(
+        control=dict(agent_init={**init(), "config_leaks": []}),
+        treat=dict(agent_init=leak),
+    )
+    notes = "\n".join(analyze(env_meta(), records, n_boot=100).notes)
+    assert "Arm treat: 2 trial(s) loaded memory or instruction files from outside" in notes
+    assert "Arm control:" not in notes
