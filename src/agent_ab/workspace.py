@@ -273,6 +273,23 @@ def _copy_error(message: str, e: Exception) -> WorkspaceError:
     return (HostError if is_host_failure(e) else WorkspaceError)(f"{message}: {e}")
 
 
+_GIT_MANY_FILES = 200_000
+_GIT_MANY_BYTES = 20 * 1024**3
+
+
+def _too_big_for_git(ws: Path) -> bool:
+    """Whether ``ws`` could explain git hitting its time limit: then its content is the cause."""
+    files = size = 0
+    for folder, _, names in os.walk(ws):
+        for name in names:
+            files += 1
+            with contextlib.suppress(OSError):
+                size += os.lstat(os.path.join(folder, name)).st_size
+        if files > _GIT_MANY_FILES or size > _GIT_MANY_BYTES:
+            return True
+    return False
+
+
 def grading_mode() -> str:
     """How this process grades: in a clean copy with git, in the agent's workspace without."""
     return "clean-copy" if _git() is not None else "agent-workspace"
@@ -301,7 +318,9 @@ def _run_git(ws: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
         error = HostError if ws.is_dir() else WorkspaceError
         raise error(f"git {args[0]} failed: {e}") from e
     except subprocess.SubprocessError as e:
-        raise WorkspaceError(f"git {args[0]} failed: {e}") from e
+        # Git gets through anything smaller well inside its time limit, unless the machine stalls.
+        error = WorkspaceError if _too_big_for_git(ws) else HostError
+        raise error(f"git {args[0]} failed: {e}") from e
     if cp.returncode != 0:
         tail = (cp.stderr or b"").decode("utf-8", "replace").strip()[-500:]
         error = HostError if _GIT_HOST_FAILURE.search(tail) else WorkspaceError
@@ -596,7 +615,8 @@ def apply_patch(ws: Workspace, patch_path: Path) -> None:
     from the pristine task, so nothing outside that diff (interpreter caches, files written
     after the diff, the agent's ``.git``) reaches the checks. git refuses paths outside the
     work tree and writes through symlinks. An empty patch is a no-op. Raises
-    ``WorkspaceError`` if the patch does not apply.
+    ``WorkspaceError`` if the patch does not apply, and ``HostError`` if it would apply and the
+    writing failed: the copy is pristine, so that is the machine, whatever git's wording.
     """
     patch_path = Path(patch_path)
     try:
@@ -604,7 +624,12 @@ def apply_patch(ws: Workspace, patch_path: Path) -> None:
             return
     except OSError as e:
         raise HostError(f"cannot read the agent's diff: {e}") from e
-    _run_git(ws.path, "apply", "--binary", "--whitespace=nowarn", str(patch_path.resolve()))
+    options = ("--binary", "--whitespace=nowarn", str(patch_path.resolve()))
+    _run_git(ws.path, "apply", "--check", *options)
+    try:
+        _run_git(ws.path, "apply", *options)
+    except WorkspaceError as e:
+        raise HostError(str(e)) from e
 
 
 def install_checks(ws: Workspace, task: Task) -> None:

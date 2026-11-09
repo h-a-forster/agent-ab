@@ -524,8 +524,9 @@ def _execute(
         )
         # What the agent did to its workspace that breaks grading (links over check paths,
         # unreadable files) is its outcome: retrying would bill again and excluding would hide
-        # sabotage. So the same steps run on a copy it never touched: what fails there, or what
-        # is known to be the machine (a full disk), is an infrastructure error.
+        # sabotage. So a copy it never touched goes through every step that does not need its
+        # changes (snapshot, setup, checks, starting the check): what fails there, or what is
+        # known to be the machine (a full disk), is an infrastructure error.
         host = e.host if broken else isinstance(e, HostError) or is_host_failure(e)
         machine = "the machine" if host else _control_problem(
             exp, spec, attempt, art, agent_timeout, check_timeout, cancel, live

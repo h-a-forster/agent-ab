@@ -1114,6 +1114,74 @@ def test_full_disk_while_recording_the_diff_is_infrastructure(tmp_path, monkeypa
     assert rec.status == "error" and rec.passed is None
 
 
+def _git_fails(monkeypatch, when, outcome):
+    """``outcome(argv)`` stands in for git where ``when(argv, cwd)`` holds."""
+    from agent_ab import workspace as wsmod
+
+    real = wsmod.subprocess.run
+
+    def fake(argv, **kw):
+        return outcome(argv) if when(argv, Path(kw["cwd"])) else real(argv, **kw)
+
+    monkeypatch.setattr(wsmod.subprocess, "run", fake)
+
+
+def _timeout(argv):
+    raise subprocess.TimeoutExpired(argv, 600)
+
+
+def _adds_agent_files(argv, cwd):
+    return "add" in argv and (cwd / "solution.txt").exists()
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_apply_timing_out_on_the_clean_copy_is_infrastructure(tmp_path, monkeypatch):
+    _git_fails(monkeypatch, lambda argv, cwd: "apply" in argv, _timeout)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_apply_failing_to_write_a_valid_diff_is_infrastructure(tmp_path, monkeypatch):
+    # Whatever git says: --check found nothing wrong with the diff, so writing it is the machine.
+    def cannot_write(argv):
+        return subprocess.CompletedProcess(argv, 1, b"", b"error: unable to write file 'x'\n")
+
+    _git_fails(
+        monkeypatch, lambda argv, cwd: "apply" in argv and "--check" not in argv, cannot_write
+    )
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_diff_git_refuses_after_the_check_stays_the_agents_failure(tmp_path, monkeypatch):
+    def invalid(argv):
+        return subprocess.CompletedProcess(argv, 1, b"", b"error: patch failed: x:1\n")
+
+    _git_fails(monkeypatch, lambda argv, cwd: "apply" in argv and "--check" in argv, invalid)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "fail" and rec.passed is False
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_add_timing_out_on_a_small_workspace_is_infrastructure(tmp_path, monkeypatch):
+    _git_fails(monkeypatch, _adds_agent_files, _timeout)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error" and rec.passed is None
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_git_add_timing_out_on_a_workspace_the_agent_bloated_is_its_failure(tmp_path, monkeypatch):
+    from agent_ab import workspace as wsmod
+
+    monkeypatch.setattr(wsmod, "_GIT_MANY_FILES", 3)  # the agent's files exceed it
+    _git_fails(monkeypatch, _adds_agent_files, _timeout)
+    script = SOLVE + "\nfor i in range(5):\n    open(f'junk{i}', 'w').close()\n"
+    rec = run_one(tmp_path, script, max_retries=0)
+    assert rec.status == "fail" and rec.passed is False
+
+
 def test_machine_out_of_memory_starting_the_check_is_infrastructure(tmp_path, monkeypatch):
     from agent_ab import proc
 
