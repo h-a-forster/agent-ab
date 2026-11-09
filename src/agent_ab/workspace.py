@@ -261,11 +261,13 @@ def _git_argv(git: str, *args: str) -> list[str]:
     ]  # fmt: skip
 
 
-# git's own wording (its environment sets LC_ALL=C) when the machine, not the repository, failed.
+# git's own wording (its environment sets LC_ALL=C) when the machine, not the repository, failed:
+# the system's error text, which ends a line. File names, which the agent chooses, come earlier.
 _GIT_HOST_FAILURE = re.compile(
-    r"no space left|disk quota|out of memory|cannot allocate memory|too many open files"
-    r"|read-only file system|input/output error",
-    re.IGNORECASE,
+    r"(?::\s(?:No space left on device|Disk quota exceeded|Cannot allocate memory|Not enough "
+    r"space|Not enough memory|Too many open files|Read-only file system|Input/output error)"
+    r"|^fatal: Out of memory.*)$",
+    re.MULTILINE,
 )
 
 
@@ -314,8 +316,8 @@ def _run_git(ws: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
             check=False,
         )
     except OSError as e:
-        # With the workspace still there, the machine could not start git.
-        error = HostError if ws.is_dir() else WorkspaceError
+        # Anything else (a command line too long for what the agent staged) goes to the control.
+        error = HostError if is_host_failure(e) else WorkspaceError
         raise error(f"git {args[0]} failed: {e}") from e
     except subprocess.SubprocessError as e:
         # Git gets through anything smaller well inside its time limit, unless the machine stalls.

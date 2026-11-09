@@ -44,7 +44,9 @@ their retries. Resume once it is fixed; `--retry-errors` reopens trials whose re
 
 Everything else is the agent's outcome. Exiting non-zero, giving up, running out of turns or
 budget, or breaking its own workspace or diff so grading fails (deleting `.git` or the
-workspace, replacing check paths with links) is a `fail`.
+workspace, replacing check paths with links) is a `fail`. An agent can still reach an
+infrastructure error on purpose by a few routes, listed in
+[safety.md](safety.md).
 
 After every trial, leftover agent processes are killed: through a job object on Windows,
 through the process group on Linux and macOS.

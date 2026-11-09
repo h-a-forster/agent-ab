@@ -46,9 +46,25 @@ closes these routes:
   can be recorded, the trial fails rather than falling back to grading in place; the error says
   whether `.git` was missing or replaced or git itself could not record the changes. A failure
   to write `diff.patch` into the run directory is an infrastructure error and is retried, as is
-  any grading failure the machine caused: git reporting a full disk or no memory, or a step that
-  also fails on a copy of the task the agent never touched. An agent that fills the disk on
-  purpose therefore gets an infrastructure error, not a `fail`.
+  any grading failure the machine caused: git reporting a full disk or no memory, git hitting its
+  time limit on a workspace too small to explain it, a valid diff that cannot be written to the
+  clean copy, or a step that also fails on a copy of the task the agent never touched.
+- **What an agent can still turn from a `fail` into an excluded error.** Agents run with full
+  permissions and machine failures must not count against them, so these remain. No route gives a
+  pass, and retries are bounded, but the trial leaves the denominator, which can lift a pass rate.
+  The report counts errors per arm: compare them before trusting a difference.
+  - Filling the disk or exhausting memory while git records its diff.
+  - Killing its own CLI, so that no result is written (`claude-code`), or writing `infra_error`
+    to `usage.json` when it knows `{artifacts}` (`command`).
+  - Changing anything outside its workspace that grading needs: the task's `checks/` or `repo/`
+    folder, which breaks every later trial too and so stops the run after ten errors, or the run
+    directory, so that `diff.patch` cannot be written.
+  - On Linux and macOS, a file name containing a newline can put a line of its own choosing in
+    git's error output, ending in a phrase such as `: No space left on device`.
+
+  Closed: a file name that merely contains such a phrase, a command line overflowed by staged
+  entries, and a workspace bloated until git times out (over 200,000 files or 20 GiB) all stay
+  `fail`.
   Nested git repositories the agent creates (a `git clone` to vendor a library, `git init` in a
   subdirectory) are recorded as ordinary files: their `.git` metadata is moved aside while the
   diff is taken and does not reach the grading copy, and gitlink entries the agent staged for

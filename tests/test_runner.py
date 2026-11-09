@@ -1081,14 +1081,22 @@ def test_grading_breakage_only_the_agents_diff_causes_is_fail(tmp_path, monkeypa
     assert (tmp_path / "run" / rec.artifacts / "traceback.txt").is_file()
 
 
-def test_checks_folder_gone_after_the_agent_ran_is_infrastructure(tmp_path):
+def test_checks_folder_gone_after_the_agent_ran_is_infrastructure(tmp_path, monkeypatch):
     # A branch switch or moved folder during a long run: no copy of the task can be graded.
+    from agent_ab import runner
+
     task = make_task(tmp_path)
     checks = task.path / "checks"
     checks.mkdir()
     (checks / "c.txt").write_text("x", encoding="utf-8")
-    script = f"import shutil; shutil.rmtree({str(checks)!r}, ignore_errors=True)\n{SOLVE}"
-    exp = make_exp(tmp_path, arms=[fake_arm("a", script)], tasks=[replace(task, checks=checks)])
+    real = runner.diff_stats
+
+    def moved_before_grading(ws, patch):
+        shutil.rmtree(checks, ignore_errors=True)
+        return real(ws, patch)
+
+    monkeypatch.setattr(runner, "diff_stats", moved_before_grading)
+    exp = make_exp(tmp_path, arms=[fake_arm("a")], tasks=[replace(task, checks=checks)])
     summary = run_experiment(exp, tmp_path / "run")
     recs = records(tmp_path / "run")
     assert [r.attempt for r in recs] == [0, 1, 2]  # retried like any infrastructure error
@@ -1178,6 +1186,53 @@ def test_git_add_timing_out_on_a_workspace_the_agent_bloated_is_its_failure(tmp_
     monkeypatch.setattr(wsmod, "_GIT_MANY_FILES", 3)  # the agent's files exceed it
     _git_fails(monkeypatch, _adds_agent_files, _timeout)
     script = SOLVE + "\nfor i in range(5):\n    open(f'junk{i}', 'w').close()\n"
+    rec = run_one(tmp_path, script, max_retries=0)
+    assert rec.status == "fail" and rec.passed is False
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_file_name_saying_no_space_left_stays_the_agents_failure(tmp_path, monkeypatch):
+    def unreadable(argv):
+        stderr = b'error: open("no space left on device.txt"): Permission denied\n'
+        return subprocess.CompletedProcess(argv, 128, b"", stderr)
+
+    _git_fails(monkeypatch, _adds_agent_files, unreadable)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "fail" and rec.passed is False
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_real_git_disk_full_message_with_a_later_line_is_infrastructure(tmp_path, monkeypatch):
+    def no_space(argv):
+        stderr = (
+            b"error: unable to create temporary file: No space left on device\n"
+            b"error: x: failed to insert into database\nfatal: adding files failed\n"
+        )
+        return subprocess.CompletedProcess(argv, 128, b"", stderr)
+
+    _git_fails(monkeypatch, _adds_agent_files, no_space)
+    rec = run_one(tmp_path, SOLVE, max_retries=0)
+    assert rec.status == "error"
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+@pytest.mark.parametrize("winerror", [None, 206])
+def test_gitlinks_overflowing_the_command_line_stay_the_agents_failure(
+    tmp_path, monkeypatch, winerror
+):
+    # An agent can stage enough long gitlinks that dropping them does not fit on a command line.
+    if winerror and os.name != "nt":
+        pytest.skip("the winerror argument only exists on Windows")
+
+    def too_long(argv):
+        raise OSError(errno.E2BIG, "Argument list too long", None, winerror)
+
+    _git_fails(monkeypatch, lambda argv, cwd: "update-index" in argv, too_long)
+    script = (
+        SOLVE + "\nimport subprocess\n"
+        "line = '160000 ' + 'a' * 40 + ' 0\\tmodule\\n'\n"
+        "subprocess.run(['git', 'update-index', '--add', '--index-info'], input=line.encode())\n"
+    )
     rec = run_one(tmp_path, script, max_retries=0)
     assert rec.status == "fail" and rec.passed is False
 

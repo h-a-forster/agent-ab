@@ -35,8 +35,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A forced resume now updates the plan in `run.json` and is noted in the report. Trials added by
   `--repeats` count; trials no longer selected are left out of the analysis and `status`.
 - A grading failure the machine caused (full disk, no memory, a moved `checks/` folder, a broken
-  check command) is an infrastructure error, retried and excluded, not a final `fail`. Sabotage of
-  the agent's own workspace still fails.
+  check command) is an infrastructure error, retried and excluded, not a final `fail`. Breaking the
+  agent's own workspace still fails; `docs/safety.md` lists the routes by which an agent can still
+  reach an excluded error.
 - `claude-code`: a failed result counts against the agent only for a turn or budget limit or for
   outgrowing what a request can hold, and a CLI that dies with no result is an infrastructure
   error. A parser crash means usage unknown.

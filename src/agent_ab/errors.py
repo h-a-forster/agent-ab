@@ -50,7 +50,7 @@ class GitDirAlteredError(WorkspaceError):
 
 
 class HostError(WorkspaceError):
-    """The machine failed (disk full, no memory, git cannot start), whatever is in the workspace."""
+    """The machine failed (disk full, no memory, a stalled git), whatever is in the workspace."""
 
 
 class AdapterError(AgentABError):
