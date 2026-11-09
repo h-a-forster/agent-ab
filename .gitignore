@@ -13,3 +13,4 @@ runs/
 # Per-trial artifacts of committed result runs (large; summarised in trials.jsonl)
 docs/results/*/trials/
 docs/results/*/run.lock
+docs/results/*/workspaces-in-use/

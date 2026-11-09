@@ -585,6 +585,50 @@ def test_errors_in_one_arm_stop_it_though_the_other_arm_is_fine(tmp_path):
     assert summary.infra_halt
 
 
+def test_breach_flag_without_an_infra_error_cannot_pass(tmp_path):
+    # A third-party adapter can set the flag alone; resume would re-run what stats counted.
+    script = SOLVE + "\n" + usage_snippet(isolation_breach=True)
+    rec = run_one(tmp_path, script)
+    assert rec.status == "error" and rec.passed is None and rec.isolation_breach
+
+
+def test_one_trial_using_all_its_retries_is_not_an_outage(tmp_path):
+    arm = fake_arm("a", usage_snippet(infra_error="429"))
+    exp = make_exp(tmp_path, arms=[arm], max_retries=10)
+    summary = run_experiment(exp, tmp_path / "run")
+    assert summary.infra_halt is None and summary.errors == 1
+    assert len(records(tmp_path / "run")) == 11
+
+
+def test_breaches_of_arms_outside_the_plan_do_not_count_toward_the_halt(tmp_path, monkeypatch):
+    exp = leaky_exp(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "n == 0"), arms=1, tasks=2)
+    store = RunStore.create(tmp_path / "run", exp, planned_trials=2)
+    for i in range(3):
+        store.append(TrialRecord(trial_id=f"x__z__r{i}", task="x", arm="z", repeat=i, attempt=0,
+                                 status="error", isolation_breach=True))  # fmt: skip
+    summary = run_experiment(exp, tmp_path / "run", resume=True)
+    assert summary.isolation_halt is None
+
+
+def test_log_failure_while_shutting_down_does_not_abandon_running_agents(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    real = runner.run_trial
+
+    def then_interrupted(exp, spec, attempt, store, cancel, **kw):
+        rec = real(exp, spec, attempt, store, cancel, **kw)
+        cancel.set()
+        return rec
+
+    def full(self, record):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(runner, "run_trial", then_interrupted)
+    monkeypatch.setattr(RunStore, "append", full)
+    run_experiment(make_exp(tmp_path, arms=[fake_arm("a")]), tmp_path / "run")
+    assert ws_left(tmp_path) == []
+
+
 def test_attempt_that_finished_before_ctrl_c_is_kept(tmp_path, monkeypatch):
     from agent_ab import runner
 

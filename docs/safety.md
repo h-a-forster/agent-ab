@@ -45,7 +45,10 @@ closes these routes:
   does not apply fails the trial. If the agent breaks the workspace's `.git` so that no diff
   can be recorded, the trial fails rather than falling back to grading in place; the error says
   whether `.git` was missing or replaced or git itself could not record the changes. A failure
-  to write `diff.patch` into the run directory is an infrastructure error and is retried.
+  to write `diff.patch` into the run directory is an infrastructure error and is retried, as is
+  any grading failure the machine caused: git reporting a full disk or no memory, or a step that
+  also fails on a copy of the task the agent never touched. An agent that fills the disk on
+  purpose therefore gets an infrastructure error, not a `fail`.
   Nested git repositories the agent creates (a `git clone` to vendor a library, `git init` in a
   subdirectory) are recorded as ordinary files: their `.git` metadata is moved aside while the
   diff is taken and does not reach the grading copy, and gitlink entries the agent staged for

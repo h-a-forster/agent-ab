@@ -73,8 +73,8 @@ from agent_ab.workspace import (
 )
 
 _WAIT_S = 0.2  # main-thread wait slice; short so Ctrl-C is delivered promptly on Windows
-# Breaches in a row, with no graded trial between them, that stop the run. A leak comes from the
-# machine, so every further trial would pay for an attempt the statistics exclude.
+# Isolation breaches, each with no graded trial of its arm since, that stop the run. A leak comes
+# from the machine, so every further trial would pay for an attempt the statistics exclude.
 _MAX_CONSECUTIVE_BREACHES = 3
 # Infrastructure errors in one arm, with none of its trials graded between them, that stop the run.
 # In an outage every further attempt would only use up retries the trials need afterwards.
@@ -507,8 +507,8 @@ def _execute(
     dropped = _copy_usage(rec, usage)
     if dropped:
         _write_usage_warning(art, ["implausible usage values dropped:", *dropped])
-    if usage.infra_error:
-        rec.error = f"infrastructure error: {usage.infra_error}"
+    if usage.infra_error or usage.isolation_breach:
+        rec.error = f"infrastructure error: {usage.infra_error or 'isolation breach'}"
         return
 
     try:
@@ -914,7 +914,10 @@ def _run_experiment(
         recorded = store.records()
         finals = store.final_records()
         retry_base.update(breach_counts(recorded))
+        arm_names = {arm.name for arm in exp.arms}
         for prior in recorded:  # across sessions, or each resume would pay for a full streak
+            if prior.arm not in arm_names:
+                continue
             if prior.isolation_breach:
                 breaches[prior.arm] = breaches.get(prior.arm, 0) + 1
             elif prior.status != "error":
@@ -1013,7 +1016,12 @@ def _run_experiment(
             )  # fmt: skip
         if cancel.is_set() and rec.status == "error":
             return  # interrupted attempts are discarded; ones that finished were paid for
-        store.append(rec)
+        try:
+            store.append(rec)
+        except OSError:
+            if cancel.is_set():
+                return  # shutting down: the other agents still have to be collected
+            raise
         spent += rec.cost_usd or 0.0
         arm = spec.arm.name
         if rec.isolation_breach:
@@ -1024,7 +1032,9 @@ def _run_experiment(
             breaches[arm] = errors_in_row[arm] = 0
         else:
             errors_in_row[arm] = errors_in_row.get(arm, 0) + 1
-            if errors_in_row[arm] >= _MAX_CONSECUTIVE_ERRORS and infra_halt is None:
+            # One trial using all its retries is not an outage.
+            limit = max(_MAX_CONSECUTIVE_ERRORS, exp.max_retries + 2)
+            if errors_in_row[arm] >= limit and infra_halt is None:
                 infra_halt = (
                     f"{errors_in_row[arm]} attempts in a row in arm {arm} ended in an "
                     f"infrastructure error; not starting more trials. Last one: {rec.error}"
