@@ -208,8 +208,8 @@ def _fresh_attempt_dir(store: RunStore, tid: str, attempt: int) -> Path:
     # A crash or Ctrl-C in an earlier session may have left an unrecorded attempt folder
     # behind; its files must not be mistaken for this attempt's.
     stale = store.run_dir / TRIALS_DIR / tid / f"attempt-{attempt}"
-    if stale.exists():
-        _remove_dir(stale)
+    if stale.exists() and not destroy_workspace(Workspace(path=stale)):
+        raise WorkspaceError(f"cannot clear the stale attempt folder {stale}")
     return store.attempt_dir(tid, attempt)
 
 

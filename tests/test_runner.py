@@ -602,6 +602,24 @@ def test_attempt_that_finished_before_ctrl_c_is_kept(tmp_path, monkeypatch):
     assert rec.status == "pass" and rec.cost_usd == 1.0
 
 
+def test_stale_attempt_folder_that_cannot_be_removed_is_not_reused(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    exp = make_exp(tmp_path, arms=[fake_arm("a")])
+    RunStore.create(tmp_path / "run", exp, planned_trials=1)
+    stale = tmp_path / "run" / "trials" / "t1__a__r0" / "attempt-0"
+    stale.mkdir(parents=True)
+    (stale / "usage.json").write_text('{"cost_usd": 99.0}', encoding="utf-8")
+    real = runner.destroy_workspace
+    monkeypatch.setattr(
+        runner, "destroy_workspace", lambda ws: False if Path(ws.path) == stale else real(ws)
+    )
+    run_experiment(exp, tmp_path / "run", resume=True)
+    first, second = records(tmp_path / "run")
+    assert first.status == "error" and first.cost_usd is None
+    assert second.status == "pass" and second.cost_usd is None
+
+
 def test_trial_with_no_leak_check_is_recorded_and_reported_as_unverified(tmp_path, monkeypatch):
     # A CLI release moves the init event: every trial is graded, none of them checked.
     result = "{'type': 'result', 'subtype': 'success', 'total_cost_usd': 0.1}"
