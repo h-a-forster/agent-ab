@@ -945,8 +945,8 @@ def _run_experiment(
                 attempt=attempt, status="error", error=_exception_summary(e),
                 started_at=utc_now(), finished_at=utc_now(),
             )  # fmt: skip
-        if cancel.is_set():
-            return  # interrupted attempts are discarded, not recorded
+        if cancel.is_set() and rec.status == "error":
+            return  # interrupted attempts are discarded; ones that finished were paid for
         store.append(rec)
         spent += rec.cost_usd or 0.0
         arm = spec.arm.name

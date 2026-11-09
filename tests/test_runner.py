@@ -585,6 +585,23 @@ def test_errors_in_one_arm_stop_it_though_the_other_arm_is_fine(tmp_path):
     assert summary.infra_halt
 
 
+def test_attempt_that_finished_before_ctrl_c_is_kept(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    real = runner.run_trial
+
+    def then_interrupted(exp, spec, attempt, store, cancel, **kw):
+        rec = real(exp, spec, attempt, store, cancel, **kw)
+        cancel.set()  # Ctrl-C arrives after the attempt finished, before it is collected
+        return rec
+
+    monkeypatch.setattr(runner, "run_trial", then_interrupted)
+    arm = fake_arm("a", SOLVE + "\n" + usage_snippet(cost_usd=1.0))
+    run_experiment(make_exp(tmp_path, arms=[arm]), tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert rec.status == "pass" and rec.cost_usd == 1.0
+
+
 def test_trial_with_no_leak_check_is_recorded_and_reported_as_unverified(tmp_path, monkeypatch):
     # A CLI release moves the init event: every trial is graded, none of them checked.
     result = "{'type': 'result', 'subtype': 'success', 'total_cost_usd': 0.1}"
