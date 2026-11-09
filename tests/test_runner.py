@@ -1770,9 +1770,8 @@ def test_status_marks_reports_older_than_the_log(tmp_path, capsys):
 
 def in_use(run_dir: Path) -> list[str]:
     folder = run_dir / "workspaces-in-use"
-    return [
-        line for f in sorted(folder.glob("*")) for line in f.read_text("utf-8").split("\n") if line
-    ]
+    lines = [line for f in sorted(folder.glob("*")) for line in f.read_text("utf-8").splitlines()]
+    return [line.rsplit("\t", 1)[0] for line in lines]
 
 
 def test_cancelled_attempt_keeps_a_pointer_to_what_it_leaked(tmp_path, monkeypatch):
@@ -1816,20 +1815,80 @@ def test_leaked_private_directory_gets_a_pointer(tmp_path, monkeypatch):
     shutil.rmtree(leaked, ignore_errors=True)
 
 
+def test_leak_under_keep_workspaces_does_not_get_kept_ones_swept(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    real = runner.destroy_workspace
+    with monkeypatch.context() as m:
+        m.setattr(
+            runner,
+            "destroy_workspace",
+            lambda ws: False if ".private" in str(ws.path) else real(ws),
+        )
+        exp = make_exp(
+            tmp_path, arms=[fake_arm("a", options={"isolate": True})], keep_workspaces=True
+        )
+        run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    kept = Path((tmp_path / "run" / rec.artifacts / "workspace.txt").read_text("utf-8").strip())
+    (leaked,) = in_use(tmp_path / "run")
+    assert leaked.endswith(".private")
+    run_experiment(exp, tmp_path / "run", resume=True)
+    assert kept.is_dir() and not Path(leaked).exists()
+    for path in ws_left(tmp_path):
+        shutil.rmtree(path, onerror=lambda f, p, e: (os.chmod(p, 0o700), f(p)))
+
+
 def test_resume_removes_workspaces_a_crash_left_and_nothing_else(tmp_path):
     exp = make_exp(tmp_path)
     run_experiment(exp, tmp_path / "run")
     _drop_last_record(tmp_path / "run")
-    orphan = tmp_path / "ws" / "agent-ab-t1-orphan"
+    from agent_ab.runner import _LiveDirs
+
+    orphan = tmp_path / "ws" / "agent-ab-t1__b__r0-a0-orphan"
     orphan.mkdir(parents=True)
-    other = tmp_path / "precious"
-    other.mkdir()
+    _LiveDirs(RunStore.open(tmp_path / "run"), "t1__b__r0", 0).add(orphan)
     folder = tmp_path / "run" / "workspaces-in-use"
-    folder.mkdir()
-    (folder / "t1__b__r0.a0.txt").write_text(f"{orphan}\n{other}\n", encoding="utf-8")
-    run_experiment(exp, tmp_path / "run", options=RunOptions(), resume=True)
-    assert not orphan.exists() and other.is_dir()
+    run_experiment(exp, tmp_path / "run", resume=True)
+    assert not orphan.exists()
     assert not folder.exists()
+
+
+def test_sweep_leaves_whatever_it_cannot_prove_it_created(tmp_path):
+    from agent_ab.runner import _LiveDirs
+
+    exp = make_exp(tmp_path)
+    label = "agent-ab-t1__b__r0-a0"
+    run = tmp_path / f"{label}-the-run-itself"
+    run_experiment(exp, run)
+    _drop_last_record(run)
+    live = _LiveDirs(RunStore.open(run), "t1__b__r0", 0)
+    # Each of these would pass a check of the name alone, or carries a real stamp.
+    fork = tmp_path / "elsewhere" / "agent-ab-fork"
+    root = tmp_path / "elsewhere" / "agent-ab-workspaces"
+    another_trial = tmp_path / "ws" / "agent-ab-t2__b__r0-a0-live"
+    for path in (fork, root, another_trial):
+        path.mkdir(parents=True)
+        live.add(path)
+    live.add(run)  # the run directory itself, correctly named and stamped
+    live.add(tmp_path)  # a folder holding the run directory
+    no_stamp = tmp_path / "ws" / f"{label}-unstamped"
+    swapped = tmp_path / "ws" / f"{label}-swapped"
+    no_stamp.mkdir()
+    swapped.mkdir()
+    live.add(swapped)  # stamped, then replaced by another folder of the same name
+    swapped.rmdir()
+    placeholder = tmp_path / "ws" / "occupy-the-inode"
+    placeholder.mkdir()
+    swapped.mkdir()
+    with open(live.file, "a", encoding="utf-8") as f:
+        f.write(f"{no_stamp}\n")
+    summary = run_experiment(exp, run, resume=True)
+    assert summary.completed == 2
+    survivors = (fork, root, another_trial, no_stamp, swapped)
+    assert all(path.is_dir() for path in survivors)
+    assert (run / "run.json").is_file() and (run / "trials").is_dir()
+    assert str(fork) in in_use(run)  # still listed for a person to look at
 
 
 def test_crash_while_creating_a_run_leaves_a_directory_that_can_be_used(tmp_path, monkeypatch):

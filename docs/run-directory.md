@@ -123,7 +123,9 @@ up. Isolation breaches use no retries and leave the trial open. Resuming:
 
 1. Checks the experiment name, fingerprint, grading mode and agent-ab version. A mismatch, or a
    run that did not record its grading mode, is an error unless you pass `--force`.
-2. Removes workspaces listed in `workspaces-in-use/` that earlier sessions left behind.
+2. Removes workspaces listed in `workspaces-in-use/` that earlier sessions left behind. It removes
+   a folder only if its name and file-system identity are the ones the attempt recorded when it
+   created it, and never the run directory. Anything else stays listed and `status` mentions it.
 3. Skips done trials and runs the rest, continuing attempt numbers.
 4. Counts earlier spend toward `budget_usd`.
 

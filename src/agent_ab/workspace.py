@@ -81,6 +81,11 @@ def _sanitize_label(label: str) -> str:
     return clean[:60] or "ws"
 
 
+def workspace_prefix(label: str) -> str:
+    """What the name of every workspace created with ``label`` starts with."""
+    return f"agent-ab-{_sanitize_label(label)}"
+
+
 def _is_within(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
@@ -385,9 +390,7 @@ def create_workspace(task: Task, arm: Arm, *, root: Path | None, label: str) -> 
     try:
         parent = resolve_workspace_root(root)
         parent.mkdir(parents=True, exist_ok=True)
-        path = Path(
-            tempfile.mkdtemp(prefix=f"agent-ab-{_sanitize_label(label)}-", dir=parent)
-        ).resolve()
+        path = Path(tempfile.mkdtemp(prefix=f"{workspace_prefix(label)}-", dir=parent)).resolve()
     except OSError as e:
         raise WorkspaceError(f"cannot create workspace directory: {e}") from e
     ws = Workspace(path=path)

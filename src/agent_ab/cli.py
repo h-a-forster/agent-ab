@@ -1118,7 +1118,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     if leftovers:
         _out(
             f"Workspaces left behind by {len(leftovers)} attempt(s): listed in {IN_USE_DIR}/ "
-            "(in use if a session is running; otherwise a resume removes them)"
+            "(in use if a session is running; otherwise a resume removes those it made)"
         )
     return EXIT_OK
 

@@ -14,6 +14,7 @@ import json
 import math
 import os
 import random
+import re
 import threading
 import traceback
 from collections import deque
@@ -61,6 +62,7 @@ from agent_ab.store import (
 )
 from agent_ab.workspace import (
     Workspace,
+    _is_link,
     apply_patch,
     create_workspace,
     destroy_workspace,
@@ -70,6 +72,7 @@ from agent_ab.workspace import (
     resolve_workspace_root,
     run_check,
     run_command,
+    workspace_prefix,
 )
 
 _WAIT_S = 0.2  # main-thread wait slice; short so Ctrl-C is delivered promptly on Windows
@@ -201,40 +204,80 @@ class _LiveDirs:
 
     def __init__(self, store: RunStore, tid: str, attempt: int):
         self.file = store.run_dir / IN_USE_DIR / f"{tid}.a{attempt}.txt"
-        self.leaked = False
+        self.added: set[str] = set()
+        self.leaked: set[str] = set()
 
     def add(self, path: Path) -> None:
         with contextlib.suppress(OSError):
             self.file.parent.mkdir(exist_ok=True)
             with open(self.file, "a", encoding="utf-8", newline="\n") as f:
-                f.write(str(path) + "\n")
+                f.write(f"{path}\t{_dir_identity(path)}\n")
+            self.added.add(str(path))
 
     def close(self) -> None:
+        # An unrecorded attempt re-runs under its number, so the file can hold what a sweep left.
         with contextlib.suppress(OSError):
-            lines = self.file.read_text(encoding="utf-8").splitlines() if self.leaked else []
-            left = [p for p in lines if os.path.lexists(p)]
+            lines = self.file.read_text(encoding="utf-8").splitlines()
+            done = self.added - self.leaked
+            left = [x for x in lines if x.rpartition("\t")[0] not in done]
             if left:
                 self.file.write_text(
-                    "".join(f"{p}\n" for p in left), encoding="utf-8", newline="\n"
+                    "".join(f"{x}\n" for x in left), encoding="utf-8", newline="\n"
                 )
             else:
-                self.file.unlink(missing_ok=True)
+                self.file.unlink()
+
+
+def _dir_identity(path: Path) -> str:
+    st = os.lstat(path)
+    return f"{st.st_dev}:{st.st_ino}"
+
+
+def _created_by_listing(line: str, label: str, run_dir: Path) -> Path | None:
+    """The folder a line names, if it can only be the one the attempt recorded when it made it.
+
+    The list is in reach of agents and of mistakes, so all of this must hold: the name the attempt
+    gave it, the identity it had then, not a link, and not the run directory or a folder holding it.
+    """
+    path_text, _, identity = line.rpartition("\t")
+    path = Path(path_text)
+    try:
+        return (
+            path
+            if path.is_absolute()
+            and path.name.startswith(label)
+            and not _is_link(path)
+            and _dir_identity(path) == identity
+            and not run_dir.is_relative_to(path.resolve())
+            else None
+        )
+    except OSError:
+        return None
 
 
 def _sweep_leftovers(run_dir: Path) -> None:
-    """Remove what earlier sessions left. Call holding the run lock: nothing here is in use."""
+    """Remove what earlier sessions left. Call holding the run lock: nothing here is in use.
+
+    Never removes what it cannot prove an attempt of this run created. That stays listed, and
+    ``status`` says so, for a person to look at.
+    """
     folder = run_dir / IN_USE_DIR
     if not folder.is_dir():
         return
     for entry in folder.iterdir():
+        named = re.fullmatch(r"(.+)\.a(\d+)\.txt", entry.name)
+        if named is None:
+            continue
+        label = workspace_prefix(f"{named[1]}-a{named[2]}")
         with contextlib.suppress(OSError):
-            lines = entry.read_text(encoding="utf-8").split("\n")
-            # Only what create_workspace and adapters name this way: the list is in reach of agents.
-            paths = [Path(p) for p in lines if p]
-            ours = [p for p in paths if p.is_absolute() and p.name.startswith("agent-ab-")]
-            left = [p for p in ours if not destroy_workspace(Workspace(path=p))]
+            left: list[str] = []
+            for line in entry.read_text(encoding="utf-8").splitlines():
+                path = _created_by_listing(line, label, run_dir)
+                gone = not os.path.lexists(line.rpartition("\t")[0] or line)
+                if not gone and (path is None or not destroy_workspace(Workspace(path=path))):
+                    left.append(line)
             if left:
-                entry.write_text("".join(f"{p}\n" for p in left), encoding="utf-8", newline="\n")
+                entry.write_text("".join(f"{x}\n" for x in left), encoding="utf-8", newline="\n")
             else:
                 entry.unlink()
     _drop_empty(folder)
@@ -248,7 +291,7 @@ def _drop_empty(folder: Path) -> None:
 def _note_leak(art: Path | None, ws: Workspace, live: _LiveDirs) -> None:
     # Something still holds files in the workspace; leave a pointer so it can be cleaned up.
     # One line per workspace: the agent's and the grading copy can both leak.
-    live.leaked = True
+    live.leaked.add(str(ws.path))
     if art is not None and art.is_dir():
         with (
             contextlib.suppress(OSError),
