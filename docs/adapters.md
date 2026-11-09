@@ -231,7 +231,7 @@ used for one yet. On 2026-11-06 it was checked without a credential, on Windows 
 2.1.308, which starts, prints its init event and stops at "Not logged in": auto memory lay in
 the private config directory, Bash was available without `CLAUDE_CODE_GIT_BASH_PATH`, and an
 `InstructionsLoaded` hook passed with `--settings` listed only the workspace's own `CLAUDE.md`.
-An authenticated trial is still untested.
+Authenticated trials have run only on Windows with Claude Code 2.1.308 (two Haiku trials, 2026-11-09): both used Bash, `config_leaks` was empty, and no user-level rules appeared in the transcripts.
 
 `isolation = false` runs the agent with your config directory and full environment, as
 agent-ab 0.1.1 did. The leak check still records `config_leaks` (such trials normally list the

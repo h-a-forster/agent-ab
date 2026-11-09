@@ -4,10 +4,7 @@
 
 ## Waiting on me
 
-- Decision on how local branch `fix/audit-2026-11-09` (audit 2026-11-09 fixes, stacked on `polish-2026-10-30`) reaches `main`: merge polish first and rebase it, or open a PR of the stack as it is.
-- Branch `polish-2026-10-30` merged into `main` through a pull request with CI green (CI has never run on this branch, including the SHA-pinned actions).
 - v0.1.1 tagged at `db3cb78` (the last commit before trial isolation) with a GitHub release from `docs/release-notes-0.1.1.md`; its dated CHANGELOG entry and release notes say 2026-10-30, so update them if it is tagged later.
-- A one-trial real run with `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` shows that an isolated agent authenticates and runs Bash, with `config_leaks` empty and no user-level rules in the transcript.
 - Remote branches `claude/audit-fixes-2026-10-10`, `claude/hygiene-2026-10-15` and `upgrades-2026-10-23` deleted (merged or superseded by `main`).
 
 ## Decided
