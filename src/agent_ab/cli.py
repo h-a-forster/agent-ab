@@ -1013,6 +1013,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     meta = store.meta
     records = store.records()
     finals = store.final_records()
+    ids = set(_planned_ids(meta))
+    if ids:  # records outside the plan count toward spend only, as in the report
+        finals = {tid: r for tid, r in finals.items() if tid in ids}
     max_retries = _max_retries(meta)
     planned = int(meta.get("planned_trials") or 0)
 

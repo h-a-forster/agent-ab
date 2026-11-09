@@ -527,6 +527,27 @@ def _planned_only(exp_meta: dict, records: list[TrialRecord]) -> tuple[list[Tria
     return kept, len(records) - len(kept)
 
 
+def _resume_notes(exp_meta: dict, finals: Sequence[TrialRecord]) -> list[str]:
+    """Caveats on trials pooled across forced resumes, versions or grading modes."""
+    notes: list[str] = []
+    forced = exp_meta.get("forced_resumes")
+    if isinstance(forced, list) and forced:
+        changed = sorted({c for f in forced if isinstance(f, dict) for c in f.get("changed") or []})
+        current = exp_meta.get("fingerprint")
+        earlier = sum(r.fingerprint != current for r in finals)
+        notes.append(
+            f"This run was resumed {_plural(len(forced), 'time')} with --force past a change "
+            f"({', '.join(changed)}); {earlier} of {len(finals)} recorded trials ran under an "
+            "earlier experiment definition and are pooled here."
+        )
+    for label, attr in (("agent-ab versions", "tool_version"), ("grading modes", "grading")):
+        seen = {getattr(r, attr) for r in finals if r.status != "error"}
+        if len(seen) > 1:
+            shown = ", ".join(sorted(str(v) if v else "not recorded" for v in seen))
+            notes.append(f"Trials were graded under more than one of {label}: {shown}.")
+    return notes
+
+
 def analyze(
     exp_meta: dict,
     records: Iterable[TrialRecord],
@@ -542,7 +563,11 @@ def analyze(
     infrastructure error are excluded from rates and costs but counted in ``errors``.
     Deterministic for a given ``seed``.
     """
-    all_records, foreign = _planned_only(exp_meta, list(records))
+    records = list(records)
+    all_records, foreign = _planned_only(exp_meta, records)
+    foreign_cost = math.fsum(r.cost_usd or 0.0 for r in records) - math.fsum(
+        r.cost_usd or 0.0 for r in all_records
+    )
     finals = sorted(_final_attempts(all_records).values(), key=lambda r: r.trial_id)
     arms = _arm_order(exp_meta, finals)
     base = (
@@ -589,6 +614,7 @@ def analyze(
         notes.append(
             f"{foreign} recorded attempt(s) do not belong to this run's tasks, arms or repeats "
             "and were ignored."
+            + (f" Their spend of ${foreign_cost:.2f} is not in the totals." if foreign_cost else "")
         )
     summaries: list[ArmSummary] = []
     z_wilson = NormalDist().inv_cdf(1 - alpha / 2)
@@ -754,6 +780,7 @@ def analyze(
 
     environment, environment_notes = _environments(exp_meta, finals, arms)
     notes.extend(environment_notes)
+    notes.extend(_resume_notes(exp_meta, finals))
 
     return Analysis(
         experiment=str(exp_meta.get("experiment", "")),

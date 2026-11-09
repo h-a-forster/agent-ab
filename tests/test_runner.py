@@ -35,6 +35,7 @@ from agent_ab.runner import (
     run_experiment,
     run_trial,
 )
+from agent_ab.stats import analyze
 from agent_ab.store import TRIALS_FILE, RunStore
 
 PY = sys.executable
@@ -1185,3 +1186,96 @@ def test_instruction_hashes_include_adapter_files(tmp_path):
     extra.write_text("b", encoding="utf-8")
     found = _instruction_hashes(Workspace(path=ws), [extra, tmp_path / "missing.md"])
     assert sorted(found) == ["AGENTS.md", "agent:append_system_prompt.md"]
+
+
+# --------------------------------------------------------------------------- forced resumes
+
+
+def _drop_last_record(run_dir: Path) -> None:
+    log = run_dir / TRIALS_FILE
+    log.write_text("".join(log.read_text("utf-8").splitlines(True)[:-1]), "utf-8", newline="\n")
+
+
+def test_resume_under_another_agent_ab_version_needs_force(tmp_path, monkeypatch):
+    from agent_ab import __version__, runner
+    from agent_ab import store as storemod
+
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    monkeypatch.setattr(storemod, "__version__", "9.9.9")
+    monkeypatch.setattr(runner, "__version__", "9.9.9")
+    with pytest.raises(RunStoreError):
+        run_experiment(exp, tmp_path / "run", resume=True)
+    assert len(records(tmp_path / "run")) == 1
+
+    run_experiment(exp, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    meta = RunStore.open(tmp_path / "run").meta
+    assert [f["version"] for f in meta["forced_resumes"]] == ["9.9.9"]
+    assert {r.tool_version for r in records(tmp_path / "run")} == {__version__, "9.9.9"}
+    # What was forced is accepted from here on; the log and report show the mix.
+    run_experiment(exp, tmp_path / "run", resume=True)
+    assert len(RunStore.open(tmp_path / "run").meta["forced_resumes"]) == 1
+    full = analyze(meta, records(tmp_path / "run"))
+    bare = analyze({k: v for k, v in meta.items() if k != "forced_resumes"}, [
+        replace(r, tool_version=None) for r in records(tmp_path / "run")
+    ])  # fmt: skip
+    assert set(full.notes) - set(bare.notes)
+
+
+@pytest.mark.skipif(not HAS_GIT, reason="git not available")
+def test_resume_without_git_after_clean_copy_grading_needs_force(tmp_path, monkeypatch):
+    from agent_ab import workspace as wsmod
+
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    monkeypatch.setattr(wsmod, "_git", lambda: None)
+    with pytest.raises(RunStoreError):
+        run_experiment(exp, tmp_path / "run", resume=True)
+    run_experiment(exp, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    assert [r.grading for r in records(tmp_path / "run")] == ["clean-copy", "agent-workspace"]
+
+
+def test_resume_of_a_run_without_recorded_grading_needs_force(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    path = tmp_path / "run" / "run.json"
+    meta = json.loads(path.read_text("utf-8"))
+    del meta["grading"]
+    path.write_text(json.dumps(meta), "utf-8")
+    with pytest.raises(RunStoreError):
+        run_experiment(exp, tmp_path / "run", resume=True)
+
+
+def test_forced_more_repeats_enter_the_analysis_and_total_cost(tmp_path):
+    arm = fake_arm("a", SOLVE + "\n" + usage_snippet(cost_usd=1.0))
+    exp = make_exp(tmp_path, arms=[arm], repeats=1)
+    run_experiment(exp, tmp_path / "run")
+    more = make_exp(tmp_path, arms=[arm], repeats=3)
+    run_experiment(more, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    store = RunStore.open(tmp_path / "run")
+    a = analyze(store.meta, store.records())
+    assert (a.completed_trials, a.planned_trials) == (3, 3)
+    assert a.total_cost_usd == pytest.approx(3.0)
+    assert store.meta["fingerprint"] == more.fingerprint and store.meta["forced_resumes"]
+
+
+def test_forced_narrower_selection_reports_and_counts_the_new_plan(tmp_path, capsys):
+    from agent_ab.cli import main
+
+    arms = [fake_arm(n, SOLVE + "\n" + usage_snippet(cost_usd=1.0)) for n in "ab"]
+    tasks = [make_task(tmp_path, f"t{i}") for i in range(3)]
+    exp = make_exp(tmp_path, arms=arms, tasks=tasks, budget_usd=2.0)
+    run_experiment(exp, tmp_path / "run")
+    assert len(records(tmp_path / "run")) == 2
+    only_a = make_exp(tmp_path, arms=arms[:1], tasks=tasks)
+    run_experiment(only_a, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    store = RunStore.open(tmp_path / "run")
+    a = analyze(store.meta, store.records())
+    assert [s.arm for s in a.arms] == ["a"]
+    assert (a.completed_trials, a.planned_trials) == (3, 3)
+    capsys.readouterr()
+    assert main(["status", str(tmp_path / "run")]) == 0
+    assert "3/3 done" in capsys.readouterr().out

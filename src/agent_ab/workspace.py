@@ -273,6 +273,11 @@ def _copy_error(message: str, e: Exception) -> WorkspaceError:
     return (HostError if is_host_failure(e) else WorkspaceError)(f"{message}: {e}")
 
 
+def grading_mode() -> str:
+    """How this process grades: in a clean copy with git, in the agent's workspace without."""
+    return "clean-copy" if _git() is not None else "agent-workspace"
+
+
 def _run_git(ws: Path, *args: str, stdout=None) -> subprocess.CompletedProcess:
     git = _git()
     if git is None:

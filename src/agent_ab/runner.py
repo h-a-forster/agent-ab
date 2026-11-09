@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from agent_ab import __version__
 from agent_ab.adapters import get_adapter
 from agent_ab.adapters.base import Adapter
 from agent_ab.errors import (
@@ -575,6 +576,7 @@ def _grade(
         return
     if stats is not None:
         rec.files_changed, rec.lines_added, rec.lines_removed = stats
+    rec.grading = "agent-workspace" if ws.baseline_commit is None else "clean-copy"
 
     if result.timed_out and exp.timeout_is_failure:
         rec.status, rec.passed = "fail", False
@@ -690,8 +692,9 @@ def run_trial(
     rec = TrialRecord(
         trial_id=spec.id, task=spec.task.id, arm=spec.arm.name, repeat=spec.repeat,
         attempt=attempt, status="error", started_at=utc_now(), concurrency=concurrency,
-        agent_version=agent_version,
+        agent_version=agent_version, fingerprint=exp.fingerprint,
     )  # fmt: skip
+    rec.tool_version = __version__
     art: Path | None = None
     ws: Workspace | None = None
     cancelled = False
@@ -863,6 +866,8 @@ def run_experiment(
 
     if store is None:
         store = RunStore.create(run_dir, exp, planned_trials=total)
+    elif changes := store.forced_changes(exp):
+        store.record_forced_resume(exp, total, changes)
     elif store.meta.get("planned_trials") != total:
         store.update_meta(planned_trials=total)
     versions = _probe_versions(exp)

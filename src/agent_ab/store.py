@@ -19,6 +19,7 @@ from agent_ab import __version__
 from agent_ab.config import FINGERPRINT_SCHEME, experiment_to_dict
 from agent_ab.errors import RunStoreError
 from agent_ab.model import SCHEMA_VERSION, Experiment, TrialRecord
+from agent_ab.workspace import grading_mode
 
 RUN_FILE = "run.json"
 TRIALS_FILE = "trials.jsonl"
@@ -67,6 +68,7 @@ class RunStore:
             "planned_trials": planned_trials,
             "seed": exp.seed,
             "baseline": exp.baseline,
+            "grading": grading_mode(),
         }
         try:
             # "x": never adopt a log that appeared since the check above.
@@ -118,6 +120,67 @@ class RunStore:
                 "mixing trials would bias the comparison. Start a new run, or pass --force "
                 "to resume anyway."
             )
+        if force:
+            return
+        if self.meta.get("grading") is None:
+            raise RunStoreError(
+                f"this run was started by agent-ab {self.meta.get('version')}, which did not "
+                "record how it grades or isolates trials; continuing may mix them. Start a new "
+                "run, or pass --force to resume anyway."
+            )
+        if self.meta["grading"] != grading_mode():
+            raise RunStoreError(
+                f"this run graded trials by {self.meta['grading']}, but this session would use "
+                f"{grading_mode()} (is git on PATH?); mixing them would bias the comparison. "
+                "Fix that, or pass --force to resume anyway."
+            )
+        if self._last_version() != __version__:
+            raise RunStoreError(
+                f"this run was last run by agent-ab {self._last_version()}, not {__version__}; "
+                "grading or isolation may differ between versions. Start a new run, or pass "
+                "--force to resume anyway."
+            )
+
+    def _last_version(self) -> Any:
+        forced = self.meta.get("forced_resumes") or [{}]
+        return forced[-1].get("version", self.meta.get("version"))
+
+    def forced_changes(self, exp: Experiment) -> list[str]:
+        """What differs from the stored run; only a forced resume gets this far with any."""
+        changes = {
+            "experiment name": self.meta.get("experiment") != exp.name,
+            "experiment definition": self.meta.get("fingerprint") != exp.fingerprint,
+            "grading": self.meta.get("grading") != grading_mode(),
+            "agent-ab version": self._last_version() != __version__,
+        }
+        return [what for what, changed in changes.items() if changed]
+
+    def record_forced_resume(
+        self, exp: Experiment, planned_trials: int, changes: list[str]
+    ) -> None:
+        """Make run.json describe the experiment as forced, and keep a record of the change.
+
+        Analysis and ``status`` read the plan from here, so a stale copy would drop trials that
+        were paid for (more repeats) or count ones no longer selected.
+        """
+        entry = {
+            "at": utc_now(),
+            "changed": changes,
+            "version": __version__,
+            "from_fingerprint": self.meta.get("fingerprint"),
+            "from_grading": self.meta.get("grading"),
+        }
+        self.update_meta(
+            experiment=exp.name,
+            fingerprint=exp.fingerprint,
+            fingerprint_scheme=FINGERPRINT_SCHEME,
+            config=_redact_env(experiment_to_dict(exp, self.run_dir)),
+            planned_trials=planned_trials,
+            seed=exp.seed,
+            baseline=exp.baseline,
+            grading=grading_mode(),
+            forced_resumes=[*(self.meta.get("forced_resumes") or []), entry],
+        )
 
     def update_meta(self, **changes: Any) -> None:
         """Merge ``changes`` into run.json (e.g. a new planned-trial count after a resume)."""
