@@ -1508,3 +1508,151 @@ def test_lock_is_released_after_a_session_so_the_next_can_start(tmp_path):
     run_experiment(exp, tmp_path / "run")
     _drop_last_record(tmp_path / "run")
     assert run_experiment(exp, tmp_path / "run", resume=True).completed == 2
+
+
+# --------------------------------------------------------------------------- small state fixes
+
+
+def test_record_json_failure_does_not_put_an_error_on_a_pass(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    real = runner._write_text
+
+    def refuse(path, text):
+        if path.name == "record.json":
+            raise OSError("no")
+        real(path, text)
+
+    monkeypatch.setattr(runner, "_write_text", refuse)
+    rec = run_one(tmp_path, SOLVE)
+    assert rec.status == "pass" and rec.error is None
+
+
+def test_status_marks_reports_older_than_the_log(tmp_path, capsys):
+    from agent_ab.cli import main
+
+    run_experiment(make_exp(tmp_path), tmp_path / "run")
+    report = tmp_path / "run" / "report.md"
+    report.write_text("x", encoding="utf-8")
+    capsys.readouterr()
+    main(["status", str(tmp_path / "run")])
+    fresh = capsys.readouterr().out
+    os.utime(report, (1, 1))
+    main(["status", str(tmp_path / "run")])
+    assert capsys.readouterr().out != fresh
+
+
+def in_use(run_dir: Path) -> list[str]:
+    folder = run_dir / "workspaces-in-use"
+    return [
+        line for f in sorted(folder.glob("*")) for line in f.read_text("utf-8").split("\n") if line
+    ]
+
+
+def test_cancelled_attempt_keeps_a_pointer_to_what_it_leaked(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    cancel = threading.Event()
+    real = runner.destroy_workspace
+    monkeypatch.setattr(
+        runner,
+        "destroy_workspace",
+        lambda ws: False if Path(ws.path).name.startswith("agent-ab-") else real(ws),
+    )
+    real_prompt = runner._build_prompt
+
+    def interrupted(spec):
+        cancel.set()
+        return real_prompt(spec)
+
+    monkeypatch.setattr(runner, "_build_prompt", interrupted)
+    exp = make_exp(tmp_path, arms=[fake_arm("a")])
+    store = RunStore.create(tmp_path / "run", exp, planned_trials=1)
+    rec = run_trial(exp, plan_trials(exp)[0], 0, store, cancel)
+    assert rec.error == "cancelled"
+    leaked = ws_left(tmp_path)
+    assert leaked and sorted(in_use(tmp_path / "run")) == sorted(map(str, leaked))
+    for path in leaked:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def test_leaked_private_directory_gets_a_pointer(tmp_path, monkeypatch):
+    from agent_ab import runner
+
+    real = runner.destroy_workspace
+    monkeypatch.setattr(
+        runner, "destroy_workspace", lambda ws: False if ".private" in str(ws.path) else real(ws)
+    )
+    exp = make_exp(tmp_path, arms=[fake_arm("a", options={"isolate": True})])
+    run_experiment(exp, tmp_path / "run")
+    (leaked,) = ws_left(tmp_path)
+    assert in_use(tmp_path / "run") == [str(leaked)]
+    shutil.rmtree(leaked, ignore_errors=True)
+
+
+def test_resume_removes_workspaces_a_crash_left_and_nothing_else(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    orphan = tmp_path / "ws" / "agent-ab-t1-orphan"
+    orphan.mkdir(parents=True)
+    other = tmp_path / "precious"
+    other.mkdir()
+    folder = tmp_path / "run" / "workspaces-in-use"
+    folder.mkdir()
+    (folder / "t1__b__r0.a0.txt").write_text(f"{orphan}\n{other}\n", encoding="utf-8")
+    run_experiment(exp, tmp_path / "run", options=RunOptions(), resume=True)
+    assert not orphan.exists() and other.is_dir()
+    assert not folder.exists()
+
+
+def test_crash_while_creating_a_run_leaves_a_directory_that_can_be_used(tmp_path, monkeypatch):
+    exp = make_exp(tmp_path)
+
+    def crash(self):
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as m:
+        m.setattr(RunStore, "_write_meta", crash)
+        with pytest.raises(KeyboardInterrupt):
+            run_experiment(exp, tmp_path / "run")
+    assert run_experiment(exp, tmp_path / "run").completed == 2
+
+
+def test_claude_parser_crash_means_usage_unknown(tmp_path, monkeypatch):
+    from agent_ab.adapters import claude_code
+
+    def boom(*a):
+        raise RecursionError("too deep")
+
+    monkeypatch.setattr(claude_code, "parse_result_text", boom)
+    exp = leaky_exp(tmp_path, monkeypatch, leaky_agent(tmp_path / "n", "False"), arms=1, tasks=1)
+    run_experiment(exp, tmp_path / "run")
+    (rec,) = records(tmp_path / "run")
+    assert rec.status == "pass" and rec.cost_usd is None and rec.leak_check == "unverified"
+
+
+def test_manipulation_script_counts_only_what_the_report_counts(tmp_path):
+    import importlib.util
+
+    root = Path(__file__).parent.parent
+    spec = importlib.util.spec_from_file_location(
+        "manipulation", root / "docs" / "results" / "manipulation.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def line(tid, attempt, status):
+        task, arm, _ = tid.split("__")
+        return dict(trial_id=tid, task=task, arm=arm, repeat=0, attempt=attempt, status=status)
+
+    lines = [
+        line("t__a__r0", 1, "pass"),
+        line("t__a__r0", 0, "error"),  # out of order: the higher attempt still wins
+        line("u__a__r0", 2, "error"),  # excluded from the report
+        line("t__z__r0", 0, "pass"),  # outside the plan
+    ]
+    (tmp_path / "trials.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines), "utf-8")
+    config = {"tasks": [{"id": "t"}, {"id": "u"}], "arms": [{"name": "a"}], "repeats": 1}
+    (tmp_path / "run.json").write_text(json.dumps({"config": config}), "utf-8")
+    assert [r["trial_id"] for r in mod.final_records(tmp_path)] == ["t__a__r0"]

@@ -44,8 +44,10 @@ from agent_ab.report import (
 )
 from agent_ab.stats import analyze
 from agent_ab.store import (
+    IN_USE_DIR,
     RUN_FILE,
     TRIALS_DIR,
+    TRIALS_FILE,
     RunStore,
     breach_counts,
     is_done,
@@ -957,8 +959,6 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"budget {_budget_text(budget)} reached with {remaining} of {summary.planned} "
             f"trials not run; raise it with --budget and resume with: {resume_hint}"
         )
-    elif remaining:
-        _warn(f"{remaining} of {summary.planned} trials did not finish; resume with: {resume_hint}")
     if summary.errors:
         _warn(
             f"{summary.errors} trial(s) ended in infrastructure errors after all retries "
@@ -1106,8 +1106,20 @@ def cmd_status(args: argparse.Namespace) -> int:
     reports = [
         n for n in ("report.html", "report.md", "analysis.json") if (store.run_dir / n).exists()
     ]
+    log = store.run_dir / TRIALS_FILE
+    log_time = log.stat().st_mtime if log.exists() else 0
+    shown = [
+        n + (" (older than the log)" if (store.run_dir / n).stat().st_mtime < log_time else "")
+        for n in reports
+    ]
     _out("")
-    _out(f"Reports: {', '.join(reports) if reports else 'not written yet'}")
+    _out(f"Reports: {', '.join(shown) if shown else 'not written yet'}")
+    leftovers = sorted((store.run_dir / IN_USE_DIR).glob("*"))
+    if leftovers:
+        _out(
+            f"Workspaces left behind by {len(leftovers)} attempt(s): listed in {IN_USE_DIR}/ "
+            "(in use if a session is running; otherwise a resume removes them)"
+        )
     return EXIT_OK
 
 

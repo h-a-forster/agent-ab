@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import json
 import math
+import os
 import random
 import threading
 import traceback
@@ -48,6 +49,7 @@ from agent_ab.model import (
 )
 from agent_ab.proc import build_env, run_process
 from agent_ab.store import (
+    IN_USE_DIR,
     MAX_COST_USD,
     TRIALS_DIR,
     RunLock,
@@ -189,9 +191,64 @@ def _exception_summary(e: BaseException) -> str:
     return text[:2000]
 
 
-def _note_leak(art: Path | None, ws: Workspace) -> None:
+class _LiveDirs:
+    """Directories one attempt created outside the run directory, listed inside it.
+
+    The list goes once they are all gone (or kept on purpose). What stays says what a crash or a
+    failed delete left behind, also when the attempt folder itself was removed, and the next
+    resume removes it (``_sweep_leftovers``).
+    """
+
+    def __init__(self, store: RunStore, tid: str, attempt: int):
+        self.file = store.run_dir / IN_USE_DIR / f"{tid}.a{attempt}.txt"
+        self.leaked = False
+
+    def add(self, path: Path) -> None:
+        with contextlib.suppress(OSError):
+            self.file.parent.mkdir(exist_ok=True)
+            with open(self.file, "a", encoding="utf-8", newline="\n") as f:
+                f.write(str(path) + "\n")
+
+    def close(self) -> None:
+        with contextlib.suppress(OSError):
+            lines = self.file.read_text(encoding="utf-8").splitlines() if self.leaked else []
+            left = [p for p in lines if os.path.lexists(p)]
+            if left:
+                self.file.write_text(
+                    "".join(f"{p}\n" for p in left), encoding="utf-8", newline="\n"
+                )
+            else:
+                self.file.unlink(missing_ok=True)
+
+
+def _sweep_leftovers(run_dir: Path) -> None:
+    """Remove what earlier sessions left. Call holding the run lock: nothing here is in use."""
+    folder = run_dir / IN_USE_DIR
+    if not folder.is_dir():
+        return
+    for entry in folder.iterdir():
+        with contextlib.suppress(OSError):
+            lines = entry.read_text(encoding="utf-8").split("\n")
+            # Only what create_workspace and adapters name this way: the list is in reach of agents.
+            paths = [Path(p) for p in lines if p]
+            ours = [p for p in paths if p.is_absolute() and p.name.startswith("agent-ab-")]
+            left = [p for p in ours if not destroy_workspace(Workspace(path=p))]
+            if left:
+                entry.write_text("".join(f"{p}\n" for p in left), encoding="utf-8", newline="\n")
+            else:
+                entry.unlink()
+    _drop_empty(folder)
+
+
+def _drop_empty(folder: Path) -> None:
+    with contextlib.suppress(OSError):
+        folder.rmdir()
+
+
+def _note_leak(art: Path | None, ws: Workspace, live: _LiveDirs) -> None:
     # Something still holds files in the workspace; leave a pointer so it can be cleaned up.
     # One line per workspace: the agent's and the grading copy can both leak.
+    live.leaked = True
     if art is not None and art.is_dir():
         with (
             contextlib.suppress(OSError),
@@ -387,6 +444,7 @@ def _execute(
     art: Path,
     ws: Workspace,
     cancel: threading.Event,
+    live: _LiveDirs,
     keep: bool = False,
 ) -> None:
     """The attempt pipeline after the workspace exists. Fills ``rec`` in place."""
@@ -419,6 +477,8 @@ def _execute(
         root=exp.root,
     )  # fmt: skip
     inv = adapter.build(ctx)
+    for path in inv.temp_dirs:
+        live.add(path)
     try:
         rec.prompt_sha256 = _sha256(prompt.encode("utf-8"))
         rec.instructions_sha256 = _instruction_hashes(ws, inv.instruction_files) or None
@@ -434,7 +494,8 @@ def _execute(
         )
     finally:
         for path in inv.temp_dirs:
-            _remove_dir(path)
+            if not destroy_workspace(Workspace(path=path)):
+                _note_leak(art, Workspace(path=path), live)
     _check_cancel(cancel, result)
     rec.agent_exit_code = result.exit_code
     rec.agent_timed_out = result.timed_out
@@ -451,7 +512,7 @@ def _execute(
         return
 
     try:
-        _grade(exp, rec, art, ws, spec, result, agent_timeout, check_timeout, cancel, keep)
+        _grade(exp, rec, art, ws, spec, result, agent_timeout, check_timeout, cancel, live, keep)
     except _Cancelled:
         raise
     except Exception as e:
@@ -467,7 +528,7 @@ def _execute(
         # is known to be the machine (a full disk), is an infrastructure error.
         host = e.host if broken else isinstance(e, HostError) or is_host_failure(e)
         machine = "the machine" if host else _control_problem(
-            exp, spec, attempt, art, agent_timeout, check_timeout, cancel
+            exp, spec, attempt, art, agent_timeout, check_timeout, cancel, live
         )  # fmt: skip
         if machine:
             rec.status, rec.passed = "error", None
@@ -516,6 +577,7 @@ def _control_problem(
     agent_timeout: float,
     check_timeout: float,
     cancel: threading.Event,
+    live: _LiveDirs,
 ) -> str | None:
     """Why grading also breaks on a copy of the task the agent never touched, or None.
 
@@ -528,6 +590,7 @@ def _control_problem(
         )
     except WorkspaceError as e:
         return str(e)
+    live.add(ws.path)
     try:
         problem = _prepare_pristine(
             task, ws, art, agent_timeout, cancel, "the control copy", "control-setup"
@@ -548,7 +611,7 @@ def _control_problem(
         return _exception_summary(e)
     finally:
         if not destroy_workspace(ws):
-            _note_leak(art, ws)
+            _note_leak(art, ws, live)
 
 
 def _grade(
@@ -561,6 +624,7 @@ def _grade(
     agent_timeout: float,
     check_timeout: float,
     cancel: threading.Event,
+    live: _LiveDirs,
     keep: bool,
 ) -> None:
     """Diff, rebuild a clean copy with the agent's diff, install the checks and run them.
@@ -606,10 +670,6 @@ def _grade(
             f"the agent's changes could not be recorded: {diff_error}",
             host=isinstance(diff_error, HostError),
         )
-    if stats is None:
-        rec.error = "git became unavailable before the agent's diff was taken"  # infrastructure
-        return
-
     try:
         grade_ws = create_workspace(
             task, spec.arm, root=exp.workspace_root, label=f"{spec.id}-a{rec.attempt}-grade"
@@ -617,6 +677,7 @@ def _grade(
     except WorkspaceError as e:
         rec.error = f"cannot create the grading copy: {e}"  # infrastructure, not the agent
         return
+    live.add(grade_ws.path)
     try:
         if keep:
             try:
@@ -642,7 +703,7 @@ def _grade(
         _run_checks(exp, rec, art, grade_ws, task, check_timeout, cancel)
     finally:
         if (cancel.is_set() or not keep) and not destroy_workspace(grade_ws):
-            _note_leak(art, grade_ws)
+            _note_leak(art, grade_ws, live)
 
 
 def _run_checks(
@@ -709,6 +770,7 @@ def run_trial(
     art: Path | None = None
     ws: Workspace | None = None
     cancelled = False
+    live = _LiveDirs(store, spec.id, attempt)
     try:
         art = _fresh_attempt_dir(store, spec.id, attempt)
         rec.artifacts = store.relpath(art)
@@ -716,9 +778,10 @@ def run_trial(
         ws = create_workspace(
             spec.task, spec.arm, root=exp.workspace_root, label=f"{spec.id}-a{attempt}"
         )
+        live.add(ws.path)
         if keep:
             _write_text(art / "workspace.txt", str(ws.path) + "\n")
-        _execute(exp, spec, attempt, rec, art, ws, cancel, keep)
+        _execute(exp, spec, attempt, rec, art, ws, cancel, live, keep)
     except _Cancelled:
         cancelled = True
     except Exception as e:  # an attempt must never take the run down with it
@@ -732,7 +795,8 @@ def run_trial(
                     _write_text(art / "traceback.txt", traceback.format_exc())
     finally:
         if ws is not None and (cancelled or not keep) and not destroy_workspace(ws):
-            _note_leak(art, ws)
+            _note_leak(art, ws, live)
+        live.close()
     rec.finished_at = utc_now()
     if cancelled:
         rec.status, rec.passed, rec.error = "error", None, "cancelled"
@@ -743,7 +807,8 @@ def run_trial(
         try:
             _write_text(art / "record.json", json.dumps(rec.to_dict(), indent=2) + "\n")
         except (OSError, ValueError) as e:
-            if rec.error is None:
+            # The log is the record, so this changes nothing about the outcome.
+            if rec.status == "error" and rec.error is None:
                 rec.error = f"cannot write record.json: {e}"
     return rec
 
@@ -914,6 +979,7 @@ def _run_experiment(
         store.record_forced_resume(exp, total, changes)
     elif store.meta.get("planned_trials") != total:
         store.update_meta(planned_trials=total)
+    _sweep_leftovers(store.run_dir)
     versions = _probe_versions(exp)
     if versions:
         store.update_meta(agent_versions=versions)
@@ -1043,6 +1109,7 @@ def _run_experiment(
         raise
     drain()
     pool.shutdown(wait=True)
+    _drop_empty(store.run_dir / IN_USE_DIR)
 
     skipped = len({spec.id for spec, _ in pending}) if budget_exhausted and not cancelled else 0
     return summary(cancelled=cancelled, budget_exhausted=budget_exhausted, skipped=skipped)

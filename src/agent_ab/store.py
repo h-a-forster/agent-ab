@@ -33,6 +33,7 @@ RUN_FILE = "run.json"
 LOCK_FILE = "run.lock"
 TRIALS_FILE = "trials.jsonl"
 TRIALS_DIR = "trials"
+IN_USE_DIR = "workspaces-in-use"
 MAX_COST_USD = 1e6  # an agent-reported cost above this per attempt is treated as unknown
 
 
@@ -131,13 +132,14 @@ class RunStore:
             "baseline": exp.baseline,
             "grading": grading_mode(),
         }
+        # run.json first: a crash here leaves a run --resume can open, not a log both refuse.
+        store._write_meta()
         try:
             # "x": never adopt a log that appeared since the check above.
             with open(run_dir / TRIALS_FILE, "x", encoding="utf-8"):
                 pass
         except FileExistsError as e:
             raise RunStoreError(f"{run_dir / TRIALS_FILE} appeared while creating the run") from e
-        store._write_meta()
         return store
 
     @classmethod

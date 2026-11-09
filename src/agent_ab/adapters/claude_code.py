@@ -614,10 +614,7 @@ class ClaudeCodeAdapter(Adapter):
         stdout = read_text(result.stdout_path, _STDOUT_LIMIT)
         stderr = read_text(result.stderr_path, 64 * 1024)
         exit_code = None if result.timed_out else result.exit_code
-        try:
-            usage = parse_result_text(stdout, stderr, exit_code)
-        except Exception as e:  # noqa: BLE001 - parse must never raise
-            return AgentUsage(infra_error=f"could not parse claude output: {e}")
+        usage = parse_result_text(stdout, stderr, exit_code)
         usage.leak_check = "unverified"  # until the check below has actually run
         if ctx.spec.options.get("capture_init", True):
             # Best effort: a missing init event leaves the fields unknown.
