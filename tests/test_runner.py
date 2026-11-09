@@ -464,6 +464,20 @@ def test_clean_trial_between_breaches_does_not_halt(tmp_path, monkeypatch):
     assert (summary.completed, summary.errors) == (2, 4)
 
 
+def test_trial_with_no_leak_check_is_recorded_and_reported_as_unverified(tmp_path, monkeypatch):
+    # A CLI release moves the init event: every trial is graded, none of them checked.
+    result = "{'type': 'result', 'subtype': 'success', 'total_cost_usd': 0.1}"
+    script = f"import json\n{SOLVE}\nprint(json.dumps({result}))\n"
+    exp = leaky_exp(tmp_path, monkeypatch, script)
+    run_experiment(exp, tmp_path / "run")
+    store = RunStore.open(tmp_path / "run")
+    recs = store.records()
+    assert all(r.status == "pass" and r.leak_check == "unverified" for r in recs)
+    noted = analyze(store.meta, recs).notes
+    checked = [replace(r, leak_check="clean") for r in recs]
+    assert set(noted) - set(analyze(store.meta, checked).notes)
+
+
 def test_halted_run_keeps_finished_trials_and_resumes(tmp_path, monkeypatch):
     # max_retries = 0: a breach must stay resumable even with no retries to spare.
     flag = tmp_path / "leak-is-unfixed"

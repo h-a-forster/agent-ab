@@ -191,6 +191,8 @@ class AgentUsage:
     # The infrastructure error is a breach of trial isolation. It will recur on this machine, so
     # the attempt is not retried and repeated breaches stop the run.
     isolation_breach: bool = False
+    # "clean", "leaked" or "unverified" (could not be checked); None if the adapter has no check.
+    leak_check: str | None = None
 
 
 @dataclass
@@ -232,6 +234,7 @@ class TrialRecord:
     # adapter files (outside the workspace) as "agent:<name>"
     instructions_sha256: dict[str, str] | None = None
     isolation_breach: bool = False  # the agent loaded configuration from outside its isolation
+    leak_check: str | None = None  # "clean", "leaked", "unverified"; None if the adapter has none
     tool_version: str | None = None  # agent-ab version that ran this attempt
     fingerprint: str | None = None  # experiment fingerprint this attempt ran under
     grading: str | None = None  # "clean-copy" or "agent-workspace"; None if it was not graded

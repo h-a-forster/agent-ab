@@ -305,10 +305,59 @@ def test_claude_limits_are_agent_failures(tmp_path, name, subtype):
     assert u.cost_usd is not None and u.turns is not None
 
 
-def test_claude_ordinary_error_is_agent_failure(tmp_path):
+def test_claude_error_without_a_status_is_not_counted_against_the_agent(tmp_path):
     u = claude_parse(tmp_path, fixture("claude_agent_error.json"), code=1)
+    assert u.infra_error is not None
+    assert u.final_message == "error_during_execution" and u.cost_usd is not None
+
+
+def test_claude_error_classification_ignores_the_wording(tmp_path):
+    def result(message, **kw):
+        obj = {"type": "result", "subtype": "success", "is_error": True, "result": message}
+        return json.dumps({**obj, **kw})
+
+    for wording in ("fetch failed", "getaddrinfo EAI_AGAIN", "you exceeded your quota"):
+        assert claude_parse(tmp_path, result(wording), code=1).infra_error is not None
+    # A status that blames the request (the agent's context, say) is the agent's outcome.
+    u = claude_parse(tmp_path, result("/login quota", api_error_status=400), code=1)
     assert u.infra_error is None
-    assert u.final_message == "error_during_execution"
+
+
+def test_claude_dying_mid_stream_is_infra_whatever_it_says(tmp_path):
+    events = [
+        {"type": "system", "subtype": "init"},
+        {"type": "assistant", "message": {"content": []}},
+    ]
+    stdout = "".join(json.dumps(e) + "\n" for e in events)
+    assert claude_parse(tmp_path, stdout, "fetch failed", code=1).infra_error is not None
+    assert claude_parse(tmp_path, stdout, "", code=None, timed_out=True).infra_error is None
+
+
+def test_claude_finished_result_with_odd_exit_is_graded(tmp_path):
+    obj = {"type": "result", "subtype": "success", "is_error": False, "result": "ok"}
+    assert claude_parse(tmp_path, json.dumps(obj), "quota", code=1).infra_error is None
+
+
+def test_claude_leak_check_outcomes(tmp_path):
+    outside = str(Path.home() / ".claude" / "projects" / "p" / "memory")
+    clean = claude_parse(tmp_path, stream_with_init(memory_paths={}))
+    leaked = claude_parse(tmp_path, stream_with_init(memory_paths={"auto": outside}))
+    missing = claude_parse(tmp_path, fixture("claude_success.json"))
+    assert (clean.leak_check, leaked.leak_check, missing.leak_check) == (
+        "clean",
+        "leaked",
+        "unverified",
+    )
+
+
+def test_claude_leak_check_that_crashes_is_unverified(tmp_path, monkeypatch):
+    from agent_ab.adapters import claude_code
+
+    def boom(*a):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(claude_code, "config_leaks", boom)
+    assert claude_parse(tmp_path, stream_with_init(memory_paths={})).leak_check == "unverified"
 
 
 @pytest.mark.parametrize(
@@ -654,7 +703,7 @@ def test_claude_real_unknown_model_is_infra(tmp_path):
 
 @pytest.mark.parametrize(
     "status, infra",
-    [(400, False), (401, True), (404, True), (429, True), (529, True), (None, False)],
+    [(400, False), (401, True), (404, True), (429, True), (529, True), (None, True)],
 )
 def test_claude_api_error_status(status, infra):
     obj = {

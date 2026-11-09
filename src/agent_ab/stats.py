@@ -527,6 +527,22 @@ def _planned_only(exp_meta: dict, records: list[TrialRecord]) -> tuple[list[Tria
     return kept, len(records) - len(kept)
 
 
+def _unverified_notes(arms: Sequence[str], finals: Sequence[TrialRecord]) -> list[str]:
+    """A trial nobody could check for leaks must not read as a trial that was checked."""
+    notes: list[str] = []
+    for arm in arms:
+        n = sum(
+            r.arm == arm and r.status != "error" and r.leak_check == "unverified" for r in finals
+        )
+        if n:
+            notes.append(
+                f"Arm {arm}: {_plural(n, 'trial')} could not be checked for configuration loaded "
+                "from outside the workspace (no usable init event), so they may not have run with "
+                "only the configuration under test."
+            )
+    return notes
+
+
 def _resume_notes(exp_meta: dict, finals: Sequence[TrialRecord]) -> list[str]:
     """Caveats on trials pooled across forced resumes, versions or grading modes."""
     notes: list[str] = []
@@ -780,6 +796,7 @@ def analyze(
 
     environment, environment_notes = _environments(exp_meta, finals, arms)
     notes.extend(environment_notes)
+    notes.extend(_unverified_notes(arms, finals))
     notes.extend(_resume_notes(exp_meta, finals))
 
     return Analysis(

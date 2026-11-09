@@ -224,6 +224,7 @@ def _check_cancel(cancel: threading.Event, r: ProcResult | None = None) -> None:
 
 
 _MAX_MODELS = 20
+_LEAK_CHECKS = ("clean", "leaked", "unverified")
 _MAX_VERSION = 100
 _MAX_COUNT = 10**12  # tokens/turns above this are not plausible for one attempt
 _USAGE_COUNTS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
@@ -266,6 +267,7 @@ def _copy_usage(rec: TrialRecord, usage: AgentUsage) -> list[str]:
         dropped.append(f"cost_usd: {_short_repr(usage.cost_usd)}")
     rec.cost_usd = cost
     rec.isolation_breach = usage.isolation_breach
+    rec.leak_check = usage.leak_check if usage.leak_check in _LEAK_CHECKS else None
     _copy_identity(rec, usage)
     for name in _USAGE_COUNTS:
         raw = getattr(usage, name)
@@ -362,10 +364,10 @@ def _parse_usage(adapter: Adapter, ctx: TrialContext, result: ProcResult, art: P
         usage = adapter.parse(ctx, result)
     except Exception as e:
         _write_usage_warning(art, [f"usage could not be parsed: {_exception_summary(e)}"])
-        return AgentUsage()
+        return AgentUsage(leak_check="unverified")
     if not isinstance(usage, AgentUsage):
         _write_usage_warning(art, [f"adapter returned {type(usage).__name__}; usage ignored"])
-        return AgentUsage()
+        return AgentUsage(leak_check="unverified")
     return usage
 
 
@@ -794,8 +796,8 @@ def run_experiment(
     and with ``RunStoreError`` when the run directory is unusable. ``options.dry_run`` plans
     only: no directories, no processes. A KeyboardInterrupt in the calling thread cancels the
     run: running agents are killed, their attempts are not recorded, and the summary says
-    ``cancelled=True``. A run directory takes one session at a time: a second one gets ``RunStoreError``
-    before anything runs, and a crashed one holds nothing (see ``RunLock``).
+    ``cancelled=True``. A run directory takes one session at a time: a second one gets
+    ``RunStoreError`` before anything runs, and a crashed one holds nothing (see ``RunLock``).
     """
     options = options or RunOptions()
     lock = RunLock()

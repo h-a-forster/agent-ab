@@ -28,8 +28,7 @@ PERMISSION_MODES: frozenset[str] = frozenset(
 SETTING_SOURCES: frozenset[str] = frozenset({"user", "project", "local"})
 SYSTEM_PROMPT_FILE = "append_system_prompt.md"
 
-# Failures of the provider or the account rather than of the configuration under test.
-# Only consulted when a run already failed, so a successful answer that mentions "429" is safe.
+# Failures of the provider or the account, for runs that left no result to go by.
 _INFRA = re.compile(
     r"authentication|invalid api key|not logged in|/login|oauth token|unauthori[sz]ed"
     r"|rate[ _-]?limit|too many requests|\b429\b|overloaded|\b529\b"
@@ -376,7 +375,9 @@ def parse_result_text(stdout: str, stderr: str, exit_code: int | None) -> AgentU
     """Map Claude Code's JSON result (possibly preceded by log lines) onto ``AgentUsage``."""
     usage = AgentUsage()
     obj = _pick_result(_json_objects(stdout))
-    if obj is None:
+    died = exit_code not in (0, None)
+    if obj is None or (died and obj.get("type") not in ("result", None)):
+        # No result event: the CLI died, whatever the last event or its stderr says.
         if exit_code not in (0, None):
             detail = _tail(stderr) or _tail(stdout) or "no output"
             usage.infra_error = (
@@ -402,16 +403,16 @@ def parse_result_text(stdout: str, stderr: str, exit_code: int | None) -> AgentU
         usage.final_message = text
     subtype = obj.get("subtype")
 
-    failed = obj.get("is_error") is True or exit_code not in (0, None)
-    if failed and subtype not in _AGENT_SUBTYPES:
+    # By structure, never by wording: the text of a failure varies by arm, and the agent writes
+    # some of it. A failed run blames the agent only through a turn or budget limit or a status
+    # that blames the request. Anything else cannot be told apart from a machine or provider
+    # failure, so it does not count against the arm: it is retried, then excluded and reported.
+    failed = obj.get("is_error") is True or (died and obj.get("is_error") is not False)
+    status = obj.get("api_error_status")
+    if failed and subtype not in _AGENT_SUBTYPES and (_infra_status(status) or status is None):
         message = usage.final_message or ""
-        status = obj.get("api_error_status")
-        if _infra_status(status):
-            usage.infra_error = f"API error {status}: {_tail(message, _TAIL - 20)}"
-        elif _looks_like_infra(message):
-            usage.infra_error = _tail(message)
-        elif _looks_like_infra(stderr):
-            usage.infra_error = _tail(stderr)
+        detail = _tail(message, _TAIL - 20) or _tail(stderr, _TAIL - 20) or str(subtype)
+        usage.infra_error = f"API error {status}: {detail}" if status is not None else detail
     if usage.final_message is None and isinstance(subtype, str) and subtype.startswith("error"):
         usage.final_message = subtype
     return usage
@@ -617,6 +618,7 @@ class ClaudeCodeAdapter(Adapter):
             usage = parse_result_text(stdout, stderr, exit_code)
         except Exception as e:  # noqa: BLE001 - parse must never raise
             return AgentUsage(infra_error=f"could not parse claude output: {e}")
+        usage.leak_check = "unverified"  # until the check below has actually run
         if ctx.spec.options.get("capture_init", True):
             # Best effort: a missing init event leaves the fields unknown.
             with contextlib.suppress(Exception):
@@ -634,6 +636,7 @@ class ClaudeCodeAdapter(Adapter):
         isolated = ctx.spec.options.get("isolation", True)
         allowed = [ctx.workspace, config_dir(ctx.workspace)] if isolated else [ctx.workspace]
         leaks = config_leaks(event, allowed)
+        usage.leak_check = "leaked" if leaks else "clean"
         if leaks and isolated and usage.infra_error is None:
             shown = "; ".join(leaks[:5]) + ("; ..." if len(leaks) > 5 else "")
             usage.infra_error = (
