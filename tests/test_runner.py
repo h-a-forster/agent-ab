@@ -1617,6 +1617,34 @@ def test_resume_of_a_run_without_recorded_grading_needs_force(tmp_path):
         run_experiment(exp, tmp_path / "run", resume=True)
 
 
+def test_forcing_an_old_run_does_not_claim_its_definition_changed(tmp_path):
+    exp = make_exp(tmp_path)
+    run_experiment(exp, tmp_path / "run")
+    _drop_last_record(tmp_path / "run")
+    path = tmp_path / "run" / "run.json"
+    meta = json.loads(path.read_text("utf-8"))
+    del meta["grading"]  # as a run from before these fields existed
+    path.write_text(json.dumps(meta), "utf-8")
+    log = tmp_path / "run" / TRIALS_FILE
+    old = [json.loads(line) for line in log.read_text("utf-8").splitlines()]
+    log.write_text("".join(json.dumps({**r, "fingerprint": None}) + "\n" for r in old), "utf-8")
+    run_experiment(exp, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    store = RunStore.open(tmp_path / "run")
+    assert store.meta["forced_resumes"][0]["from_fingerprint"] == exp.fingerprint
+    notes = analyze(store.meta, store.records()).notes
+    assert not any(" of 2 recorded trials" in n for n in notes)
+
+
+def test_forced_change_counts_only_trials_known_or_possibly_under_the_old_definition(tmp_path):
+    arm = fake_arm("a")
+    exp = make_exp(tmp_path, arms=[arm], repeats=1)
+    run_experiment(exp, tmp_path / "run")
+    more = make_exp(tmp_path, arms=[arm], repeats=3)
+    run_experiment(more, tmp_path / "run", resume=True, options=RunOptions(force=True))
+    store = RunStore.open(tmp_path / "run")
+    assert any("1 of 3 recorded trials" in n for n in analyze(store.meta, store.records()).notes)
+
+
 def test_forced_more_repeats_enter_the_analysis_and_total_cost(tmp_path):
     arm = fake_arm("a", SOLVE + "\n" + usage_snippet(cost_usd=1.0))
     exp = make_exp(tmp_path, arms=[arm], repeats=1)

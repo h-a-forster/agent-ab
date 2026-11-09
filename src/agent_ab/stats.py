@@ -557,13 +557,25 @@ def _resume_notes(exp_meta: dict, finals: Sequence[TrialRecord]) -> list[str]:
     forced = exp_meta.get("forced_resumes")
     if isinstance(forced, list) and forced:
         changed = sorted({c for f in forced if isinstance(f, dict) for c in f.get("changed") or []})
-        current = exp_meta.get("fingerprint")
-        earlier = sum(r.fingerprint != current for r in finals)
-        notes.append(
+        note = (
             f"This run was resumed {_plural(len(forced), 'time')} with --force past a change "
-            f"({', '.join(changed)}); {earlier} of {len(finals)} recorded trials ran under an "
-            "earlier experiment definition and are pooled here."
+            f"({', '.join(changed)})."
         )
+        current = exp_meta.get("fingerprint")
+        earlier = sum(r.fingerprint is not None and r.fingerprint != current for r in finals)
+        if earlier:
+            note += (
+                f" {earlier} of {len(finals)} recorded trials ran under an earlier experiment "
+                "definition and are pooled here."
+            )
+        # Records from before the field existed: only a change of definition puts them in doubt.
+        unknown = sum(r.fingerprint is None for r in finals)
+        if unknown and "experiment definition" in changed:
+            note += (
+                f" {unknown} of {len(finals)} recorded trials do not say which definition they "
+                "ran under and are pooled here."
+            )
+        notes.append(note)
     for label, attr in (("agent-ab versions", "tool_version"), ("grading modes", "grading")):
         seen = {getattr(r, attr) for r in finals if r.status != "error"}
         if len(seen) > 1:
