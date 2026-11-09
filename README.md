@@ -241,7 +241,7 @@ Details: [docs/statistics.md](docs/statistics.md).
 |---|---|
 | `agent-ab init [DIR] [--force]` | Write the offline demo and a Claude Code template. |
 | `agent-ab validate CONFIG [--tasks] [--jobs N] [--arms A,B] [--only GLOB]` | Check a config. `--tasks` checks each task fails before and passes after its solution. |
-| `agent-ab run CONFIG [--out DIR \| --resume DIR] [--jobs N] [--repeats N] [--budget USD] [--arms A,B] [--only GLOB] [--dry-run] [--keep-workspaces] [--force] [--quiet]` | Run or resume an experiment and write the reports. |
+| `agent-ab run CONFIG [--out DIR \| --resume DIR] [--jobs N] [--repeats N] [--budget USD] [--arms A,B] [--only GLOB] [--dry-run] [--keep-workspaces] [--force] [--retry-errors] [--quiet]` | Run or resume an experiment and write the reports. |
 | `agent-ab report RUN_DIR [--format text\|md\|json\|html] [--out FILE] [--baseline ARM] [--alpha A] [--seed S]` | Re-analyse a run. |
 | `agent-ab status RUN_DIR` | Progress, errors and spend of a run. |
 | `agent-ab show RUN_DIR TRIAL_ID` | One trial's record and artifact paths. |

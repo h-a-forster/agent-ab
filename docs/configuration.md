@@ -136,7 +136,9 @@ Write literal braces as `{{` and `}}`. Unknown placeholders are errors when the 
 
 Each run stores a SHA-256 fingerprint of the resolved configuration plus the content of
 every file in every task and overlay directory (ignoring `.git`, `__pycache__` and `*.pyc`).
-`--resume` refuses a run whose fingerprint differs, unless you pass `--force`.
+`--resume` refuses a run whose fingerprint differs, unless you pass `--force`. It also refuses
+one run by another agent-ab version or grading mode, since the fingerprint covers neither
+([run-directory.md](run-directory.md#resume)).
 
 The fingerprint is location-independent: it hashes file contents (keyed by task id and arm
 name), never paths, so identical content gives the same fingerprint in any checkout. Runs

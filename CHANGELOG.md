@@ -15,13 +15,40 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   report. A run refuses to start when `CLAUDE.md`, `AGENTS.md` or similar files exist in the
   workspace root or its parents, or when no credential is set in the environment.
 - Adapter hook `check_workspace_root`, and `AgentInvocation.base_env` and `temp_dirs`.
+- `agent-ab run --resume DIR --retry-errors` runs trials whose retries ran out again, with fresh
+  retries, keeping everything recorded.
+- A lock on the run directory: a second session is refused before anything runs. It is released
+  when the process ends, so a crash leaves nothing stale.
+- Trial records gain `leak_check` (`clean`, `leaked`, `unverified`), `tool_version`, `fingerprint`
+  and `grading`; `run.json` gains `grading` and `forced_resumes`. All optional on read.
+- A run stops after ten infrastructure errors in a row in one arm, before an outage uses up every
+  trial's retries.
 
 ### Changed
 
 - `claude-code` no longer uses your saved login by default: set `ANTHROPIC_API_KEY` or
-  `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`), or set `isolation = false`. A run
-  started with 0.1.1 and resumed now runs its remaining trials isolated; to keep it as it
-  was, set `isolation = false`, which changes the configuration, and resume with `--force`.
+  `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`), or set `isolation = false`.
+- Resuming is refused unless forced when the agent-ab version or grading mode differs, or the run
+  recorded no grading mode, as with runs from 0.1.1: they would mix grading or isolation settings
+  with nothing to show for it. To keep such a run as it was, set `isolation = false`, which
+  changes the configuration, and resume with `--force`.
+- A forced resume now updates the plan in `run.json` and is noted in the report. Trials added by
+  `--repeats` count; trials no longer selected are left out of the analysis and `status`.
+- A grading failure the machine caused (full disk, no memory, a moved `checks/` folder, a broken
+  check command) is an infrastructure error, retried and excluded, not a final `fail`. Sabotage of
+  the agent's own workspace still fails.
+- `claude-code`: a failed result counts against the agent only for a turn or budget limit or a
+  status that blames the request, whatever its text says, and a CLI that dies with no result is an
+  infrastructure error. A parser crash means usage unknown.
+- An isolation breach leaves the trial open everywhere: not counted as an error by `run`, exit code
+  1 with a resume hint, and no retries used. The three-breach stop counts per arm and across
+  sessions. The report counts open trials as unfinished.
+- Attempts that finished before Ctrl-C are kept. A stale attempt folder that cannot be removed is
+  not reused. `run.json` is synced to disk before it replaces the old one. Experiments whose
+  cells would share a trial id (including by case alone) are refused.
+- `status` marks reports older than the log, and lists workspaces left behind; resume removes
+  those. `docs/results/manipulation.py` counts what the report counts, which changes no
+  published figure.
 - Default `workspace_root`: when the system temp directory is inside the home directory (as
   on Windows), workspaces go to `agent-ab-workspaces` at the root of the home drive.
 
