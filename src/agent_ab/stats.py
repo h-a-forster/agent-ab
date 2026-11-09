@@ -24,7 +24,7 @@ from .model import (
     TaskCell,
     TrialRecord,
 )
-from .store import breach_counts, is_done, stored_max_retries
+from .store import _cost, breach_counts, is_done, stored_max_retries
 
 __all__ = [
     "analyze",
@@ -601,9 +601,7 @@ def analyze(
     """
     records = list(records)
     all_records, foreign = _planned_only(exp_meta, records)
-    foreign_cost = math.fsum(r.cost_usd or 0.0 for r in records) - math.fsum(
-        r.cost_usd or 0.0 for r in all_records
-    )
+    foreign_cost = math.fsum(map(_cost, records)) - math.fsum(map(_cost, all_records))
     finals = sorted(_final_attempts(all_records).values(), key=lambda r: r.trial_id)
     arms = _arm_order(exp_meta, finals)
     base = (

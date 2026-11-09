@@ -567,6 +567,17 @@ def test_analyze_environment_flags_config_leaks():
     assert "Arm control:" not in notes
 
 
+def test_absurd_costs_outside_the_plan_do_not_stop_the_report():
+    def trial(arm, cost):
+        return TrialRecord(trial_id=f"t__{arm}__r0", task="t", arm=arm, repeat=0, attempt=0,
+                           status="pass", cost_usd=cost)  # fmt: skip
+
+    config = {"tasks": [{"id": "t"}], "arms": [{"name": "a"}], "repeats": 1}
+    planned = {"experiment": "x", "baseline": "a", "planned_trials": 1, "config": config}
+    recs = [trial("a", 1.0), trial("z", 1e308), trial("y", 1e308)]
+    assert analyze(planned, recs, n_boot=10).total_cost_usd == 1.0
+
+
 def _with_errors(attempt: int, breach: bool = False) -> tuple[dict, list[TrialRecord]]:
     recs = [
         TrialRecord(
